@@ -6,6 +6,8 @@ A unified Python library for interacting with various LLM providers through a co
 
 LLM Platform is a Python library that provides a unified API for interacting with multiple LLM providers, including OpenAI, Anthropic, Google, DeepSeek, Grok, OpenRouter, and more. The platform abstracts away the differences between LLM providers, allowing developers to focus on application logic while maintaining the flexibility to switch between models as needed.
 
+The library is very flexible. For example, you can start calling OpenAI API with uploaded files and use functions. Then in the middle of the conversation you may switch the model and continue calling functions of Gemini.
+
 ## Features
 
 - **Unified API Interface**: Interact with any supported LLM through the same API
