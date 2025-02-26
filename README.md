@@ -19,7 +19,8 @@ LLM Platform is a Python library that provides a unified API for interacting wit
 ## Installation
 
 ```bash
-# Installation instructions to be added
+git clone https://github.com/analyst20172018/llm_platform
+pip install -r requirements.txt
 ```
 
 ## Environment Setup
