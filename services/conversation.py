@@ -229,12 +229,12 @@ class Conversation:
         
     def save_to_json(self) -> Dict:
         """
-        Save the conversation to a file.
+        Serialize the conversation to a JSON-compatible dictionary.
         
-        Parameters:
-        ----------
-        filepath : str
-            The path to the file where the conversation should be saved.
+        Returns:
+        -------
+        Dict
+            A dictionary representation of the conversation that can be serialized to JSON.
         """
         # Convert conversation to a serializable dictionary
         data = {
@@ -265,70 +265,91 @@ class Conversation:
                         'name': fr.name,
                         'id': fr.id,
                         'response': fr.response,
-                        'files': [
-                            {
-                                'name': file.name,
-                                'type': type(file).__name__,
-                                'base64': file.base64 if hasattr(file, 'base64') else None
-                            }
-                            for file in fr.files
-                        ]
+                        'files': self._serialize_files(fr.files)
                     }
                     for fr in message.function_responses
                 ],
-                'files': [
-                    {
-                        'name': file.name,
-                        'type': type(file).__name__,
-                        'base64': file.base64 if hasattr(file, 'base64') else None,
-                        'text': file.text if hasattr(file, 'text') else None
-                    }
-                    for file in message.files
-                ]
+                'files': self._serialize_files(message.files)
             }
             data['messages'].append(message_data)
         
-        #with open(filepath, 'w', encoding='utf-8') as f:
-        #    json.dump(data, f, indent=2)
         return data
+        
+    def _serialize_files(self, files: List[BaseFile]) -> List[Dict]:
+        """
+        Helper method to serialize different types of files.
+        
+        Parameters:
+        ----------
+        files : List[BaseFile]
+            List of file objects to serialize
+            
+        Returns:
+        -------
+        List[Dict]
+            List of serialized file dictionaries
+        """
+        serialized_files = []
+        
+        for file in files:
+            file_data = {
+                'name': file.name,
+                'type': type(file).__name__
+            }
+
+            # Handle different file types
+            if isinstance(file, TextDocumentFile):
+                file_data['text'] = file.text
+                
+            elif isinstance(file, PDFDocumentFile):
+                file_data['base64'] = file.base64
+                file_data['text'] = file.text
+                file_data['number_of_pages'] = file.number_of_pages
+                
+            elif isinstance(file, ExcelDocumentFile):
+                file_data['base64'] = file.base64
+                file_data['text'] = file.text
+                
+            elif isinstance(file, ImageFile):
+                file_data['base64'] = file.base64
+                file_data['extension'] = file.extension
+                
+            elif isinstance(file, AudioFile):
+                file_data['base64'] = file.base64
+                file_data['extension'] = file.extension
+                
+            elif isinstance(file, VideoFile):
+                if hasattr(file, 'base64') and file.base64:
+                    file_data['base64'] = file.base64
+                file_data['extension'] = file.extension
+                
+            elif isinstance(file, MediaFile):
+                file_data['base64'] = file.base64
+                file_data['extension'] = file.extension
+            
+            serialized_files.append(file_data)
+            
+        return serialized_files
 
     @classmethod
     def read_from_json(cls, data:Dict) -> 'Conversation':
         """
-        Read a conversation from a file.
+        Read a conversation from a JSON-compatible dictionary.
         
         Parameters:
         ----------
-        filepath : str
-            The path to the file containing the saved conversation.
+        data : Dict
+            The dictionary containing the serialized conversation.
             
         Returns:
         -------
         Conversation
-            A new Conversation object loaded from the file.
+            A new Conversation object loaded from the dictionary.
         """
-        #with open(filepath, 'r', encoding='utf-8') as f:
-        #    data = json.load(f)
-        
         messages = []
         for msg_data in data.get('messages', []):
             # Restore files
-            files = []
-            for file_data in msg_data.get('files', []):
-                file_type = file_data['type']
-                if file_type == 'TextDocumentFile' and 'text' in file_data:
-                    files.append(TextDocumentFile(text=file_data['text'], name=file_data['name']))
-                elif file_type == 'ImageFile' and file_data.get('base64'):
-                    files.append(ImageFile.from_base64(file_data['base64'], file_data['name']))
-                elif file_type == 'PDFDocumentFile' and file_data.get('base64'):
-                    pdf_bytes = base64.b64decode(file_data['base64'])
-                    files.append(PDFDocumentFile.from_bytes(pdf_bytes, file_data['name']))
-                elif file_type == 'AudioFile' and file_data.get('base64'):
-                    audio_bytes = base64.b64decode(file_data['base64'])
-                    files.append(AudioFile.from_bytes(audio_bytes, file_data['name']))
-                elif file_type == 'ExcelDocumentFile' and file_data.get('base64'):
-                    excel_bytes = base64.b64decode(file_data['base64'])
-                    files.append(ExcelDocumentFile.from_bytes(excel_bytes, file_data['name']))
+            files = cls._deserialize_files(msg_data.get('files', []))
             
             # Restore thinking responses
             thinking_responses = [
@@ -348,12 +369,7 @@ class Conversation:
                 fr = FunctionResponse(name=fr_data['name'], response=fr_data['response'], id=fr_data.get('id'))
                 
                 # Restore files in function responses
-                fr.files = []
-                for file_data in fr_data.get('files', []):
-                    file_type = file_data['type']
-                    if file_type == 'ImageFile' and file_data.get('base64'):
-                        fr.files.append(ImageFile.from_base64(file_data['base64'], file_data['name']))
-                
+                fr.files = cls._deserialize_files(fr_data.get('files', []))
                 function_responses.append(fr)
             
             # Create message
@@ -374,3 +390,55 @@ class Conversation:
             messages.append(message)
         
         return cls(messages=messages, system_prompt=data.get('system_prompt'))
+        
+    @classmethod
+    def _deserialize_files(cls, file_data_list: List[Dict]) -> List[BaseFile]:
+        """
+        Helper method to deserialize different types of files.
+        
+        Parameters:
+        ----------
+        file_data_list : List[Dict]
+            List of serialized file dictionaries
+            
+        Returns:
+        -------
+        List[BaseFile]
+            List of reconstructed file objects
+        """
+        files = []
+        
+        for file_data in file_data_list:
+            if 'type' not in file_data or 'name' not in file_data:
+                continue
+                
+            file_type = file_data['type']
+            file_name = file_data['name']
+            
+            if file_type == 'TextDocumentFile' and 'text' in file_data:
+                files.append(TextDocumentFile(text=file_data['text'], name=file_name))
+                
+            elif file_type == 'ImageFile' and file_data.get('base64'):
+                files.append(ImageFile.from_base64(file_data['base64'], file_name))
+                
+            elif file_type == 'PDFDocumentFile' and file_data.get('base64'):
+                pdf_bytes = base64.b64decode(file_data['base64'])
+                files.append(PDFDocumentFile.from_bytes(pdf_bytes, file_name))
+                
+            elif file_type == 'AudioFile' and file_data.get('base64'):
+                audio_bytes = base64.b64decode(file_data['base64'])
+                files.append(AudioFile.from_bytes(audio_bytes, file_name))
+                
+            elif file_type == 'ExcelDocumentFile' and file_data.get('base64'):
+                excel_bytes = base64.b64decode(file_data['base64'])
+                files.append(ExcelDocumentFile.from_bytes(excel_bytes, file_name))
+                
+            elif file_type == 'VideoFile' and file_data.get('base64'):
+                video_bytes = base64.b64decode(file_data['base64'])
+                files.append(MediaFile.from_bytes(video_bytes, file_name))
+                
+            elif file_type == 'MediaFile' and file_data.get('base64'):
+                media_bytes = base64.b64decode(file_data['base64'])
+                files.append(MediaFile.from_bytes(media_bytes, file_name))
+                
+        return files
