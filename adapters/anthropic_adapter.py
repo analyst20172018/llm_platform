@@ -435,7 +435,7 @@ class AnthropicAdapter(AdapterBase):
                 
         # Extract all responses with the thinking
         thinking_responses_history = []
-        thinking_responses_from_llm = [each for each in chat_response.content if getattr(each, 'type', '') == 'thinking']
+        thinking_responses_from_llm = [each for each in chat_response.content if getattr(each, 'type', '') in ['thinking', 'redacted_thinking']]
         for each_thinking_response in thinking_responses_from_llm:
             new_thinking_response = ThinkingResponse(content=each_thinking_response.thinking, id=each_thinking_response.signature)
             thinking_responses_history.append(new_thinking_response)

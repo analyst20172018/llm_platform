@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from llm_platform.helpers.model_config import ModelConfig
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
 import json
+import base64
 
 
 class FunctionCall:
@@ -225,3 +226,151 @@ class Conversation:
             "completion_tokens": 0,
             "costs": 0
         }
+        
+    def save_to_json(self) -> Dict:
+        """
+        Save the conversation to a file.
+        
+        Parameters:
+        ----------
+        filepath : str
+            The path to the file where the conversation should be saved.
+        """
+        # Convert conversation to a serializable dictionary
+        data = {
+            'system_prompt': self.system_prompt,
+            'messages': []
+        }
+        
+        for message in self.messages:
+            message_data = {
+                'role': message.role,
+                'content': message.content,
+                'timestamp': message.timestamp.isoformat(),
+                'usage': message.usage,
+                'thinking_responses': [
+                    {'content': tr.content, 'id': tr.id}
+                    for tr in message.thinking_responses
+                ],
+                'function_calls': [
+                    {
+                        'id': fc.id,
+                        'name': fc.name,
+                        'arguments': fc.arguments
+                    }
+                    for fc in message.function_calls
+                ],
+                'function_responses': [
+                    {
+                        'name': fr.name,
+                        'id': fr.id,
+                        'response': fr.response,
+                        'files': [
+                            {
+                                'name': file.name,
+                                'type': type(file).__name__,
+                                'base64': file.base64 if hasattr(file, 'base64') else None
+                            }
+                            for file in fr.files
+                        ]
+                    }
+                    for fr in message.function_responses
+                ],
+                'files': [
+                    {
+                        'name': file.name,
+                        'type': type(file).__name__,
+                        'base64': file.base64 if hasattr(file, 'base64') else None,
+                        'text': file.text if hasattr(file, 'text') else None
+                    }
+                    for file in message.files
+                ]
+            }
+            data['messages'].append(message_data)
+        
+        #with open(filepath, 'w', encoding='utf-8') as f:
+        #    json.dump(data, f, indent=2)
+        return data
+
+    @classmethod
+    def read_from_json(cls, data:Dict) -> 'Conversation':
+        """
+        Read a conversation from a file.
+        
+        Parameters:
+        ----------
+        filepath : str
+            The path to the file containing the saved conversation.
+            
+        Returns:
+        -------
+        Conversation
+            A new Conversation object loaded from the file.
+        """
+        #with open(filepath, 'r', encoding='utf-8') as f:
+        #    data = json.load(f)
+        
+        messages = []
+        for msg_data in data.get('messages', []):
+            # Restore files
+            files = []
+            for file_data in msg_data.get('files', []):
+                file_type = file_data['type']
+                if file_type == 'TextDocumentFile' and 'text' in file_data:
+                    files.append(TextDocumentFile(text=file_data['text'], name=file_data['name']))
+                elif file_type == 'ImageFile' and file_data.get('base64'):
+                    files.append(ImageFile.from_base64(file_data['base64'], file_data['name']))
+                elif file_type == 'PDFDocumentFile' and file_data.get('base64'):
+                    pdf_bytes = base64.b64decode(file_data['base64'])
+                    files.append(PDFDocumentFile.from_bytes(pdf_bytes, file_data['name']))
+                elif file_type == 'AudioFile' and file_data.get('base64'):
+                    audio_bytes = base64.b64decode(file_data['base64'])
+                    files.append(AudioFile.from_bytes(audio_bytes, file_data['name']))
+                elif file_type == 'ExcelDocumentFile' and file_data.get('base64'):
+                    excel_bytes = base64.b64decode(file_data['base64'])
+                    files.append(ExcelDocumentFile.from_bytes(excel_bytes, file_data['name']))
+            
+            # Restore thinking responses
+            thinking_responses = [
+                ThinkingResponse(content=tr_data['content'], id=tr_data.get('id'))
+                for tr_data in msg_data.get('thinking_responses', [])
+            ]
+            
+            # Restore function calls
+            function_calls = [
+                FunctionCall(id=fc_data['id'], name=fc_data['name'], arguments=fc_data['arguments'])
+                for fc_data in msg_data.get('function_calls', [])
+            ]
+            
+            # Restore function responses
+            function_responses = []
+            for fr_data in msg_data.get('function_responses', []):
+                fr = FunctionResponse(name=fr_data['name'], response=fr_data['response'], id=fr_data.get('id'))
+                
+                # Restore files in function responses
+                fr.files = []
+                for file_data in fr_data.get('files', []):
+                    file_type = file_data['type']
+                    if file_type == 'ImageFile' and file_data.get('base64'):
+                        fr.files.append(ImageFile.from_base64(file_data['base64'], file_data['name']))
+                
+                function_responses.append(fr)
+            
+            # Create message
+            message = Message(
+                role=msg_data['role'],
+                content=msg_data['content'],
+                thinking_responses=thinking_responses,
+                usage=msg_data.get('usage'),
+                files=files,
+                function_calls=function_calls,
+                function_responses=function_responses
+            )
+            
+            # Restore timestamp
+            if 'timestamp' in msg_data:
+                message.timestamp = datetime.fromisoformat(msg_data['timestamp'])
+            
+            messages.append(message)
+        
+        return cls(messages=messages, system_prompt=data.get('system_prompt'))

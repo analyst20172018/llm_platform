@@ -2,7 +2,7 @@ from .adapter_base import AdapterBase
 import os
 from speechmatics.models import ConnectionSettings
 from speechmatics.batch_client import BatchClient
-from typing import List, Tuple, Dict, BinaryIO, Callable
+from typing import List, Tuple, Dict, BinaryIO, Callable, Union, Tuple, Optional
 from llm_platform.services.conversation import Conversation
 import logging
 
@@ -24,9 +24,9 @@ class SpeechmaticsAdapter(AdapterBase):
                     **kwargs):
         raise NotImplementedError("Not implemented yet")
 
-    def voice_to_text(self, audio_file: BinaryIO, language: str="en", transcription_config: Dict=None):
+    def voice_to_text(self, audio_file: Tuple[str, BinaryIO], language: str="en", transcription_config: Dict=None):
         """
-            audio_file should be either a string or a tuple (file name, bytes)
+            audio_file should be a tuple (file name, bytes)
         """
 
         settings = ConnectionSettings(

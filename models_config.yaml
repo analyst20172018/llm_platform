@@ -49,7 +49,19 @@ models:
       - text
     citations_enabled: 1
     function_calling: 1
-  
+
+  - name: gpt-4.5-preview
+    adapter: OpenAIAdapter
+    pricing:
+      input: 75 # USD/1M tokens
+      output: 150 # USD/1M tokens
+    max_tokens: 16_384
+    context_window: 128_000
+    inputs:
+      - image
+      - text
+    function_calling: 1
+
   - name: o1
     adapter: OpenAIAdapter
     pricing:
