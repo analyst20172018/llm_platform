@@ -52,7 +52,10 @@ class OpenAIAdapter(AdapterBase):
 
                         # Ensure that history_message["content"] is a list, not a string
                         if not isinstance(history_message["content"], list):
-                            history_message["content"] = [history_message["content"]]
+                            history_message["content"] = [{
+                                "type": "text",
+                                "text": history_message["content"]
+                            }]
 
                         # Add the image to the content list
                         image_content = {"type": "image_url", 

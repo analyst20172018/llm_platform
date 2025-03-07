@@ -239,4 +239,24 @@ models:
       - text
       - image
   
-  
+  - name: mistral-large-latest
+    adapter: MistralAdapter
+    pricing:
+      input: 0 # USD/1M tokens
+      output: 0 # USD/1M tokens
+    max_tokens: 131_000
+    context_window: 131_000
+    inputs:
+      - image
+      - text
+
+  - name: mistral-ocr-latest
+    adapter: MistralAdapter
+    pricing:
+      input: 0 # USD/1M tokens
+      output: 0 # USD/1M tokens
+    max_tokens: 131_000
+    context_window: 131_000
+    inputs:
+      - image
+      - text

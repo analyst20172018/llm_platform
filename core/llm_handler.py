@@ -7,6 +7,7 @@ from llm_platform.adapters.google_adapter import GoogleAdapter
 from llm_platform.adapters.grok_adapter import GrokAdapter
 from llm_platform.adapters.deepseek_adapter import DeepSeekAdapter
 import llm_platform.adapters.elevenlabs_adapter as elevenlabs_adapter
+from llm_platform.adapters.mistral_adapter import MistralAdapter
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
 from llm_platform.tools.base import BaseTool
@@ -96,7 +97,8 @@ class APIHandler:
                 "SpeechmaticsAdapter": SpeechmaticsAdapter,
                 "GoogleAdapter": GoogleAdapter,
                 "GrokAdapter": GrokAdapter,
-                "DeepSeekAdapter": DeepSeekAdapter
+                "DeepSeekAdapter": DeepSeekAdapter,
+                "MistralAdapter": MistralAdapter,
             }.get(adapter_name)
 
             if adapter_class is None:
