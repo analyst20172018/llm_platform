@@ -28,6 +28,10 @@ class MistralAdapter(AdapterBase):
 
             history_message = {"role": message.role, "content": message.content}
 
+            # If there is an attribute tool_calls in message, then add it to history. 
+            if message.function_calls:
+                history_message["tool_calls"] = [each_call.to_openai() for each_call in message.function_calls]
+
             if not message.files is None:
                 # Ensure that history_message["content"] is a list, not a string
                 if not isinstance(history_message["content"], list):
@@ -172,8 +176,8 @@ class MistralAdapter(AdapterBase):
                             )
         
         usage = {"model": model,
-                 "completion_tokens": 0, #response.usage.completion_tokens,
-                 "prompt_tokens": 0 #response.usage.prompt_tokens
+                 "completion_tokens": response.usage.completion_tokens,
+                 "prompt_tokens": response.usage.prompt_tokens
                 }
         
         message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
@@ -181,12 +185,150 @@ class MistralAdapter(AdapterBase):
         
         return response.choices[0].message.content
     
+    def _convert_func_to_tool(self, func: Callable) -> Dict:
+        # Get function signature
+        sig = inspect.signature(func)
+
+        # Create parameters dictionary
+        parameters = {}
+        required_params = []
+
+        # Analyze each parameter
+        for param_name, param in sig.parameters.items():
+            param_info = {}
+
+            # Get parameter type annotation if available
+            if param.annotation != inspect.Parameter.empty:
+                if param.annotation == str:
+                    param_info['type'] = 'string'
+                elif param.annotation == int:
+                    param_info['type'] = 'integer'
+                elif param.annotation == float:
+                    param_info['type'] = 'number'
+                elif param.annotation == bool:
+                    param_info['type'] = 'boolean'
+                elif param.annotation == list:
+                    param_info['type'] = 'array'
+                elif param.annotation == dict:
+                    param_info['type'] = 'object'
+                else:
+                    param_info['type'] = 'string'  # default to string for unknown types
+            else:
+                param_info['type'] = 'string'  # default to string if no type annotation
+
+            # Check if parameter is required
+            if param.default == inspect.Parameter.empty:
+                required_params.append(param_name)
+
+            parameters[param_name] = param_info
+
+        # Create the tool dictionary
+        tool = {
+            'function': {
+                'name': func.__name__,
+                'description': func.__doc__ or '',
+                'parameters': {
+                    'type': 'object',
+                    'properties': parameters,
+                    'required': required_params,
+                    "additionalProperties": False
+                },
+                "strict": True
+            },
+            'type': 'function',
+        }
+        return tool
+
+    def _convert_function_to_tool(self, func: BaseTool | Callable) -> Dict:
+        # Convert the function to a tool for OpenAI
+        if isinstance(func, BaseTool):
+            # Handle the case where func is a BaseTool
+            tool = {
+                'function': func.to_params(provider='openai'),
+                'type': 'function',
+            }
+        
+        elif callable(func):
+            tool = self._convert_func_to_tool(func)
+        else:
+            raise TypeError("func must be either a BaseTool or a function")
+        return tool
+
     def request_llm_with_functions(self, model: str, 
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool | Callable], 
                                    tool_output_callback: Callable=None,
                                    **kwargs):
-        raise NotImplementedError("Not implemented yet")
+        tools = [self._convert_function_to_tool(each_function) for each_function in functions]
+        messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation, model)
+
+        chat_response = self.client.chat.complete(
+            model = model,
+            messages = messages,
+            tools = tools,
+            tool_choice = "any",
+        )
+
+        usage = {"model": model,
+                "completion_tokens": chat_response.usage.completion_tokens,
+                "prompt_tokens": chat_response.usage.prompt_tokens
+        }
+        
+        assistant_message = chat_response.choices[0].message
+
+        # Save tool_calls parameter from the openai answer for the history
+        if getattr(assistant_message, 'tool_calls', None) is not None:
+            function_call_records = [FunctionCall.from_openai(each_tool_call) for each_tool_call in assistant_message.tool_calls]
+        else: 
+            function_call_records = []
+
+        # If there are no tool calls, we can return the response
+        if getattr(assistant_message, 'tool_calls', None) is None:
+            return chat_response
+
+        function_response_records = []
+        for each_tools_call in getattr(assistant_message, 'tool_calls', []):
+
+            tool_call_id = each_tools_call.id
+            tool_function_name = each_tools_call.function.name
+            tool_arguments = json.loads(each_tools_call.function.arguments)
+
+            # Find the requested function
+            function_index = next((i for i, tool in enumerate(tools) if tool['function']['name'] == tool_function_name), -1)
+            if function_index == -1:
+                raise ValueError(f"Function {each_tools_call.function.name} not found in tools")
+            function = functions[function_index]
+
+            # Get all function parameters
+            function_parameters = []
+            for key, value in tools[function_index]['function'].get('parameters', {}).get('properties', {}).items():
+                function_parameters.append(tool_arguments[key])
+
+            # Call the function
+            function_response = function(*function_parameters)
+
+            function_response_record = FunctionResponse(name=tool_function_name,
+                                                        id=tool_call_id,
+                                                        response=function_response)
+            function_response_records.append(function_response_record)
+            
+            if tool_output_callback:
+                tool_output_callback(tool_function_name,
+                                     function_parameters,
+                                     function_response
+                                    )
+
+        message = Message(role=assistant_message.role, 
+                            content=assistant_message.content,
+                            function_calls=function_call_records,
+                            function_responses=function_response_records,
+                            usage=usage
+                            )
+        the_conversation.messages.append(message)
+
+        final_response = self.request_llm_with_functions(model, the_conversation, functions, tool_output_callback=tool_output_callback, **kwargs)
+
+        return final_response
     
     def voice_to_text(self, audio_file):
         raise NotImplementedError("Mistral does not support voice to text")

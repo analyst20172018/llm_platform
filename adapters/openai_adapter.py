@@ -40,6 +40,14 @@ class OpenAIAdapter(AdapterBase):
                 history_message["tool_calls"] = [each_call.to_openai() for each_call in message.function_calls]
 
             if not message.files is None:
+                
+                # Ensure that history_message["content"] is a list, not a string
+                if not isinstance(history_message["content"], list):
+                    history_message["content"] = [{
+                        "type": "text",
+                        "text": history_message["content"]
+                    }]
+
                 for each_file in message.files:
                     
                     # Images
@@ -49,13 +57,6 @@ class OpenAIAdapter(AdapterBase):
                         if model == 'o1-mini':
                             logging.warning("The model 'o1-mini' does not support images yet. Image is ignored.")
                             continue
-
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [{
-                                "type": "text",
-                                "text": history_message["content"]
-                            }]
 
                         # Add the image to the content list
                         image_content = {"type": "image_url", 
@@ -72,10 +73,6 @@ class OpenAIAdapter(AdapterBase):
                         if 'audio' not in kwargs:
                             kwargs['audio'] = {"voice": "alloy", "format": "wav"}
 
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [history_message["content"]]
-
                         # Add audio to history
                         audio_content = {
                             "type": "input_audio",
@@ -89,13 +86,6 @@ class OpenAIAdapter(AdapterBase):
                     # Text documents
                     elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile)):
                         
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [{
-                                "type": "text",
-                                "text": history_message["content"]
-                            }]
-
                         # Add the text document to the history as a text in XML tags
                         new_text_content = {
                             "type": "text",
