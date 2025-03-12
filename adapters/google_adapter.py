@@ -1,6 +1,6 @@
 from .adapter_base import AdapterBase
 from llm_platform.tools.base import BaseTool
-from llm_platform.services.files import ImageFile, AudioFile, VideoFile, TextDocumentFile, ExcelDocumentFile, PDFDocumentFile
+from llm_platform.services.files import MediaFile, ImageFile, AudioFile, VideoFile, TextDocumentFile, ExcelDocumentFile, PDFDocumentFile
 from llm_platform.services.conversation import Conversation, FunctionCall, FunctionResponse, Message
 
 from google import genai
@@ -127,13 +127,18 @@ class GoogleAdapter(AdapterBase):
 
             history = self.convert_conversation_history_to_adapter_format(the_conversation)
 
-            generation_config = genai.types.GenerateContentConfig(
-                system_instruction = the_conversation.system_prompt if the_conversation.system_prompt else "",
-                temperature=temperature,
-                tools = [],
-                safety_settings=self.safety_settings,
-                **kwargs
-            )
+            generation_config_params = {
+                "temperature": temperature,
+                "tools": [],
+                "safety_settings": self.safety_settings,
+            }
+            generation_config_params.update(kwargs)
+
+            if model != 'gemini-2.0-flash-exp':
+                if the_conversation.system_prompt:
+                    generation_config_params["system_instruction"] = the_conversation.system_prompt
+
+            generation_config = genai.types.GenerateContentConfig(**generation_config_params)
 
             """
             # Examples of the generation_config
@@ -159,7 +164,7 @@ class GoogleAdapter(AdapterBase):
                                                       model = model,
                                                       config = generation_config,
                                                     )
-            text_from_response = response.text
+            #text_from_response = response.text
 
         else:
             response = self.request_llm_with_functions(model, 
@@ -168,16 +173,31 @@ class GoogleAdapter(AdapterBase):
                                                        temperature,
                                                        tool_output_callback,
                                                        **kwargs)
-            text_from_response = response.candidates[0].content.parts[0].text
+            #text_from_response = response.candidates[0].content.parts[0].text
 
         finish_reason = response.candidates[0].finish_reason
         safety_ratings = response.candidates[0].safety_ratings
+
+        # Parse response
+        text_from_response = ""
+        files_from_response: List[MediaFile] = []
+
+        for part in response.candidates[0].content.parts:
+            if part.text is not None:
+                text_from_response += part.text
+            elif part.inline_data is not None:
+                if part.inline_data.mime_type == "image/png":
+                    image = ImageFile.from_bytes(file_bytes=part.inline_data.data, 
+                                                 file_name=f"image_{len(files_from_response)}.png")
+                    files_from_response.append(image)
+                else:
+                    raise ValueError(f"Unsupported mime type: {part.inline_data.mime_type}")
 
         usage = {"model": model,
                 "completion_tokens": response.usage_metadata.prompt_token_count,
                 "prompt_tokens": response.usage_metadata.candidates_token_count}
         
-        message = Message(role="assistant", content=text_from_response, usage=usage)
+        message = Message(role="assistant", content=text_from_response, files=files_from_response, usage=usage)
         the_conversation.messages.append(message)
 
         return text_from_response

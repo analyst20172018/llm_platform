@@ -164,6 +164,10 @@ class Message:
         self.function_calls = function_calls
         self.function_responses = function_responses
 
+    @property
+    def text(self):
+        return self.content
+
     def __str__(self):
         return f"{self.role}: {self.content};" + \
                 "\n".join([str(thinking_response) for thinking_response in self.thinking_responses]) + "\n" + \
