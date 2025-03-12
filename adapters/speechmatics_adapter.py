@@ -78,6 +78,7 @@ class SpeechmaticsAdapter(AdapterBase):
                                    the_conversation: Conversation, 
                                    functions: List[Callable],
                                    tool_output_callback: Callable=None, 
+                                   additional_parameters: Dict={},
                                    **kwargs):
         raise NotImplementedError("Not implemented yet")
 

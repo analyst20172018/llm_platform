@@ -31,6 +31,7 @@ class AdapterBase(ABC):
                                    functions: List[BaseTool], 
                                    temperature: int=0,
                                    tool_output_callback: Callable=None,
+                                   additional_parameters: Dict={},
                                    **kwargs):
         pass
 

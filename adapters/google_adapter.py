@@ -4,7 +4,6 @@ from llm_platform.services.files import ImageFile, AudioFile, VideoFile, TextDoc
 from llm_platform.services.conversation import Conversation, FunctionCall, FunctionResponse, Message
 
 from google import genai
-from google.genai import types
 from google.protobuf import struct_pb2
 
 from typing import List, Tuple, Callable, Dict
@@ -44,7 +43,7 @@ class GoogleAdapter(AdapterBase):
                 for each_function_call in message.function_calls:
                     struct_arguments = struct_pb2.Struct()
                     struct_arguments.update(json.loads(each_function_call.arguments))
-                    function_call_part = types.Part.from_function_call(name=each_function_call.name, args=struct_arguments)
+                    function_call_part = genai.types.Part.from_function_call(name=each_function_call.name, args=struct_arguments)
 
                     function_calls_parts.append(function_call_part)
 
@@ -57,15 +56,15 @@ class GoogleAdapter(AdapterBase):
                     #else: 
                     #    payload = each_function_response.response
                     
-                    response_part = types.Part.from_function_response(name=each_function_response.name, 
+                    response_part = genai.types.Part.from_function_response(name=each_function_response.name, 
                                                                       response=each_function_response.response,
                                                                     )
                     response_parts.append(response_part)
                     
-                    protos_message = types.Content(role="function", 
+                    protos_message = genai.types.Content(role="function", 
                                                    parts = function_calls_parts + response_parts)
             else:
-                protos_message = types.Content(role=role, parts=[types.Part.from_text(text=message.content)])
+                protos_message = genai.types.Content(role=role, parts=[genai.types.Part.from_text(text=message.content)])
 
             # Add files to history (for the moment, only images)
             if not message.files is None:
@@ -73,13 +72,13 @@ class GoogleAdapter(AdapterBase):
                     
                     # Images
                     if isinstance(each_file, ImageFile):
-                        part_with_image = types.Part.from_bytes(data = each_file.file_bytes,
+                        part_with_image = genai.types.Part.from_bytes(data = each_file.file_bytes,
                                                                 mime_type = f"image/{each_file.extension}")
 
                         protos_message.parts.append(part_with_image)
 
                     if isinstance(each_file, AudioFile):
-                        part_with_audio = types.Part.from_bytes(data = each_file.file_bytes,
+                        part_with_audio = genai.types.Part.from_bytes(data = each_file.file_bytes,
                                                                 mime_type = f"audio/mp3")
 
                         protos_message.parts.append(part_with_audio)
@@ -87,20 +86,20 @@ class GoogleAdapter(AdapterBase):
                     # Text documents
                     if isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
                         document_as_text = f"""<document name="{each_file.name}">{each_file.text}</document>"""
-                        part_with_text_document = types.Part.from_text(text=document_as_text)
+                        part_with_text_document = genai.types.Part.from_text(text=document_as_text)
 
                         protos_message.parts.append(part_with_text_document)
 
                     # PDF documents
                     if isinstance(each_file, PDFDocumentFile):
                         if (each_file.size < 20_000_000) and (each_file.number_of_pages < 3_600):
-                            part_with_pdf = types.Part.from_bytes(data = each_file.bytes,
+                            part_with_pdf = genai.types.Part.from_bytes(data = each_file.bytes,
                                                                 mime_type = f"application/pdf")
 
                             protos_message.parts.append(part_with_pdf)
                         else: # Load pdf as text
                             document_as_text = f"""<document name="{each_file.name}">{each_file.text}</document>"""
-                            part_with_text_document = types.Part.from_text(text=document_as_text)
+                            part_with_text_document = genai.types.Part.from_text(text=document_as_text)
 
                             protos_message.parts.append(part_with_text_document)
 
@@ -128,7 +127,7 @@ class GoogleAdapter(AdapterBase):
 
             history = self.convert_conversation_history_to_adapter_format(the_conversation)
 
-            generation_config = types.GenerateContentConfig(
+            generation_config = genai.types.GenerateContentConfig(
                 system_instruction = the_conversation.system_prompt if the_conversation.system_prompt else "",
                 temperature=temperature,
                 tools = [],
@@ -138,7 +137,7 @@ class GoogleAdapter(AdapterBase):
 
             """
             # Examples of the generation_config
-            generation_config=types.GenerateContentConfig(
+            generation_config=genai.types.GenerateContentConfig(
                 temperature=0,
                 top_p=0.95,
                 top_k=20,
@@ -153,7 +152,7 @@ class GoogleAdapter(AdapterBase):
 
             # Grounding
             if additional_parameters.get("grounding", False):
-                grounding_tool = types.Tool(google_search=types.GoogleSearchRetrieval)
+                grounding_tool = genai.types.Tool(google_search=genai.types.GoogleSearchRetrieval)
                 generation_config.tools.append(grounding_tool)
 
             response = self.client.models.generate_content(contents = history, 
@@ -187,25 +186,25 @@ class GoogleAdapter(AdapterBase):
     def safety_settings(self):
         # Safety config
         safety_settings = [
-            types.SafetySetting(
-                category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                threshold=types.HarmBlockThreshold.BLOCK_NONE,
+            genai.types.SafetySetting(
+                category=genai.types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                threshold=genai.types.HarmBlockThreshold.BLOCK_NONE,
             ),
-            types.SafetySetting(
-                category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                threshold=types.HarmBlockThreshold.BLOCK_NONE,
+            genai.types.SafetySetting(
+                category=genai.types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                threshold=genai.types.HarmBlockThreshold.BLOCK_NONE,
             ),
-            types.SafetySetting(
-                category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                threshold=types.HarmBlockThreshold.BLOCK_NONE,
+            genai.types.SafetySetting(
+                category=genai.types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                threshold=genai.types.HarmBlockThreshold.BLOCK_NONE,
             ),
-            types.SafetySetting(
-                category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                threshold=types.HarmBlockThreshold.BLOCK_NONE,
+            genai.types.SafetySetting(
+                category=genai.types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                threshold=genai.types.HarmBlockThreshold.BLOCK_NONE,
             ),
-            types.SafetySetting(
-                category=types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
-                threshold=types.HarmBlockThreshold.BLOCK_NONE,
+            genai.types.SafetySetting(
+                category=genai.types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+                threshold=genai.types.HarmBlockThreshold.BLOCK_NONE,
             ),
         ]
         return safety_settings
@@ -215,7 +214,8 @@ class GoogleAdapter(AdapterBase):
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool], 
                                    temperature: int=0, 
-                                   tool_output_callback: Callable=None, 
+                                   tool_output_callback: Callable=None,
+                                   additional_parameters: Dict={},
                                    **kwargs
                                    ): 
         # Convert all functions by letting your BaseTool clean the schema 
@@ -231,13 +231,18 @@ class GoogleAdapter(AdapterBase):
                     # If it’s not a llm_platform.tools.base.BaseTool 
                     converted_functions.append(func)
 
-        generation_config = types.GenerateContentConfig(
+        generation_config = genai.types.GenerateContentConfig(
                 system_instruction = the_conversation.system_prompt if the_conversation.system_prompt else "",
                 temperature=temperature,
                 tools = converted_functions,
                 safety_settings=self.safety_settings,
                 **kwargs
             )
+        
+        # Grounding
+        if additional_parameters.get("grounding", False):
+            grounding_tool = genai.types.Tool(google_search=genai.types.GoogleSearchRetrieval)
+            generation_config.tools.append(grounding_tool)
 
         while True:
         
@@ -333,7 +338,7 @@ class GoogleAdapter(AdapterBase):
 
         """
             # Examples of the generation_config
-            generation_config=types.GenerateContentConfig(
+            generation_config=genai.types.GenerateContentConfig(
                 temperature=0,
                 top_p=0.95,
                 top_k=20,
@@ -349,7 +354,7 @@ class GoogleAdapter(AdapterBase):
         response = self.client.models.generate_images(
             model='imagen-3.0-generate-002',
             prompt=prompt,
-            config=types.GenerateImagesConfig(
+            config=genai.types.GenerateImagesConfig(
                 number_of_images=n,
                 **kwargs
             ),
@@ -377,7 +382,7 @@ class GoogleAdapter(AdapterBase):
 
         """
             # Examples of the generation_config
-            generation_config=types.GenerateContentConfig(
+            generation_config=genai.types.GenerateContentConfig(
                 temperature=0,
                 top_p=0.95,
                 top_k=20,
@@ -393,7 +398,7 @@ class GoogleAdapter(AdapterBase):
         response = self.client.aio.models.generate_images(
             model='imagen-3.0-generate-002',
             prompt=prompt,
-            config=types.GenerateImagesConfig(
+            config=genai.types.GenerateImagesConfig(
                 number_of_images=n,
                 **kwargs
             )

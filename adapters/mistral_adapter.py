@@ -56,7 +56,7 @@ class MistralAdapter(AdapterBase):
                         logging.warning("Audio files are not supported by Mistral API and it is skipped")
                     
                     # Text documents
-                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
+                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile)):
 
                         # Add the text document to the history as a text in XML tags
                         new_text_content = {
@@ -64,15 +64,6 @@ class MistralAdapter(AdapterBase):
                             "text": f"""<document name="{each_file.name}">{each_file.text}</document>"""
                         }
                         history_message["content"].insert(0, new_text_content)
-
-                    # PDF documents
-                    elif isinstance(each_file, PDFDocumentFile):
-                        
-                        # Add the image to the content list
-                        pdf_content = {"type": "document_url", 
-                                         "document_url": {"url": f"data:application/pdf;base64,{each_file.base64}"}
-                                         }
-                        history_message["content"].append(pdf_content)
 
                     else:
                         raise ValueError(f"Unsupported file type: {message.file.get_type()}")
@@ -258,6 +249,7 @@ class MistralAdapter(AdapterBase):
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool | Callable], 
                                    tool_output_callback: Callable=None,
+                                   additional_parameters: Dict={},
                                    **kwargs):
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
         messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation, model)

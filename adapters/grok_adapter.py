@@ -233,6 +233,7 @@ class GrokAdapter(AdapterBase):
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool | Callable], 
                                    tool_output_callback: Callable=None,
+                                   additional_parameters: Dict={},
                                    **kwargs):
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
         messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation, model)

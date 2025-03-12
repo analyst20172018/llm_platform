@@ -37,17 +37,18 @@ class AnthropicAdapter(AdapterBase):
             
             # Add files
             if not message.files is None:
+
+                # Ensure that history_message["content"] is a list, not a string
+                if not isinstance(history_message["content"], list):
+                    history_message["content"] = [{
+                        "type": "text",
+                        "text": history_message["content"]
+                    }]
+
                 for each_file in message.files:
 
                     # Images
                     if isinstance(each_file, ImageFile):
-
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [{
-                                "type": "text",
-                                "text": history_message["content"]
-                            }]
 
                         # Add the image to the content list
                         image_content = {
@@ -62,13 +63,6 @@ class AnthropicAdapter(AdapterBase):
                         history_message["content"].append(image_content)
                     
                     elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
-                        
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [{
-                                "type": "text",
-                                "text": history_message["content"]
-                            }]
 
                         document_content = {
                             "type": "document",
@@ -85,13 +79,6 @@ class AnthropicAdapter(AdapterBase):
                         history_message["content"].insert(0, document_content)
 
                     elif isinstance(each_file, PDFDocumentFile):
-                        
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [{
-                                "type": "text",
-                                "text": history_message["content"]
-                            }]
 
                         if (each_file.size < 32_000_000) and (each_file.number_of_pages < 100):
 
@@ -167,8 +154,8 @@ class AnthropicAdapter(AdapterBase):
                     **kwargs):
         
         # Convert parameter `reasoning_efforts` to `thinking` parameter
-        if 'reasoning_effort' in kwargs:
-            reasoning_effort = kwargs.pop('reasoning_effort')
+        if 'reasoning' in kwargs:
+            reasoning_effort = kwargs.pop('reasoning', {}).get('effort', 'low')
             """
                 reasoning_effort 'low' -> thinking is not used at all
                 reasoning_effort 'medium' -> thinking budget is 8000
@@ -359,6 +346,7 @@ class AnthropicAdapter(AdapterBase):
                                    functions: List[BaseTool], 
                                    temperature: int=0,  
                                    tool_output_callback: Callable=None,
+                                   additional_parameters: Dict={},
                                    **kwargs):
         
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
@@ -453,7 +441,11 @@ class AnthropicAdapter(AdapterBase):
         final_response = self.request_llm_with_functions(model, the_conversation, functions, temperature, tool_output_callback=tool_output_callback, **kwargs)
         return final_response
 
-    def request_llm_computer_use(self, model: str, the_conversation: Conversation, functions: List[Callable], temperature: int=0,  **kwargs):
+    def request_llm_computer_use(self, model: str, 
+                                 the_conversation: Conversation, 
+                                 functions: List[Callable], 
+                                 temperature: int=0,  
+                                 **kwargs):
         
         if not functions is None:
             tools = [self._convert_function_to_tool(each_function) for each_function in functions]

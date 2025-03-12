@@ -1,6 +1,7 @@
 anthropic>=0.18.0
 elevenlabs>=0.2.0
-google-generativeai>=0.3.0
+google-genai
+mistralai
 lxml>=4.9.0
 openai>=1.12.0
 pandas>=2.0.0
@@ -13,5 +14,5 @@ python-dotenv>=1.0.0
 PyYAML>=6.0.0
 requests>=2.31.0
 rich>=13.0.0
-speechmatics>=1.8.0
+speechmatics-python
 tiktoken>=0.5.0

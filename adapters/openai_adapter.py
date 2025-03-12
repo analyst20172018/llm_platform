@@ -21,32 +21,25 @@ class OpenAIAdapter(AdapterBase):
                         model: str, 
                         **kwargs):
         
-        # Add system prompt as the message from the user "system" for OpenAI (for o1 models as "developer")
-        if model in ['o1', 'o3-mini']: # 'o1-mini'
-            history = [{"role": "developer", "content": the_conversation.system_prompt}]
-        elif model == 'o1-mini':
-            logging.warning("The model 'o1-mini' does not support system prompt")
-            history = []
-        else:
-            history = [{"role": "system", "content": the_conversation.system_prompt}]
+        history = []
 
         # Add history of messages
         for message in the_conversation.messages:
 
-            history_message = {"role": message.role, "content": message.content}
-
-            # If there is an attribute tool_calls in message, then add it to history. 
+            # Add all function calls to the history
             if message.function_calls:
-                history_message["tool_calls"] = [each_call.to_openai() for each_call in message.function_calls]
+                for each_function_call in message.function_calls:
+                    history.append(each_function_call.to_openai())
+
+            history_message = {
+                "role": message.role, 
+                "content": [{
+                    "type": "input_text" if message.role == "user" else "output_text",
+                    "text": message.content
+                }]
+            }
 
             if not message.files is None:
-                
-                # Ensure that history_message["content"] is a list, not a string
-                if not isinstance(history_message["content"], list):
-                    history_message["content"] = [{
-                        "type": "text",
-                        "text": history_message["content"]
-                    }]
 
                 for each_file in message.files:
                     
@@ -59,7 +52,7 @@ class OpenAIAdapter(AdapterBase):
                             continue
 
                         # Add the image to the content list
-                        image_content = {"type": "image_url", 
+                        image_content = {"type": "input_image", 
                                          "image_url": {"url": f"data:image/{each_file.extension};base64,{each_file.base64}"}
                                          }
                         history_message["content"].append(image_content)
@@ -88,7 +81,7 @@ class OpenAIAdapter(AdapterBase):
                         
                         # Add the text document to the history as a text in XML tags
                         new_text_content = {
-                            "type": "text",
+                            "type": "input_text",
                             "text": f"""<document name="{each_file.name}">{each_file.text}</document>"""
                         }
                         history_message["content"].insert(0, new_text_content)
@@ -113,9 +106,6 @@ class OpenAIAdapter(AdapterBase):
                     additional_parameters: Dict={},
                     **kwargs):
         
-        if additional_parameters:
-            logging.warning("Additional parameters is not supported by OpenAI API")
-
         # Remove 'max_tokens' and 'temperature' from kwargs if 'o1-' is in the model name
         if model.lower() in ['o1', 'o3-mini']:
             kwargs.pop('max_tokens', None)
@@ -124,12 +114,21 @@ class OpenAIAdapter(AdapterBase):
             # Add temperature to kwargs
             kwargs['temperature'] = temperature
 
+        if 'max_tokens' in kwargs:
+            kwargs['max_output_tokens'] = kwargs.pop('max_tokens')
 
         if functions is None:
+            tools = []
+            # Web-search
+            if additional_parameters.get("grounding", False):
+                tools = [{"type": "web_search_preview"}]
+
             messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
-            response = self.client.chat.completions.create(
+            response = self.client.responses.create(
                             model=model,
-                            messages=messages,
+                            instructions = the_conversation.system_prompt,
+                            input=messages,
+                            tools=tools,
                             **kwargs,
                             )
         else:
@@ -142,13 +141,19 @@ class OpenAIAdapter(AdapterBase):
              )
 
         usage = {"model": model,
-                 "completion_tokens": response.usage.completion_tokens,
-                 "prompt_tokens": response.usage.prompt_tokens}
+                 "completion_tokens": response.usage.output_tokens,
+                 "prompt_tokens": response.usage.input_tokens}
         
-        message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
+        answer_text = '\n'.join([each_content.text \
+                                    for each_output in getattr(response, 'output', []) \
+                                        for each_content in getattr(each_output, 'content', []) \
+                                            if getattr(each_content, 'type', "") == "output_text"]
+                                )
+        
+        message = Message(role="assistant", content=answer_text, usage=usage)
         the_conversation.messages.append(message)
         
-        return response.choices[0].message.content
+        return answer_text
 
     def generate_image(self, prompt: str, n=1, **kwargs):
             response = self.client.images.generate(
@@ -213,17 +218,15 @@ class OpenAIAdapter(AdapterBase):
 
         # Create the tool dictionary
         tool = {
-            'function': {
-                'name': func.__name__,
-                'description': func.__doc__ or '',
-                'parameters': {
-                    'type': 'object',
-                    'properties': parameters,
-                    'required': required_params,
-                    "additionalProperties": False
-                },
-                "strict": True
+            'name': func.__name__,
+            'description': func.__doc__ or '',
+            'parameters': {
+                'type': 'object',
+                'properties': parameters,
+                'required': required_params,
+                "additionalProperties": False
             },
+            "strict": True,
             'type': 'function',
         }
         return tool
@@ -231,11 +234,8 @@ class OpenAIAdapter(AdapterBase):
     def _convert_function_to_tool(self, func: BaseTool | Callable) -> Dict:
         # Convert the function to a tool for OpenAI
         if isinstance(func, BaseTool):
-            # Handle the case where func is a BaseTool
-            tool = {
-                'function': func.to_params(provider='openai'),
-                'type': 'function',
-            }
+            tool = func.to_params(provider='openai')
+            tool['type'] = 'function'
         
         elif callable(func):
             tool = self._convert_func_to_tool(func)
@@ -247,56 +247,67 @@ class OpenAIAdapter(AdapterBase):
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool | Callable], 
                                    tool_output_callback: Callable=None,
+                                   additional_parameters: Dict={},
                                    **kwargs):
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
         messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation, model)
 
-        chat_response = self.client.chat.completions.create(
+        # Web-search
+        if additional_parameters.get("grounding", False):
+            tools.append({"type": "web_search_preview"})
+
+        chat_response = self.client.responses.create(
                         model=model,
-                        messages=messages,
+                        instructions = the_conversation.system_prompt,
+                        input=messages,
                         tools=tools,
                         **kwargs,
                         )
         
         usage = {"model": model,
-                "completion_tokens": chat_response.usage.completion_tokens,
-                "prompt_tokens": chat_response.usage.prompt_tokens}
+                "completion_tokens": chat_response.usage.output_tokens,
+                "prompt_tokens": chat_response.usage.input_tokens}
         
-        assistant_message = chat_response.choices[0].message
+        assistant_message_text = '\n'.join([each_content.text \
+                                            for each_output in getattr(chat_response, 'output', []) \
+                                                for each_content in getattr(each_output, 'content', []) \
+                                                    if getattr(each_content, 'type', "") == "output_text"]
+                                        )
 
         # Save tool_calls parameter from the openai answer for the history
-        if getattr(assistant_message, 'tool_calls', None) is not None:
-            function_call_records = [FunctionCall.from_openai(each_tool_call) for each_tool_call in assistant_message.tool_calls]
-        else: 
-            function_call_records = []
+        function_call_records = []
+        for each_output in chat_response.output:
+            if each_output.type == "function_call":
+                new_function_call = FunctionCall.from_openai(each_output)
+                function_call_records.append(new_function_call)
 
         # If there are no tool calls, we can return the response
-        if getattr(assistant_message, 'tool_calls', None) is None:
+        if len(function_call_records) == 0:
             return chat_response
 
         function_response_records = []
-        for each_tools_call in getattr(assistant_message, 'tool_calls', []):
+        for each_tools_call in function_call_records:
 
-            tool_call_id = each_tools_call.id
-            tool_function_name = each_tools_call.function.name
-            tool_arguments = json.loads(each_tools_call.function.arguments)
+            tool_call_id = each_tools_call.call_id
+            tool_function_name = each_tools_call.name
+            tool_arguments = json.loads(each_tools_call.arguments)
 
             # Find the requested function
-            function_index = next((i for i, tool in enumerate(tools) if tool['function']['name'] == tool_function_name), -1)
+            function_index = next((i for i, tool in enumerate(tools) if tool['name'] == tool_function_name), -1)
             if function_index == -1:
                 raise ValueError(f"Function {each_tools_call.function.name} not found in tools")
             function = functions[function_index]
 
             # Get all function parameters
             function_parameters = []
-            for key, value in tools[function_index]['function'].get('parameters', {}).get('properties', {}).items():
+            for key, value in tools[function_index].get('parameters', {}).get('properties', {}).items():
                 function_parameters.append(tool_arguments[key])
 
             # Call the function
             function_response = function(*function_parameters)
 
             function_response_record = FunctionResponse(name=tool_function_name,
-                                                        id=tool_call_id,
+                                                        call_id=tool_call_id,
                                                         response=function_response)
             function_response_records.append(function_response_record)
             
@@ -306,8 +317,8 @@ class OpenAIAdapter(AdapterBase):
                                      function_response
                                     )
 
-        message = Message(role=assistant_message.role, 
-                            content=assistant_message.content,
+        message = Message(role="assistant", 
+                            content=assistant_message_text,
                             function_calls=function_call_records,
                             function_responses=function_response_records,
                             usage=usage
