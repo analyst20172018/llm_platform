@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from dotenv import load_dotenv
 from typing import List, Tuple, Callable, Dict
 import logging
-from llm_platform.services.conversation import Conversation
+from llm_platform.services.conversation import Conversation, Message
 from llm_platform.tools.base import BaseTool
 
 class AdapterBase(ABC):
@@ -22,7 +22,7 @@ class AdapterBase(ABC):
                     temperature: int=0,
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={}, 
-                    **kwargs):
+                    **kwargs) -> Message:
         pass
 
     @abstractmethod

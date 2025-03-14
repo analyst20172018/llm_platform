@@ -45,27 +45,14 @@ class OpenAIAdapter(AdapterBase):
                     
                     # Images
                     if isinstance(each_file, ImageFile):
-
-                        # Check if the model supports images
-                        if model == 'o1-mini':
-                            logging.warning("The model 'o1-mini' does not support images yet. Image is ignored.")
-                            continue
-
                         # Add the image to the content list
                         image_content = {"type": "input_image", 
-                                         "image_url": {"url": f"data:image/{each_file.extension};base64,{each_file.base64}"}
+                                         "image_url": f"data:image/{each_file.extension};base64,{each_file.base64}"
                                          }
                         history_message["content"].append(image_content)
                     
                     # Audio
-                    if isinstance(each_file, AudioFile):
-                        # Update kwargs as needed
-                        assert "gpt-4o-audio" in model
-                        if 'modalities' not in kwargs:
-                            kwargs['modalities'] = ["text"] #["text", "audio"]
-                        if 'audio' not in kwargs:
-                            kwargs['audio'] = {"voice": "alloy", "format": "wav"}
-
+                    elif isinstance(each_file, AudioFile):
                         # Add audio to history
                         audio_content = {
                             "type": "input_audio",
@@ -75,9 +62,27 @@ class OpenAIAdapter(AdapterBase):
                             }
                         }
                         history_message["content"].append(audio_content)
+
+                    # PDF File
+                    elif isinstance(each_file, PDFDocumentFile):
+
+                        if (each_file.size < 32_000_000) and (each_file.number_of_pages < 100):
+                            # Add the image to the content list
+                            image_content = {"type": "input_file",
+                                             "filename": each_file.name,
+                                             "file_data": f"data:application/pdf;base64,{each_file.base64}"
+                                            }
+                        else:
+                            # Add the text document to the history as a text in XML tags
+                            new_text_content = {
+                                "type": "input_text",
+                                "text": f"""<document name="{each_file.name}">{each_file.text}</document>"""
+                            }
+                            
+                        history_message["content"].append(image_content)
                     
                     # Text documents
-                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile)):
+                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
                         
                         # Add the text document to the history as a text in XML tags
                         new_text_content = {
@@ -87,7 +92,7 @@ class OpenAIAdapter(AdapterBase):
                         history_message["content"].insert(0, new_text_content)
 
                     else:
-                        raise ValueError(f"Unsupported file type: {message.file.get_type()}")
+                        raise ValueError(f"Unsupported file type: {type(each_file)}")
 
             history.append(history_message)
 
@@ -104,7 +109,7 @@ class OpenAIAdapter(AdapterBase):
                     temperature: int=0, 
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={},
-                    **kwargs):
+                    **kwargs) -> Message:
         
         # Remove 'max_tokens' and 'temperature' from kwargs if 'o1-' is in the model name
         if model.lower() in ['o1', 'o3-mini']:
@@ -153,7 +158,7 @@ class OpenAIAdapter(AdapterBase):
         message = Message(role="assistant", content=answer_text, usage=usage)
         the_conversation.messages.append(message)
         
-        return answer_text
+        return message
 
     def generate_image(self, prompt: str, n=1, **kwargs):
             response = self.client.images.generate(

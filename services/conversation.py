@@ -17,7 +17,10 @@ class FunctionCall:
         self.id = id
         self.name = name
         self.arguments = arguments
-        self.call_id = call_id
+        if call_id is None:
+            self.call_id = id
+        else:
+            self.call_id = call_id
 
     @classmethod
     def from_openai(cls, tool_call):
@@ -60,6 +63,11 @@ class FunctionResponse:
         else:
             self.response = {"text": response}
         self.files = []
+
+        if call_id is None:
+            self.call_id = id
+        else:
+            self.call_id = call_id
 
         self._parse_response()
 
@@ -221,9 +229,13 @@ class Conversation:
         }
         for message in self.messages:
             if message.usage:
-                total_usage["prompt_tokens"] += message.usage.get("prompt_tokens", 0)
-                total_usage["completion_tokens"] += message.usage.get("completion_tokens", 0)
-                total_usage["costs"] += message.usage.get("costs", 0)
+                prompt_tokens = message.usage.get("prompt_tokens", 0)
+                completion_tokens = message.usage.get("completion_tokens", 0)
+                costs = message.usage.get("costs", 0)
+                
+                total_usage["prompt_tokens"] += 0 if prompt_tokens is None else prompt_tokens
+                total_usage["completion_tokens"] += 0 if completion_tokens is None else completion_tokens
+                total_usage["costs"] += 0 if costs is None else costs
         return total_usage
 
     @property

@@ -113,7 +113,7 @@ class GoogleAdapter(AdapterBase):
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={},
-                    **kwargs):
+                    **kwargs) -> Message:
         
         # Modify kwargs to change max_tokens to max_output_tokens
         if 'max_tokens' in kwargs:
@@ -127,6 +127,7 @@ class GoogleAdapter(AdapterBase):
 
             history = self.convert_conversation_history_to_adapter_format(the_conversation)
 
+            # Prepare parameters for the generation config
             generation_config_params = {
                 "temperature": temperature,
                 "tools": [],
@@ -134,9 +135,14 @@ class GoogleAdapter(AdapterBase):
             }
             generation_config_params.update(kwargs)
 
+            # Add system prompt to the generation config parameters
             if model != 'gemini-2.0-flash-exp':
                 if the_conversation.system_prompt:
                     generation_config_params["system_instruction"] = the_conversation.system_prompt
+
+            # Add response modalities to the generation config parameters
+            if "response_modalities" in additional_parameters:
+                generation_config_params["response_modalities"] = additional_parameters["response_modalities"]
 
             generation_config = genai.types.GenerateContentConfig(**generation_config_params)
 
@@ -164,8 +170,6 @@ class GoogleAdapter(AdapterBase):
                                                       model = model,
                                                       config = generation_config,
                                                     )
-            #text_from_response = response.text
-
         else:
             response = self.request_llm_with_functions(model, 
                                                        the_conversation, 
@@ -173,7 +177,6 @@ class GoogleAdapter(AdapterBase):
                                                        temperature,
                                                        tool_output_callback,
                                                        **kwargs)
-            #text_from_response = response.candidates[0].content.parts[0].text
 
         finish_reason = response.candidates[0].finish_reason
         safety_ratings = response.candidates[0].safety_ratings
@@ -193,6 +196,7 @@ class GoogleAdapter(AdapterBase):
                 else:
                     raise ValueError(f"Unsupported mime type: {part.inline_data.mime_type}")
 
+        # Get usage
         usage = {"model": model,
                 "completion_tokens": response.usage_metadata.prompt_token_count,
                 "prompt_tokens": response.usage_metadata.candidates_token_count}
@@ -200,7 +204,7 @@ class GoogleAdapter(AdapterBase):
         message = Message(role="assistant", content=text_from_response, files=files_from_response, usage=usage)
         the_conversation.messages.append(message)
 
-        return text_from_response
+        return message
     
     @property
     def safety_settings(self):

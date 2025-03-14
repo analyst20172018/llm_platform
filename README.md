@@ -198,6 +198,30 @@ class APIHandler:
         # Get available models for a specific adapter
 ```
 
+#### Additional parameters
+
+**Response modalities**
+`{"response_modalities": ['text', 'image', 'audio']}`
+used for some models in Gemini and OpenAI
+
+**Citation**
+`{"citations": True}`
+Used for the citation feature for Anthropic
+
+**Grounding (web search)**
+`{"grounding": True}`
+used for some models in Gemini and OpenAI
+
+**Reasoning**
+`{"reasoning": 'low'}` or 'medium' or 'high'
+used for some models in Anthropic and OpenAI
+
+- for OpenAI it will be directly transferred to the model
+- for Anthropic it will be translated to the `budget_tokens` for thinking:
+    - reasoning_effort 'low' -> thinking is not used at all
+    - reasoning_effort 'medium' -> thinking budget is 8000
+    - reasoning_effort 'high' -> thinking budget is 32000
+
 ### Conversation Management
 
 ```python

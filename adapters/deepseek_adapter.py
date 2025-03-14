@@ -111,7 +111,7 @@ class DeepSeekAdapter(AdapterBase):
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={},
-                    **kwargs):
+                    **kwargs) -> Message:
         
         if additional_parameters:
             logging.warning("Additional parameters is not supported by DeepSeek API")
@@ -139,7 +139,7 @@ class DeepSeekAdapter(AdapterBase):
         message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
         the_conversation.messages.append(message)
         
-        return response.choices[0].message.content
+        return message
 
     def voice_to_text(self, audio_file):
         raise NotImplementedError("OpenRoute does not support voice to text")

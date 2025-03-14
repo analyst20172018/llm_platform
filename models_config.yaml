@@ -71,6 +71,7 @@ models:
     max_tokens: 100_000
     context_window: 200_000
     reasoning_effort: 1
+    function_calling: 1
     inputs:
       - image
       - text
@@ -80,8 +81,8 @@ models:
     pricing:
       input: 1.10 # USD/1M tokens
       output: 4.40 # USD/1M tokens
-    max_tokens: 100000
-    context_window: 200000
+    max_tokens: 100_000
+    context_window: 200_000
     reasoning_effort: 1
     inputs:
       - text
@@ -143,10 +144,15 @@ models:
     pricing:
       input: 2.5 # USD/1M tokens
       output: 10 # USD/1M tokens
-    max_tokens: 16384
+    max_tokens: 16_384
+    context_window: 128_000
     inputs:
-      - audio
       - text
+      - audio
+    outputs:
+      - text
+      - audio
+    function_calling: 1
 
   - name: gpt-4
     adapter: OpenAIAdapter
@@ -187,9 +193,9 @@ models:
       - text
       - image
       - audio
-    function_calling: 1
-    grounding: 1
-    code_execution: 1
+    outputs:
+      - text
+      - image
 
   - name: gemini-2.0-flash-thinking-exp-01-21
     adapter: GoogleAdapter

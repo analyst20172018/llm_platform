@@ -216,6 +216,8 @@ class APIHandler:
             model (str): The name of the model to use.
             temperature (float): The temperature for text generation.
             **kwargs: Additional keyword arguments for the request.
+            additional_parameters (Dict, optional): Additional parameters to include in the request:
+                response_modalities=['text', 'image', 'audio']: The response modalities to include in the response (for Gemini and OpenAI)
 
         Returns:
             str: The response from the language model.

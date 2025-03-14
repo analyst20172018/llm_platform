@@ -124,7 +124,7 @@ class MistralAdapter(AdapterBase):
                     temperature: int=0, 
                     tool_output_callback: Callable=None, 
                     additional_parameters: Dict={},
-                    **kwargs):
+                    **kwargs) -> Message:
 
         if additional_parameters:
             logging.warning("Additional parameters is not supported by Mistral API")
@@ -174,7 +174,7 @@ class MistralAdapter(AdapterBase):
         message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
         the_conversation.messages.append(message)
         
-        return response.choices[0].message.content
+        return message
     
     def _convert_func_to_tool(self, func: Callable) -> Dict:
         # Get function signature

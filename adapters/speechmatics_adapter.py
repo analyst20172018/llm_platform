@@ -3,7 +3,7 @@ import os
 from speechmatics.models import ConnectionSettings
 from speechmatics.batch_client import BatchClient
 from typing import List, Tuple, Dict, BinaryIO, Callable, Union, Tuple, Optional
-from llm_platform.services.conversation import Conversation
+from llm_platform.services.conversation import Conversation, Message
 import logging
 
 class SpeechmaticsAdapter(AdapterBase):
@@ -21,7 +21,7 @@ class SpeechmaticsAdapter(AdapterBase):
                     temperature: int=0, 
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={},
-                    **kwargs):
+                    **kwargs) -> Message:
         raise NotImplementedError("Not implemented yet")
 
     def voice_to_text(self, audio_file: Tuple[str, BinaryIO], language: str="en", transcription_config: Dict=None):

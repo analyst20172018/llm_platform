@@ -18,9 +18,9 @@ class AnthropicAdapter(AdapterBase):
         self.client = anthropic.Anthropic(
                 api_key=os.getenv("ANTHROPIC_API_KEY"),
             )
-        self.async_client = anthropic.AsyncAnthropic(
-            api_key=os.getenv("ANTHROPIC_API_KEY"),
-        )
+        #self.async_client = anthropic.AsyncAnthropic(
+        #    api_key=os.getenv("ANTHROPIC_API_KEY"),
+        #)
         self.model_config = ModelConfig()
 
     def convert_conversation_history_to_adapter_format(self, 
@@ -94,8 +94,6 @@ class AnthropicAdapter(AdapterBase):
                                 "citations": {"enabled": additional_parameters.get("citations", False)}
                             }
 
-                            history_message["content"].insert(0, document_content)
-
                         else:
 
                             document_content = {
@@ -110,7 +108,7 @@ class AnthropicAdapter(AdapterBase):
                                 "citations": {"enabled": additional_parameters.get("citations", False)}
                             }
 
-                            history_message["content"].insert(0, document_content)
+                        history_message["content"].insert(0, document_content)
                     
                     else:
                         raise ValueError(f"Unsupported file type: {message.file.get_type()}")
@@ -151,7 +149,7 @@ class AnthropicAdapter(AdapterBase):
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={}, 
-                    **kwargs):
+                    **kwargs) -> Message:
         
         # Convert parameter `reasoning_efforts` to `thinking` parameter
         if 'reasoning' in kwargs:
@@ -247,7 +245,7 @@ class AnthropicAdapter(AdapterBase):
         
         the_conversation.messages.append(message)
         
-        return full_response
+        return message
 
     def count_tokens(self, model, messages, tools=None):
         """Count tokens for a given message list."""
