@@ -1,5 +1,6 @@
 from typing import List, Dict
 from llm_platform.adapters.openai_adapter import OpenAIAdapter
+from llm_platform.adapters.openai_old_adapter import OpenAIOldAdapter
 from llm_platform.adapters.anthropic_adapter import AnthropicAdapter
 from llm_platform.adapters.openrouter_adapter import OpenRouterAdapter
 from llm_platform.adapters.speechmatics_adapter import SpeechmaticsAdapter
@@ -99,6 +100,7 @@ class APIHandler:
                 "GrokAdapter": GrokAdapter,
                 "DeepSeekAdapter": DeepSeekAdapter,
                 "MistralAdapter": MistralAdapter,
+                "OpenAIOldAdapter": OpenAIOldAdapter,
             }.get(adapter_name)
 
             if adapter_class is None:

@@ -140,7 +140,7 @@ models:
     grounding: 1
 
   - name: gpt-4o-audio-preview
-    adapter: OpenAIAdapter
+    adapter: OpenAIOldAdapter
     pricing:
       input: 2.5 # USD/1M tokens
       output: 10 # USD/1M tokens

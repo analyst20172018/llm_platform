@@ -14,7 +14,7 @@ class OpenAIAdapter(AdapterBase):
     def __init__(self, logging_level=logging.INFO):
         super().__init__(logging_level)  
         self.client = OpenAI()
-        self.async_client = AsyncOpenAI()
+        #self.async_client = AsyncOpenAI()
         
     def convert_conversation_history_to_adapter_format(self, 
                         the_conversation: Conversation, 
