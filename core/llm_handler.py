@@ -7,7 +7,7 @@ from llm_platform.adapters.speechmatics_adapter import SpeechmaticsAdapter
 from llm_platform.adapters.google_adapter import GoogleAdapter
 from llm_platform.adapters.grok_adapter import GrokAdapter
 from llm_platform.adapters.deepseek_adapter import DeepSeekAdapter
-import llm_platform.adapters.elevenlabs_adapter as elevenlabs_adapter
+from llm_platform.adapters.elevenlabs_adapter import ElenenlabsAdapter
 from llm_platform.adapters.mistral_adapter import MistralAdapter
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
@@ -96,6 +96,7 @@ class APIHandler:
                 "AnthropicAdapter": AnthropicAdapter,
                 "OpenRouterAdapter": OpenRouterAdapter,
                 "SpeechmaticsAdapter": SpeechmaticsAdapter,
+                "ElenenlabsAdapter": ElenenlabsAdapter,
                 "GoogleAdapter": GoogleAdapter,
                 "GrokAdapter": GrokAdapter,
                 "DeepSeekAdapter": DeepSeekAdapter,
@@ -297,8 +298,10 @@ class APIHandler:
             transcript = adapter.voice_to_text(('audio_file.'+audio_format, audio_file), language, transcription_config)
             return transcript
         elif provider.lower() == 'elevenlabs':
+            adapter =  self._lazy_initialization_of_adapter('ElenenlabsAdapter')
             language = kwargs.get('language', 'eng')
-            transcript = elevenlabs_adapter.voice_to_text(audio_file, language)
+            diarized = kwargs.get('diarized', True)
+            transcript = adapter.voice_to_text(audio_file, language, diarized)
             return transcript
         else: 
             raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'speechmatics' as providers. ")
