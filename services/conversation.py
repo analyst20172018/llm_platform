@@ -160,6 +160,7 @@ class Message:
                  files: List[BaseFile] = [],
                  function_calls: List[FunctionCall]=[],
                  function_responses: List[FunctionResponse]=[],
+                 id=None,
                  ):
         
         assert role in ["user", "assistant", "function"] #the only possible roles
@@ -171,6 +172,7 @@ class Message:
         self.usage = usage
         self.function_calls = function_calls
         self.function_responses = function_responses
+        self.id = id
 
     @property
     def text(self):
@@ -247,6 +249,14 @@ class Conversation:
             "completion_tokens": 0,
             "costs": 0
         }
+        
+    @property
+    def previous_response_id_for_openai(self):
+        assistant_messages = [message for message in self.messages if message.role == "assistant"]
+        if assistant_messages:
+            return assistant_messages[-1].id
+        else:
+            return None
         
     def save_to_json(self) -> Dict:
         """

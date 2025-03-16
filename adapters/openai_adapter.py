@@ -11,11 +11,13 @@ import asyncio
 
 class OpenAIAdapter(AdapterBase):
     
+    
     def __init__(self, logging_level=logging.INFO):
         super().__init__(logging_level)  
         self.client = OpenAI()
         #self.async_client = AsyncOpenAI()
         
+
     def convert_conversation_history_to_adapter_format(self, 
                         the_conversation: Conversation, 
                         model: str, 
@@ -33,11 +35,16 @@ class OpenAIAdapter(AdapterBase):
 
             history_message = {
                 "role": message.role, 
-                "content": [{
-                    "type": "input_text" if message.role == "user" else "output_text",
-                    "text": message.content
-                }]
+                "content": []
             }
+
+            if not message.content is None and message.content != "":
+                history_message["content"].append(
+                        {
+                            "type": "input_text" if message.role == "user" else "output_text",
+                            "text": message.content
+                        }
+                )
 
             if not message.files is None:
 
@@ -94,7 +101,8 @@ class OpenAIAdapter(AdapterBase):
                     else:
                         raise ValueError(f"Unsupported file type: {type(each_file)}")
 
-            history.append(history_message)
+            if len(history_message["content"]) > 0:
+                history.append(history_message)
 
             # Add all function responses to the history
             if message.function_responses:
@@ -103,39 +111,66 @@ class OpenAIAdapter(AdapterBase):
 
         return history, kwargs
 
-    def request_llm(self, model: str, 
-                    the_conversation: Conversation, 
-                    functions:List[BaseTool]=None, 
-                    temperature: int=0, 
-                    tool_output_callback: Callable=None,
-                    additional_parameters: Dict={},
-                    **kwargs) -> Message:
-        
+
+    def _create_parameters_for_calling_llm(self, 
+                        model: str,
+                        the_conversation: Conversation,
+                        additional_parameters: Dict={},
+                        use_previous_response_id: bool=True,
+                        **kwargs
+                        ) -> Dict:
         # Remove 'max_tokens' and 'temperature' from kwargs if 'o1-' is in the model name
         if model.lower() in ['o1', 'o3-mini']:
             kwargs.pop('max_tokens', None)
             kwargs.pop('temperature', None)
-        else:
-            # Add temperature to kwargs
-            kwargs['temperature'] = temperature
 
+        # Model OpenAI has 'max_output_tokens' instead of 'max_tokens'
         if 'max_tokens' in kwargs:
             kwargs['max_output_tokens'] = kwargs.pop('max_tokens')
 
-        if functions is None:
-            tools = []
-            # Web-search
-            if additional_parameters.get("grounding", False):
-                tools = [{"type": "web_search_preview"}]
+        tools = []
+        # Web-search
+        if additional_parameters.get("grounding", False):
+            tools = [{"type": "web_search_preview"}]
 
-            messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
-            response = self.client.responses.create(
-                            model=model,
-                            instructions = the_conversation.system_prompt,
-                            input=messages,
-                            tools=tools,
-                            **kwargs,
-                            )
+        messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
+
+        parameters = {
+            "model": model,
+            "instructions": the_conversation.system_prompt,
+            "input": messages,
+            "tools": tools,
+        }
+        parameters.update(kwargs)
+
+        # Use previous_response_id if available
+        if use_previous_response_id:
+            previous_response_id = the_conversation.previous_response_id_for_openai
+            if previous_response_id:
+                parameters["previous_response_id"] = previous_response_id
+                messages_from_user = [each_message for each_message in messages if each_message["role"] == "user"]
+                if len(messages_from_user) > 0:
+                    parameters["input"] = [messages_from_user[-1]]
+                else:
+                    parameters["input"] = None
+
+        return parameters
+
+
+    def request_llm(self, model: str, 
+                    the_conversation: Conversation, 
+                    functions:List[BaseTool]=None, 
+                    tool_output_callback: Callable=None,
+                    additional_parameters: Dict={},
+                    **kwargs) -> Message:
+        
+        if functions is None:
+            parameters = self._create_parameters_for_calling_llm(model, 
+                                                                 the_conversation, 
+                                                                 additional_parameters,
+                                                                 use_previous_response_id=True, 
+                                                                 **kwargs)
+            response = self.client.responses.create(**parameters)
         else:
              response = self.request_llm_with_functions(
                             model=model,
@@ -155,10 +190,11 @@ class OpenAIAdapter(AdapterBase):
                                             if getattr(each_content, 'type', "") == "output_text"]
                                 )
         
-        message = Message(role="assistant", content=answer_text, usage=usage)
+        message = Message(role="assistant", content=answer_text, usage=usage, id=response.id)
         the_conversation.messages.append(message)
         
         return message
+
 
     def generate_image(self, prompt: str, n=1, **kwargs):
             response = self.client.images.generate(
@@ -172,6 +208,7 @@ class OpenAIAdapter(AdapterBase):
             #image_url = response.data[0].url
             return response
 
+
     def voice_to_text(self, audio_file, response_format="text", language="en"):
         assert response_format in ["text", "srt", "verbose_json"]
         self.latest_usage = None
@@ -183,6 +220,7 @@ class OpenAIAdapter(AdapterBase):
                 language=language
                 )
         return transcript
+
 
     def _convert_func_to_tool(self, func: Callable) -> Dict:
         # Get function signature
@@ -236,6 +274,7 @@ class OpenAIAdapter(AdapterBase):
         }
         return tool
 
+
     def _convert_function_to_tool(self, func: BaseTool | Callable) -> Dict:
         # Convert the function to a tool for OpenAI
         if isinstance(func, BaseTool):
@@ -248,6 +287,7 @@ class OpenAIAdapter(AdapterBase):
             raise TypeError("func must be either a BaseTool or a function")
         return tool
 
+
     def request_llm_with_functions(self, model: str, 
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool | Callable], 
@@ -255,19 +295,15 @@ class OpenAIAdapter(AdapterBase):
                                    additional_parameters: Dict={},
                                    **kwargs):
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
-        messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation, model)
 
-        # Web-search
-        if additional_parameters.get("grounding", False):
-            tools.append({"type": "web_search_preview"})
+        parameters = self._create_parameters_for_calling_llm(model, 
+                                                             the_conversation, 
+                                                             additional_parameters,
+                                                             use_previous_response_id=False, 
+                                                             **kwargs)
+        parameters['tools'] += tools
 
-        chat_response = self.client.responses.create(
-                        model=model,
-                        instructions = the_conversation.system_prompt,
-                        input=messages,
-                        tools=tools,
-                        **kwargs,
-                        )
+        chat_response = self.client.responses.create(**parameters)
         
         usage = {"model": model,
                 "completion_tokens": chat_response.usage.output_tokens,
@@ -278,7 +314,7 @@ class OpenAIAdapter(AdapterBase):
                                                 for each_content in getattr(each_output, 'content', []) \
                                                     if getattr(each_content, 'type', "") == "output_text"]
                                         )
-
+        
         # Save tool_calls parameter from the openai answer for the history
         function_call_records = []
         for each_output in chat_response.output:
@@ -325,14 +361,28 @@ class OpenAIAdapter(AdapterBase):
         message = Message(role="assistant", 
                             content=assistant_message_text,
                             function_calls=function_call_records,
+                            function_responses=[],
+                            usage=usage,
+                            id=chat_response.id
+                            )
+        the_conversation.messages.append(message)
+
+        message = Message(role="user", 
+                            content=None,
+                            function_calls=[],
                             function_responses=function_response_records,
                             usage=usage
                             )
         the_conversation.messages.append(message)
 
-        final_response = self.request_llm_with_functions(model, the_conversation, functions, tool_output_callback=tool_output_callback, **kwargs)
+        final_response = self.request_llm_with_functions(model, 
+                                                         the_conversation, 
+                                                         functions, 
+                                                         tool_output_callback=tool_output_callback, 
+                                                         **kwargs)
 
         return final_response
+
 
     def get_models(self) -> List[str]:
         models = self.client.models.list()
