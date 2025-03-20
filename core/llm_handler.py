@@ -285,24 +285,29 @@ class APIHandler:
     
     def voice_to_text(self, audio_file: BinaryIO, audio_format: str, provider: str='openai', **kwargs):
         assert provider in ['openai', 'speechmatics', 'elevenlabs'], f"Provider {provider} is not supported. I understand only 'openai' or 'speechmatics' or 'elevenlabs' as providers."
+        
         if provider.lower() == 'openai':
             adapter =  self._lazy_initialization_of_adapter('OpenAIAdapter')
             response_format = kwargs.get('response_format', 'text') 
             language = kwargs.get('language', 'en')
-            transcript = adapter.voice_to_text(audio_file, response_format, language)
+            model = kwargs.get('model', 'whisper-1')
+            transcript = adapter.voice_to_text(audio_file, response_format, language, model=model)
             return transcript
+        
         elif provider.lower() == 'speechmatics':
             adapter =  self._lazy_initialization_of_adapter('SpeechmaticsAdapter')
             language = kwargs.get('language', 'en')
             transcription_config = kwargs.get('transcription_config', None)
             transcript = adapter.voice_to_text(('audio_file.'+audio_format, audio_file), language, transcription_config)
             return transcript
+        
         elif provider.lower() == 'elevenlabs':
             adapter =  self._lazy_initialization_of_adapter('ElenenlabsAdapter')
             language = kwargs.get('language', 'eng')
             diarized = kwargs.get('diarized', True)
             transcript = adapter.voice_to_text(audio_file, language, diarized)
             return transcript
+        
         else: 
             raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'speechmatics' as providers. ")
 

@@ -7,7 +7,7 @@ class Reddit(BaseTool):
     """Reads posts and comments from the given subreddit in reddit.
     """
 
-    __name__ = "Reddit"
+    #__name__ = "Reddit"
 
     class InputModel(BaseModel):
         subreddit: str = Field(description = "Name of subreddit to read without symbols r/ .", required = True)

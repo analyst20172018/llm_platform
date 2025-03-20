@@ -24,10 +24,18 @@ class FunctionCall:
 
     @classmethod
     def from_openai(cls, tool_call):
-        return cls(id=tool_call.id, 
-                   name=tool_call.name, 
-                   arguments=str(tool_call.arguments),
-                   call_id=tool_call.call_id
+        return cls(id = tool_call.id, 
+                   name = tool_call.name, 
+                   arguments = str(tool_call.arguments),
+                   call_id = getattr(tool_call, "call_id", tool_call.id)
+                   )
+    
+    @classmethod
+    def from_openai_old(cls, tool_call):
+        return cls(id = tool_call.id, 
+                   name = tool_call.function.name, 
+                   arguments = str(tool_call.function.arguments),
+                   call_id = tool_call.id
                    )
     
     def to_openai(self) -> Dict:

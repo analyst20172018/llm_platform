@@ -209,12 +209,13 @@ class OpenAIAdapter(AdapterBase):
             return response
 
 
-    def voice_to_text(self, audio_file, response_format="text", language="en"):
+    def voice_to_text(self, audio_file, response_format="text", language="en", model="whisper-1"):
         assert response_format in ["text", "srt", "verbose_json"]
+        assert model in ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"]
         self.latest_usage = None
 
         transcript = self.client.audio.transcriptions.create(
-                model="whisper-1", 
+                model=model, 
                 file=audio_file,
                 response_format=response_format,
                 language=language

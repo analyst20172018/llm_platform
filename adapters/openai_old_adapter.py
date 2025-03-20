@@ -1,7 +1,9 @@
 from .adapter_base import AdapterBase
 from openai import OpenAI
 import os
+import json
 from typing import List, Tuple, Callable, Dict
+from llm_platform.tools.base import BaseTool
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
 import logging
@@ -47,6 +49,11 @@ class OpenAIOldAdapter(AdapterBase):
                     
                     # Audio
                     if isinstance(each_file, AudioFile):
+
+                        # Audio URLs are only allowed for messages with role 'user', message with role 'assistant' may not contain an audio URL.
+                        if message.role == "assistant":
+                            continue
+
                         # Ensure that history_message["content"] is a list, not a string
                         if not isinstance(history_message["content"], list):
                             history_message["content"] = [history_message["content"]]
@@ -90,14 +97,13 @@ class OpenAIOldAdapter(AdapterBase):
 
         return history, kwargs
 
-    def request_llm(self, 
+    def define_parameters_for_chat_completion_request(self, 
                     model: str, 
                     the_conversation: Conversation, 
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={},
-                    **kwargs) -> Message:
-
+                    **kwargs) -> Dict:
         history, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
 
         chat_completion_parameters = {
@@ -111,7 +117,35 @@ class OpenAIOldAdapter(AdapterBase):
         if "response_modalities" in additional_parameters:
                 chat_completion_parameters["modalities"] = additional_parameters["response_modalities"]
 
-        response = self.client.chat.completions.create(**chat_completion_parameters)
+        return chat_completion_parameters
+
+    def request_llm(self, 
+                    model: str, 
+                    the_conversation: Conversation, 
+                    functions:List[BaseTool]=None, 
+                    temperature: int=0,  
+                    tool_output_callback: Callable=None,
+                    additional_parameters: Dict={},
+                    **kwargs) -> Message:
+
+        if functions is None and len(functions) > 0:
+            chat_completion_parameters = self.define_parameters_for_chat_completion_request(
+                model=model,
+                the_conversation=the_conversation,
+                temperature=temperature,
+                additional_parameters=additional_parameters,
+                **kwargs
+            )
+            response = self.client.chat.completions.create(**chat_completion_parameters)
+
+        else:
+            response = self.request_llm_with_functions(
+                            model=model,
+                            the_conversation=the_conversation,
+                            functions=functions,
+                            tool_output_callback=tool_output_callback,
+                            **kwargs,
+             )
         
         usage = {"model": model,
                  "completion_tokens": response.usage.completion_tokens,
@@ -141,14 +175,103 @@ class OpenAIOldAdapter(AdapterBase):
     def generate_image(self, prompt: str, size: str, quality:str, n=1):
         NotImplementedError("Not implemented yet")
 
+    def _convert_function_to_tool(self, func: BaseTool | Callable) -> Dict:
+        # Convert the function to a tool for OpenAI
+        if isinstance(func, BaseTool):
+            # Handle the case where func is a BaseTool
+            tool = {
+                'function': func.to_params(provider='openai'),
+                'type': 'function',
+            }
+        
+        elif callable(func):
+            tool = self._convert_func_to_tool(func)
+        else:
+            raise TypeError("func must be either a BaseTool or a function")
+        return tool
+
     def request_llm_with_functions(self, model: str, 
                                    the_conversation: Conversation, 
-                                   functions: List[Callable], 
+                                   functions: List[BaseTool], 
                                    temperature: int=0,  
                                    tool_output_callback: Callable=None,
                                    additional_parameters: Dict={},
                                    **kwargs):
-        raise NotImplementedError("Not implemented yet")
+        
+        chat_completion_parameters = self.define_parameters_for_chat_completion_request(
+                model=model,
+                the_conversation=the_conversation,
+                temperature=temperature,
+                additional_parameters=additional_parameters,
+                **kwargs
+            )
+        
+        tools = [self._convert_function_to_tool(each_function) for each_function in functions]
+        chat_completion_parameters["tools"] = tools
+
+        chat_response = self.client.chat.completions.create(**chat_completion_parameters)
+
+        print(chat_response)
+        
+        usage = {"model": model,
+                "completion_tokens": chat_response.usage.completion_tokens,
+                "prompt_tokens": chat_response.usage.prompt_tokens}
+        
+        assistant_message = chat_response.choices[0].message
+
+        # Save tool_calls parameter from the openai answer for the history
+        if getattr(assistant_message, 'tool_calls', None) is not None:
+            function_call_records = [FunctionCall.from_openai_old(each_tool_call) for each_tool_call in assistant_message.tool_calls]
+        else: 
+            function_call_records = []
+
+        # If there are no tool calls, we can return the response
+        if getattr(assistant_message, 'tool_calls', None) is None:
+            return chat_response
+
+        function_response_records = []
+        for each_tools_call in getattr(assistant_message, 'tool_calls', []):
+
+            tool_call_id = each_tools_call.id
+            tool_function_name = each_tools_call.function.name
+            tool_arguments = json.loads(each_tools_call.function.arguments)
+
+            # Find the requested function
+            function_index = next((i for i, tool in enumerate(tools) if tool['function']['name'] == tool_function_name), -1)
+            if function_index == -1:
+                raise ValueError(f"Function {each_tools_call.function.name} not found in tools")
+            function = functions[function_index]
+
+            # Get all function parameters
+            function_parameters = []
+            for key, value in tools[function_index]['function'].get('parameters', {}).get('properties', {}).items():
+                function_parameters.append(tool_arguments[key])
+
+            # Call the function
+            function_response = function(*function_parameters)
+
+            function_response_record = FunctionResponse(name=tool_function_name,
+                                                        id=tool_call_id,
+                                                        response=str(function_response))
+            function_response_records.append(function_response_record)
+            
+            if tool_output_callback:
+                tool_output_callback(tool_function_name,
+                                     function_parameters,
+                                     function_response
+                                    )
+
+        message = Message(role=assistant_message.role, 
+                            content=assistant_message.content,
+                            function_calls=function_call_records,
+                            function_responses=function_response_records,
+                            usage=usage
+                            )
+        the_conversation.messages.append(message)
+
+        final_response = self.request_llm_with_functions(model, the_conversation, functions, tool_output_callback=tool_output_callback, **kwargs)
+        
+        return final_response
 
     def get_models(self) -> List[str]:
         NotImplementedError("Not implemented yet")
