@@ -46,6 +46,15 @@ class FunctionCall:
                 "type": "function_call",
             }
     
+    def to_openai_old(self) -> Dict:
+        return {"id": self.id, 
+                "function": {
+                    "name": self.name, 
+                    "arguments": self.arguments,
+                },
+                "type": "function",
+            }
+    
     def to_anthropic(self) -> Dict:
         return {"id": self.id,
                 "name": self.name, 
@@ -114,6 +123,13 @@ class FunctionResponse:
                 "call_id": self.call_id, 
                 #"name": self.name, 
                 "output": json.dumps(self.response)
+        }
+    
+    def to_openai_old(self) -> Dict:
+        return { "role": "tool",
+                "tool_call_id": self.call_id, 
+                "name": self.name, 
+                "content": json.dumps(self.response)
         }
     
     def to_anthropic(self) -> Dict:

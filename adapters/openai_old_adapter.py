@@ -7,6 +7,7 @@ from llm_platform.tools.base import BaseTool
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
 import logging
+import inspect
 
 class OpenAIOldAdapter(AdapterBase):
     
@@ -14,6 +15,7 @@ class OpenAIOldAdapter(AdapterBase):
         super().__init__(logging_level)   
         self.client = OpenAI()
         
+
     def convert_conversation_history_to_adapter_format(self, 
                         the_conversation: Conversation, 
                         model: str, 
@@ -25,21 +27,34 @@ class OpenAIOldAdapter(AdapterBase):
         # Add history of messages
         for message in the_conversation.messages:
 
-            history_message = {"role": message.role, "content": message.content}
+            history_message = {
+                "role": message.role, 
+                "content": []
+            }
+
+            if message.content and message.content != "":
+                history_message["content"].append({
+                    "type": "text",
+                    "text": message.content
+                })
 
             # If there is an attribute tool_calls in message, then add it to history. 
             if message.function_calls:
-                history_message["tool_calls"] = [each_call.to_openai() for each_call in message.function_calls]
+                tool_calls = []
+                for each_function_call in message.function_calls:
+                    tool_calls.append(each_function_call.to_openai_old())
+                history.append({"role": "assistant", "tool_calls": tool_calls})
+
+            # Add all function responses to the history
+            if message.function_responses:
+                for each_response in message.function_responses:
+                    history.append(each_response.to_openai_old())
 
             if not message.files is None:
                 for each_file in message.files:
                     
                     # Images
                     if isinstance(each_file, ImageFile):
-
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [history_message["content"]]
 
                         # Add the image to the content list
                         image_content = {"type": "image_url", 
@@ -54,10 +69,6 @@ class OpenAIOldAdapter(AdapterBase):
                         if message.role == "assistant":
                             continue
 
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [history_message["content"]]
-
                         # Add audio to history
                         audio_content = {
                             "type": "input_audio",
@@ -71,13 +82,6 @@ class OpenAIOldAdapter(AdapterBase):
                     # Text documents
                     elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile)):
                         
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [{
-                                "type": "text",
-                                "text": history_message["content"]
-                            }]
-
                         # Add the text document to the history as a text in XML tags
                         new_text_content = {
                             "type": "text",
@@ -88,14 +92,11 @@ class OpenAIOldAdapter(AdapterBase):
                     else:
                         raise ValueError(f"Unsupported file type: {message.file.get_type()}")
 
-            history.append(history_message)
-
-            # Add all function responses to the history
-            if message.function_responses:
-                for each_response in message.function_responses:
-                    history.append(each_response.to_openai())
+            if len(history_message["content"]) > 0:
+                history.append(history_message)
 
         return history, kwargs
+
 
     def define_parameters_for_chat_completion_request(self, 
                     model: str, 
@@ -118,6 +119,7 @@ class OpenAIOldAdapter(AdapterBase):
                 chat_completion_parameters["modalities"] = additional_parameters["response_modalities"]
 
         return chat_completion_parameters
+
 
     def request_llm(self, 
                     model: str, 
@@ -144,9 +146,10 @@ class OpenAIOldAdapter(AdapterBase):
                             the_conversation=the_conversation,
                             functions=functions,
                             tool_output_callback=tool_output_callback,
+                            additional_parameters=additional_parameters,
                             **kwargs,
              )
-        
+            
         usage = {"model": model,
                  "completion_tokens": response.usage.completion_tokens,
                  "prompt_tokens": response.usage.prompt_tokens}
@@ -169,11 +172,69 @@ class OpenAIOldAdapter(AdapterBase):
         
         return message
 
+
     def voice_to_text(self, audio_file):
         raise NotImplementedError("OpenRoute does not support voice to text")
 
+
     def generate_image(self, prompt: str, size: str, quality:str, n=1):
         NotImplementedError("Not implemented yet")
+
+
+    def _convert_func_to_tool(self, func: Callable) -> Dict:
+        # Get function signature
+        sig = inspect.signature(func)
+
+        # Create parameters dictionary
+        parameters = {}
+        required_params = []
+
+        # Analyze each parameter
+        for param_name, param in sig.parameters.items():
+            param_info = {}
+
+            # Get parameter type annotation if available
+            if param.annotation != inspect.Parameter.empty:
+                if param.annotation == str:
+                    param_info['type'] = 'string'
+                elif param.annotation == int:
+                    param_info['type'] = 'integer'
+                elif param.annotation == float:
+                    param_info['type'] = 'number'
+                elif param.annotation == bool:
+                    param_info['type'] = 'boolean'
+                elif param.annotation == list:
+                    param_info['type'] = 'array'
+                elif param.annotation == dict:
+                    param_info['type'] = 'object'
+                else:
+                    param_info['type'] = 'string'  # default to string for unknown types
+            else:
+                param_info['type'] = 'string'  # default to string if no type annotation
+
+            # Check if parameter is required
+            if param.default == inspect.Parameter.empty:
+                required_params.append(param_name)
+
+            parameters[param_name] = param_info
+
+        # Create the tool dictionary
+        tool = {
+            'function': {
+                'name': func.__name__,
+                'description': func.__doc__ or '',
+                'parameters': {
+                    'type': 'object',
+                    'properties': parameters,
+                    'required': required_params,
+                    "additionalProperties": False
+                },
+                "strict": True
+            },
+            'type': 'function',
+        }
+        return tool
+    
 
     def _convert_function_to_tool(self, func: BaseTool | Callable) -> Dict:
         # Convert the function to a tool for OpenAI
@@ -189,6 +250,7 @@ class OpenAIOldAdapter(AdapterBase):
         else:
             raise TypeError("func must be either a BaseTool or a function")
         return tool
+
 
     def request_llm_with_functions(self, model: str, 
                                    the_conversation: Conversation, 
@@ -211,8 +273,6 @@ class OpenAIOldAdapter(AdapterBase):
 
         chat_response = self.client.chat.completions.create(**chat_completion_parameters)
 
-        print(chat_response)
-        
         usage = {"model": model,
                 "completion_tokens": chat_response.usage.completion_tokens,
                 "prompt_tokens": chat_response.usage.prompt_tokens}
@@ -269,9 +329,15 @@ class OpenAIOldAdapter(AdapterBase):
                             )
         the_conversation.messages.append(message)
 
-        final_response = self.request_llm_with_functions(model, the_conversation, functions, tool_output_callback=tool_output_callback, **kwargs)
+        final_response = self.request_llm_with_functions(model, 
+                                                         the_conversation, 
+                                                         functions, 
+                                                         tool_output_callback=tool_output_callback, 
+                                                         additional_parameters=additional_parameters, 
+                                                         **kwargs)
         
         return final_response
+
 
     def get_models(self) -> List[str]:
         NotImplementedError("Not implemented yet")

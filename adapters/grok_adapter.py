@@ -157,8 +157,17 @@ class GrokAdapter(AdapterBase):
     def voice_to_text(self, audio_file):
         raise NotImplementedError("OpenRoute does not support voice to text")
 
-    def generate_image(self, prompt: str, size: str, quality:str, n=1):
-        NotImplementedError("Not implemented yet")
+    def generate_image(self, prompt: str, n: int=1, **kwargs) -> List[ImageFile]:
+        response = self.client.images.generate(
+                model="grok-2-image",
+                prompt=prompt,
+                n=n,
+                response_format="b64_json",
+            )
+
+        output_images = [ImageFile.from_base64(base64_str=image_data.b64_json, file_name="image.png") for image_data in response.data]
+
+        return output_images
 
     def _convert_func_to_tool(self, func: Callable) -> Dict:
         # Get function signature

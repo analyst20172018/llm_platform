@@ -362,6 +362,10 @@ class APIHandler:
             adapter = self._lazy_initialization_of_adapter("GoogleAdapter")
             images = adapter.generate_image(prompt, n, **kwargs)
             return images
+        elif provider.lower() == 'grok':
+            adapter = self._lazy_initialization_of_adapter("GrokAdapter")
+            images = adapter.generate_image(prompt, n, **kwargs) # returns List[ImageFile]
+            return images
         else: 
             raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'google' as providers. ")
 

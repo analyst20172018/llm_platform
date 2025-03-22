@@ -196,17 +196,19 @@ class OpenAIAdapter(AdapterBase):
         return message
 
 
-    def generate_image(self, prompt: str, n=1, **kwargs):
-            response = self.client.images.generate(
-                model="dall-e-3",
-                prompt=prompt,
-                size=kwargs.get('size', '1024x1024'), # ['256x256', '512x512', '1024x1024', '1024x1792', '1792x1024']
-                quality=kwargs.get('quality', 'hd'), #["standard", "hd"]
-                n=n,
-            )
+    def generate_image(self, prompt: str, n: int=1, **kwargs) -> List[ImageFile]:
+        response = self.client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size=kwargs.get('size', '1024x1024'), # ['256x256', '512x512', '1024x1024', '1024x1792', '1792x1024']
+            quality=kwargs.get('quality', 'hd'), #["standard", "hd"]
+            n=n,
+            response_format="b64_json",
+        )
 
-            #image_url = response.data[0].url
-            return response
+        output_images = [ImageFile.from_base64(base64_str=image_data.b64_json, file_name="image.png") for image_data in response.data]
+
+        return output_images
 
 
     def voice_to_text(self, audio_file, response_format="text", language="en", model="whisper-1"):
@@ -379,7 +381,8 @@ class OpenAIAdapter(AdapterBase):
         final_response = self.request_llm_with_functions(model, 
                                                          the_conversation, 
                                                          functions, 
-                                                         tool_output_callback=tool_output_callback, 
+                                                         tool_output_callback=tool_output_callback,
+                                                         additional_parameters=additional_parameters,
                                                          **kwargs)
 
         return final_response

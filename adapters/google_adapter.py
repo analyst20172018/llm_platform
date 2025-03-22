@@ -344,7 +344,7 @@ class GoogleAdapter(AdapterBase):
         models = genai.list_models()
         return [model.name for model in models]
 
-    def generate_image(self, prompt: str, n: int=1, **kwargs) -> List[BytesIO]: 
+    def generate_image(self, prompt: str, n: int=1, **kwargs) -> List[ImageFile]: 
         """
         Parameters:
             prompt: The text prompt for the image.
@@ -384,7 +384,7 @@ class GoogleAdapter(AdapterBase):
             ),
         )
 
-        images = [BytesIO(generated_image.image.image_bytes) for generated_image in response.generated_images]
+        images = [ImageFile.from_bytes(file_bytes=generated_image.image.image_bytes, file_name="image.webp") for generated_image in response.generated_images]
             
         return images
     
