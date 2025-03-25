@@ -180,13 +180,13 @@ models:
     function_calling: 1
     grounding: 1
 
-  - name: gemini-2.0-pro-exp-02-05
+  - name: gemini-2.5-pro-exp-03-25
     adapter: GoogleAdapter
     pricing:
       input: 2.5 # USD/1M tokens
       output: 10 # USD/1M tokens
-    max_tokens: 8192
-    context_window: 128000
+    max_tokens: 64_000
+    context_window: 1_000_000
     inputs:
       - text
       - image

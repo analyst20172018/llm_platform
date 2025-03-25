@@ -322,14 +322,14 @@ class GoogleAdapter(AdapterBase):
                                             function_response
                                             )
 
-                else:
-                    message = Message(role="assistant", 
-                                        content=part.text,
-                                        usage=usage
-                                        )
-                    the_conversation.messages.append(message)
+            if len(function_calls) == 0:
+                message = Message(role="assistant", 
+                                    content=response.candidates[0].content.parts[0].text,
+                                    usage=usage
+                                    )
+                the_conversation.messages.append(message)
 
-                    return response
+                return response
 
             # Save function calls and function response to the history
             message = Message(role="assistant", 
