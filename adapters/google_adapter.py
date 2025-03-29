@@ -123,6 +123,9 @@ class GoogleAdapter(AdapterBase):
             max_tokens = the_conversation.model_config.get_max_tokens(model)
             kwargs['max_output_tokens'] = max_tokens
 
+        # Remove reasoning parameter, since it is not supported by google
+        _ = kwargs.pop('reasoning', None)
+
         if functions is None:
 
             history = self.convert_conversation_history_to_adapter_format(the_conversation)
@@ -236,7 +239,7 @@ class GoogleAdapter(AdapterBase):
     def request_llm_with_functions(self,
                                    model: str, 
                                    the_conversation: Conversation, 
-                                   functions: List[BaseTool], 
+                                   functions: List[BaseTool]=[], 
                                    temperature: int=0, 
                                    tool_output_callback: Callable=None,
                                    additional_parameters: Dict={},

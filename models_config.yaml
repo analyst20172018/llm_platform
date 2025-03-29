@@ -76,7 +76,7 @@ models:
       - image
       - text
       
-  - name: o1-pro-2025-03-19
+  - name: o1-pro
     adapter: OpenAIAdapter
     pricing:
       input: 150 # USD/1M tokens
@@ -102,19 +102,6 @@ models:
     function_calling: 1
       
   - name: gpt-4o
-    adapter: OpenAIAdapter
-    pricing:
-      input: 5 # USD/1M tokens
-      output: 15 # USD/1M tokens
-    max_tokens: 16384
-    context_window: 128000
-    inputs:
-      - text
-      - image
-    function_calling: 1
-    grounding: 1
-
-  - name: gpt-4o-2024-11-20
     adapter: OpenAIAdapter
     pricing:
       input: 5 # USD/1M tokens

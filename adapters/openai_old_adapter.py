@@ -124,13 +124,13 @@ class OpenAIOldAdapter(AdapterBase):
     def request_llm(self, 
                     model: str, 
                     the_conversation: Conversation, 
-                    functions:List[BaseTool]=None, 
+                    functions:List[BaseTool]=[], 
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={},
                     **kwargs) -> Message:
 
-        if functions is None and len(functions) > 0:
+        if functions is None or len(functions) == 0:
             chat_completion_parameters = self.define_parameters_for_chat_completion_request(
                 model=model,
                 the_conversation=the_conversation,

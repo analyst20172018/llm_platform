@@ -7,7 +7,6 @@ from PIL import Image
 import io
 from pydub import AudioSegment
 from PyPDF2 import PdfReader
-import base64
 import pandas as pd
 
 
@@ -56,12 +55,15 @@ class PDFDocumentFile(DocumentFile):
 
     @property
     def text(self) -> str:
-        pdf_stream = io.BytesIO(self.bytes)
-        reader = PdfReader(pdf_stream)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
-        return text
+        try:
+            pdf_stream = io.BytesIO(self.bytes)
+            reader = PdfReader(pdf_stream)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+            return text
+        except Exception as e:
+            return ""
 
     @property
     def base64(self) -> str:
