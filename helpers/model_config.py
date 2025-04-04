@@ -47,7 +47,7 @@ class ModelConfig:
         with config_path.open('r') as file:
             return yaml.safe_load(file)
     
-    def model_names(self) -> List:
+    def model_names(self) -> List[str]:
         """Get the list of all the models"""
         model_names = []
         for each_model in self.model_config['models']:

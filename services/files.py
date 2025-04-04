@@ -71,9 +71,12 @@ class PDFDocumentFile(DocumentFile):
     
     @property
     def number_of_pages(self) -> int:
-        pdf_stream = io.BytesIO(self.bytes)
-        reader = PdfReader(pdf_stream)
-        return len(reader.pages)
+        try:
+            pdf_stream = io.BytesIO(self.bytes)
+            reader = PdfReader(pdf_stream)
+            return len(reader.pages)
+        except Exception as e:
+                return 0
     
 class ExcelDocumentFile(DocumentFile):
     def __init__(self, bytes: BinaryIO, name: str=""):
