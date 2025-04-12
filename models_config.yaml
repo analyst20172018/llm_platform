@@ -1,5 +1,6 @@
 models:
   - name: claude-3-7-sonnet-20250219
+    display_name: Claude 3.7 Sonnet
     adapter: AnthropicAdapter
     pricing:
       input: 3 # USD/1M tokens
@@ -14,6 +15,7 @@ models:
     reasoning_effort: 1
 
   - name: claude-3-5-sonnet-latest
+    display_name: Claude 3.5 Sonnet
     adapter: AnthropicAdapter
     pricing:
       input: 3 # USD/1M tokens
@@ -27,6 +29,7 @@ models:
     function_calling: 1
 
   - name: claude-3-opus-latest
+    display_name: Claude 3 Opus
     adapter: AnthropicAdapter
     pricing:
       input: 15 # USD/1M tokens
@@ -39,6 +42,7 @@ models:
     function_calling: 1
       
   - name: claude-3-5-haiku-latest
+    display_name: Claude 3.5 Haiku
     adapter: AnthropicAdapter
     pricing:
       input: 0.8 # USD/1M tokens
@@ -51,6 +55,7 @@ models:
     function_calling: 1
 
   - name: gpt-4.5-preview
+    display_name: GPT-4.5
     adapter: OpenAIAdapter
     pricing:
       input: 75 # USD/1M tokens
@@ -64,6 +69,7 @@ models:
     grounding: 1
 
   - name: o1
+    display_name: o1
     adapter: OpenAIAdapter
     pricing:
       input: 15 # USD/1M tokens
@@ -77,6 +83,7 @@ models:
       - text
       
   - name: o1-pro
+    display_name: o1-pro
     adapter: OpenAIAdapter
     pricing:
       input: 150 # USD/1M tokens
@@ -90,6 +97,7 @@ models:
       - text
 
   - name: o3-mini
+    display_name: o3-mini
     adapter: OpenAIAdapter
     pricing:
       input: 1.10 # USD/1M tokens
@@ -102,6 +110,7 @@ models:
     function_calling: 1
       
   - name: gpt-4o
+    display_name: GPT-4o
     adapter: OpenAIAdapter
     pricing:
       input: 5 # USD/1M tokens
@@ -115,6 +124,7 @@ models:
     grounding: 1
 
   - name: chatgpt-4o-latest
+    display_name: ChatGPT-4o
     adapter: OpenAIAdapter
     pricing:
       input: 5 # USD/1M tokens
@@ -127,6 +137,7 @@ models:
     function_calling: 1
 
   - name: gpt-4o-mini
+    display_name: GPT-4o Mini
     adapter: OpenAIAdapter
     pricing:
       input: 0.15 # USD/1M tokens
@@ -140,6 +151,7 @@ models:
     grounding: 1
 
   - name: gpt-4o-audio-preview
+    display_name: GPT-4o Audio
     adapter: OpenAIOldAdapter
     pricing:
       input: 2.5 # USD/1M tokens
@@ -154,24 +166,12 @@ models:
       - audio
     function_calling: 1
 
-  - name: gpt-4
-    adapter: OpenAIAdapter
-    pricing:
-      input: 30 # USD/1M tokens
-      output: 60 # USD/1M tokens
-    max_tokens: 4096
-    context_window: 128000
-    inputs:
-      - text
-      - image
-    function_calling: 1
-    grounding: 1
-
   - name: gemini-2.5-pro-exp-03-25
+    display_name: Gemini 2.5 Pro (free)
     adapter: GoogleAdapter
     pricing:
       input: 2.5 # USD/1M tokens
-      output: 10 # USD/1M tokens
+      output: 15 # USD/1M tokens
     max_tokens: 64_000
     context_window: 1_000_000
     inputs:
@@ -183,6 +183,7 @@ models:
     code_execution: 1
 
   - name: gemini-2.5-pro-preview-03-25
+    display_name: Gemini 2.5 Pro (paid)
     adapter: GoogleAdapter
     pricing:
       input: 2.5 # USD/1M tokens
@@ -198,12 +199,13 @@ models:
     code_execution: 1
 
   - name: gemini-2.0-flash-exp
+    display_name: Gemini 2.0 Flash Exp (Image)
     adapter: GoogleAdapter
     pricing:
-      input: 0.15 # USD/1M tokens
-      output: 0.6 # USD/1M tokens
-    max_tokens: 8192
-    context_window: 1048576
+      input: 0 # USD/1M tokens
+      output: 0 # USD/1M tokens
+    max_tokens: 8_192
+    context_window: 1_048_576
     inputs:
       - text
       - image
@@ -212,7 +214,25 @@ models:
       - text
       - image
 
+  - name: gemini-2.0-flash
+    display_name: Gemini 2.0 Flash
+    adapter: GoogleAdapter
+    pricing:
+      input: 0.1 # USD/1M tokens
+      output: 0.4 # USD/1M tokens
+    max_tokens: 8_192
+    context_window: 1_048_576
+    inputs:
+      - text
+      - image
+      - audio
+    outputs:
+      - text
+    function_calling: 1
+    grounding: 1
+
   - name: gemini-2.0-flash-thinking-exp-01-21
+    display_name: Gemini 2.0 Flash Thinking
     adapter: GoogleAdapter
     pricing:
       input: 0.15 # USD/1M tokens
@@ -225,6 +245,7 @@ models:
     function_calling: 1
 
   - name: deepseek-chat
+    display_name: DeepSeek-V3 Chat
     adapter: DeepSeekAdapter
     pricing:
       input: 0.27 # USD/1M tokens
@@ -236,6 +257,7 @@ models:
       - image
 
   - name: deepseek-reasoner
+    display_name: DeepSeek-R1 Reasoner
     adapter: DeepSeekAdapter
     pricing:
       input: 0.55 # USD/1M tokens
@@ -247,6 +269,7 @@ models:
       - image
 
   - name: deepseek/deepseek-chat-v3-0324:free
+    display_name: DeepSeek-V3.1 Chat (free)
     adapter: OpenRouterAdapter
     pricing:
       input: 0 # USD/1M tokens
@@ -256,26 +279,52 @@ models:
     inputs:
       - text
 
-  - name: meta-llama/llama-3.1-405b
+  - name: openrouter/optimus-alpha
+    display_name: Optimus Alpha
     adapter: OpenRouterAdapter
     pricing:
-      input: 2 # USD/1M tokens
-      output: 2 # USD/1M tokens
-    max_tokens: 32768
+      input: 0 # USD/1M tokens
+      output: 0 # USD/1M tokens
+    max_tokens: 32_000
+    context_window: 1_000_000
+    inputs:
+      - text
+
+  - name: meta-llama/llama-4-maverick
+    display_name: Llama 4 Maverick
+    adapter: OpenRouterAdapter
+    pricing:
+      input: 0.22 # USD/1M tokens
+      output: 0.88 # USD/1M tokens
+    max_tokens: 1_000_000
+    context_window: 1_000_000
     inputs:
       - text
   
-  - name: grok-2-1212
+  - name: grok-3
+    display_name: Grok 3
     adapter: GrokAdapter
     pricing:
-      input: 5 # USD/1M tokens
+      input: 3 # USD/1M tokens
       output: 15 # USD/1M tokens
-    max_tokens: 131072
+    max_tokens: 131_072
     inputs:
       - text
-      - image
+    function_calling: 1
+
+  - name: grok-3-mini
+    display_name: Grok 3 Mini
+    adapter: GrokAdapter
+    pricing:
+      input: 0.3 # USD/1M tokens
+      output: 0.5 # USD/1M tokens
+    max_tokens: 131_072
+    inputs:
+      - text
+    function_calling: 1
   
   - name: mistral-large-latest
+    display_name: Mistral Large
     adapter: MistralAdapter
     pricing:
       input: 0 # USD/1M tokens
@@ -287,6 +336,7 @@ models:
       - text
 
   - name: mistral-ocr-latest
+    display_name: Mistral OCR
     adapter: MistralAdapter
     pricing:
       input: 0 # USD/1M tokens

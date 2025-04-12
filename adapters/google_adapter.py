@@ -5,7 +5,9 @@ from llm_platform.services.conversation import Conversation, FunctionCall, Funct
 
 from google import genai
 from google.protobuf import struct_pb2
+from google.genai import types
 
+import time
 from typing import List, Tuple, Callable, Dict
 import os
 import logging
@@ -62,9 +64,17 @@ class GoogleAdapter(AdapterBase):
                     response_parts.append(response_part)
                     
                     protos_message = genai.types.Content(role="function", 
-                                                   parts = function_calls_parts + response_parts)
-            else:
-                protos_message = genai.types.Content(role=role, parts=[genai.types.Part.from_text(text=message.content)])
+                                                        parts = function_calls_parts + response_parts)
+                    
+                    history.append(protos_message)
+                    continue
+            
+            message_parts = []
+            
+            # Add text part
+            if message.content:
+                message_parts.append(genai.types.Part.from_text(text=message.content))
+                #protos_message = genai.types.Content(role=role, parts=[genai.types.Part.from_text(text=message.content)])
 
             # Add files to history (for the moment, only images)
             if not message.files is None:
@@ -72,23 +82,24 @@ class GoogleAdapter(AdapterBase):
                     
                     # Images
                     if isinstance(each_file, ImageFile):
+                        print(f"File name: {each_file.name}, file extension: {each_file.extension}")
                         part_with_image = genai.types.Part.from_bytes(data = each_file.file_bytes,
                                                                 mime_type = f"image/{each_file.extension}")
 
-                        protos_message.parts.append(part_with_image)
+                        message_parts.append(part_with_image)
 
                     if isinstance(each_file, AudioFile):
                         part_with_audio = genai.types.Part.from_bytes(data = each_file.file_bytes,
                                                                 mime_type = f"audio/mp3")
 
-                        protos_message.parts.append(part_with_audio)
+                        message_parts.append(part_with_audio)
 
                     # Text documents
                     if isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
                         document_as_text = f"""<document name="{each_file.name}">{each_file.text}</document>"""
                         part_with_text_document = genai.types.Part.from_text(text=document_as_text)
 
-                        protos_message.parts.append(part_with_text_document)
+                        message_parts.append(part_with_text_document)
 
                     # PDF documents
                     if isinstance(each_file, PDFDocumentFile):
@@ -96,13 +107,15 @@ class GoogleAdapter(AdapterBase):
                             part_with_pdf = genai.types.Part.from_bytes(data = each_file.bytes,
                                                                 mime_type = f"application/pdf")
 
-                            protos_message.parts.append(part_with_pdf)
+                            message_parts.append(part_with_pdf)
                         else: # Load pdf as text
                             document_as_text = f"""<document name="{each_file.name}">{each_file.text}</document>"""
                             part_with_text_document = genai.types.Part.from_text(text=document_as_text)
 
-                            protos_message.parts.append(part_with_text_document)
+                            message_parts.append(part_with_text_document)
 
+
+            protos_message = genai.types.Content(role=role, parts=message_parts)
             history.append(protos_message)
 
         return history
@@ -344,8 +357,7 @@ class GoogleAdapter(AdapterBase):
             the_conversation.messages.append(message)
 
     def get_models(self) -> List[str]:
-        models = genai.list_models()
-        return [model.name for model in models]
+        NotImplementedError("Not implemented yet")
 
     def generate_image(self, prompt: str, n: int=1, **kwargs) -> List[ImageFile]: 
         """
@@ -435,4 +447,57 @@ class GoogleAdapter(AdapterBase):
             
         return images
 
-    
+    def generate_video(self, 
+                       prompt: str, 
+                       aspect_ratio: str="16:9", 
+                       person_generation: str="ALLOW_ADULT", 
+                       image: ImageFile=None, 
+                       number_of_videos: int=1,
+                       negative_prompt: str=None,
+                       duration_seconds: int=5,
+                    ):
+        """
+        Parameters:
+            prompt: str The text prompt for the image.
+            aspect_ratio: str Changes the aspect ratio of the generated image. 
+                Supported values are "9:16", and "16:9".
+            person_generation: str Allow the model to generate images of people. The following values are supported:
+                "DONT_ALLOW": Block generation of images of people.
+                "ALLOW_ADULT": Generate images of adults, but not children. This is the default.
+            image: ImageFile The image to use as a reference for the video generation.
+            number_of_videos: int The number of videos to generate. The default is 1.
+            negative_prompt: str The text prompt for the image.
+            duration_seconds: int The duration of the video in seconds (from 5 to 8). The default is 5 seconds.
+        """
+        
+        parameters = {"model": "veo-2.0-generate-001",
+                      "prompt": prompt,
+                    }
+        
+        if image:
+            parameters["image"] = genai.types.Image(image=image.file_bytes, mime_type=f"image/{image.extension}")
+            person_generation = "DONT_ALLOW" # person_generation only accepts "dont_allow" for image-to-video
+
+        if negative_prompt:
+            parameters["negative_prompt"] = negative_prompt
+
+        config = types.GenerateVideosConfig(
+                person_generation=person_generation,  # "dont_allow" or "allow_adult"
+                aspect_ratio=aspect_ratio,  # "16:9" or "9:16"
+                number_of_videos=number_of_videos,  # Number of videos to generate
+        )
+
+        if duration_seconds:
+            config.duration_seconds = duration_seconds
+
+        parameters["config"] = config
+
+        operation = self.client.models.generate_videos(**parameters)
+
+        while not operation.done:
+            time.sleep(20)
+            operation = self.client.operations.get(operation)
+
+        for n, generated_video in enumerate(operation.response.generated_videos):
+            self.client.files.download(file=generated_video.video)
+            generated_video.video.save(f"video{n}.mp4")  # save the video
