@@ -128,10 +128,20 @@ class OpenRouterAdapter(AdapterBase):
                         temperature=temperature,
                         **kwargs,
                         )
-        
+        if getattr(response, 'usage', None):
+            if hasattr(response.usage, 'completion_tokens'):
+                completion_tokens = response.usage.completion_tokens
+            else:
+                completion_tokens = 0
+
+            if hasattr(response.usage, 'prompt_tokens'):
+                prompt_tokens = response.usage.prompt_tokens
+            else:
+                prompt_tokens = 0
+
         usage = {"model": model,
-                 "completion_tokens": response.usage.completion_tokens,
-                 "prompt_tokens": response.usage.prompt_tokens}
+                 "completion_tokens": completion_tokens,
+                 "prompt_tokens": prompt_tokens}
         
         message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
         the_conversation.messages.append(message)
