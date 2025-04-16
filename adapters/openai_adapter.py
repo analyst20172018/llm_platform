@@ -120,7 +120,7 @@ class OpenAIAdapter(AdapterBase):
                         **kwargs
                         ) -> Dict:
         # Remove 'max_tokens' and 'temperature' from kwargs if 'o1-' is in the model name
-        if model.lower() in ['o1', 'o3-mini', 'o1-pro']:
+        if model.lower() in ['o3', 'o4-mini', 'o1-pro']:
             kwargs.pop('max_tokens', None)
             kwargs.pop('temperature', None)
 

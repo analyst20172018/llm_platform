@@ -84,19 +84,35 @@ models:
     function_calling: 1
     grounding: 1
 
-  - name: o1
-    display_name: o1
+  - name: o3
+    display_name: o3
     adapter: OpenAIAdapter
     pricing:
-      input: 15 # USD/1M tokens
-      output: 60 # USD/1M tokens
+      input: 10 # USD/1M tokens
+      output: 40 # USD/1M tokens
     max_tokens: 100_000
     context_window: 200_000
-    reasoning_effort: 1
-    function_calling: 1
     inputs:
       - image
       - text
+    reasoning_effort: 1
+    function_calling: 1
+    grounding: 1
+      
+  - name: o4-mini
+    display_name: o4-mini
+    adapter: OpenAIAdapter
+    pricing:
+      input: 1.10 # USD/1M tokens
+      output: 4.40 # USD/1M tokens
+    max_tokens: 100_000
+    context_window: 200_000
+    inputs:
+      - text
+      - image
+    reasoning_effort: 1
+    function_calling: 1
+    grounding: 1
       
   - name: o1-pro
     display_name: o1-pro
@@ -112,19 +128,6 @@ models:
       - image
       - text
 
-  - name: o3-mini
-    display_name: o3-mini
-    adapter: OpenAIAdapter
-    pricing:
-      input: 1.10 # USD/1M tokens
-      output: 4.40 # USD/1M tokens
-    max_tokens: 100_000
-    context_window: 200_000
-    reasoning_effort: 1
-    inputs:
-      - text
-    function_calling: 1
-      
   - name: gpt-4.1-mini
     display_name: GPT-4.1 mini
     adapter: OpenAIAdapter
