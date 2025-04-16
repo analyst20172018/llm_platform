@@ -16,9 +16,7 @@ from llm_platform.helpers.model_config import ModelConfig
 import logging
 import tiktoken
 import os
-import base64
 from typing import List, Dict, Tuple, BinaryIO, Any, Callable, Union
-import yaml
 
 class APIHandler:
     """
@@ -253,7 +251,8 @@ class APIHandler:
         adapter = self.get_adapter(model)
 
         # Fetch max_tokens from the model config
-        max_tokens = self.model_config[model].max_tokens
+        if not "max_tokens" in kwargs:
+            kwargs["max_tokens"] = self.model_config[model].max_tokens
 
         response = await adapter.request_llm_async(
             model=model,
@@ -261,7 +260,6 @@ class APIHandler:
             functions=functions,
             temperature=temperature,
             tool_output_callback=tool_output_callback,
-            max_tokens=max_tokens,
             additional_parameters=additional_parameters,
             **kwargs
         )
