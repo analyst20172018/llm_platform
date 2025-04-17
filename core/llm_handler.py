@@ -132,20 +132,95 @@ class APIHandler:
                 additional_parameters: Dict={},
                 **kwargs) -> str:
         """
-            Sends a request to the language model with the given parameters.
-            Args:
-                model (str): The name of the model to use.
-                prompt (str): The prompt to send to the model.
-                functions (Union[List[BaseTool], List[Callable]], optional): A list of tools or callables to use. Defaults to None.
-                files (List[BaseFile], optional): A list of files to include in the request. Defaults to an empty list.
-                temperature (int, optional): The temperature setting for the model. Defaults to 0.
-                tool_output_callback (Callable, optional): A callback function for tool output. Defaults to None.
-                additional_parameters (Dict, optional): Additional parameters to include in the request. Defaults to an empty dictionary.
-                **kwargs: Additional keyword arguments.
-            Returns:
-                str: The response from the language model.
-            Raises:
-                ValueError: If the prompt is empty.
+            Send a single prompt to a language model and receive the assistant’s answer.
+
+            The method
+
+            1.  Appends the ``prompt`` (and optional ``files``) to the current
+                ``Conversation`` as a *user* message.
+            2.  Forwards the full conversation to the appropriate *adapter* that
+                serves the requested ``model``.
+            3.  Returns the assistant’s reply as a ``Message`` instance and stores
+                it in the conversation history.
+
+            Parameters
+            ----------
+            model : str
+                Name of the model to use.  
+                Must correspond to a model present in *models_config.yaml*.
+            prompt : str
+                Natural‑language question / instruction supplied by the user.
+            functions : list[BaseTool | Callable], optional
+                Collection of tools that the model may call via function‑calling
+                interfaces (OpenAI, Gemini, Anthropic, …).  Each element must be
+
+                * an instance of ``llm_platform.tools.base.BaseTool`` **or**
+                * a plain Python function whose signature will be converted to a
+                JSON schema.
+            files : list[BaseFile], optional
+                Additional multimodal inputs (images, audio, PDFs, Excel sheets,
+                plain text files, …).  
+                See ``llm_platform.services.files`` for available file classes.
+            temperature : int | float, default 0
+                Sampling temperature passed to the model (if supported by the
+                underlying provider).  Higher values ⇒ more creativity.
+            tool_output_callback : Callable, optional
+                ``callback(tool_name: str, args: list, result: Any) -> None``  
+                Invoked after every successful tool execution.
+            additional_parameters : dict, optional
+                Provider‑agnostic high‑level switches.  Currently understood keys
+                (silently ignored by adapters that do not support them):
+
+                * ``response_modalities`` : list[str]  
+                e.g. ``["text", "image", "audio"]`` – request multimodal output
+                from OpenAI or Gemini.
+                * ``grounding`` : bool  
+                When *True* the model may call an integrated web‑search /
+                retrieval tool (OpenAI, Gemini).
+                * ``citations`` : bool  
+                Ask Anthropic models to return source citations for attached
+                documents.
+
+            **kwargs
+                Provider‑specific low‑level parameters that are forwarded unchanged
+                to the adapter.  Common examples:
+
+                * ``max_tokens`` : int – hard limit for the assistant’s answer.  
+                * ``reasoning`` : dict – OpenAI / Anthropic chain‑of‑thought
+                budget, e.g. ``{"effort": "high"}``.
+                * ``audio`` / ``modalities`` – legacy keys for GPT‑4o‑audio
+                endpoints.  
+                * Any other keyword accepted by the vendor’s SDK.
+
+            Returns
+            -------
+            llm_platform.services.conversation.Message
+                The assistant’s reply, including text, any returned files,
+                reasoning traces, function‑call metadata and token usage.
+
+            Raises
+            ------
+            ValueError
+                If *prompt* is empty.
+
+            Examples
+            --------
+            >>> handler = APIHandler()
+            >>> reply = handler.request(
+            ...     model="gpt-4o",
+            ...     prompt="Summarise the attached PDF in bullet points.",
+            ...     files=[PDFDocumentFile.from_bytes(pdf_bytes, "report.pdf")],
+            ...     additional_parameters={"grounding": True},
+            ... )
+            >>> print(reply.content)
+            • …
+
+            Notes
+            -----
+            All messages exchanged through this method are persisted in
+            ``handler.the_conversation``.  Subsequent calls therefore provide
+            conversational context to the model until ``Conversation.clear()`` is
+            invoked.
             """
         if not prompt:
             raise ValueError("Prompt cannot be empty")
@@ -211,17 +286,69 @@ class APIHandler:
                     additional_parameters: Dict={}, 
                     **kwargs) -> str:
         """
-        Make a request to the language model using the appropriate adapter.
+            Dispatch the current ``Conversation`` to the language‑model adapter and
+            return the assistant’s next message.
 
-        Args:
-            model (str): The name of the model to use.
-            temperature (float): The temperature for text generation.
-            **kwargs: Additional keyword arguments for the request.
-            additional_parameters (Dict, optional): Additional parameters to include in the request:
-                response_modalities=['text', 'image', 'audio']: The response modalities to include in the response (for Gemini and OpenAI)
+            Unlike :py:meth:`APIHandler.request`, this method does **not** append a
+            new *user* message.  It is therefore intended to be called internally
+            (e.g. by :py:meth:`request`) or when the caller has already modified
+            ``self.the_conversation`` manually.
 
-        Returns:
-            str: The response from the language model.
+            Workflow
+            --------
+            1.  Select the adapter that corresponds to ``model`` based on
+                *models_config.yaml*.
+            2.  Inject a default ``max_tokens`` value from the configuration file
+                into ``**kwargs`` if the caller did not specify one.
+            3.  Forward the entire conversation as well as all arguments to
+                ``adapter.request_llm``.
+            4.  Store the returned assistant message inside the conversation and
+                return it to the caller.
+
+            Parameters
+            ----------
+            model : str
+                The identifier of the model to invoke.
+            functions : list[BaseTool | Callable], optional
+                Tools that the model is allowed to call.  See
+                :py:meth:`APIHandler.request` for details.
+            temperature : int | float, default 0
+                Sampling temperature forwarded to the underlying provider.
+            tool_output_callback : Callable, optional
+                ``callback(tool_name: str, args: list, result: Any)`` executed after
+                every tool call.
+            additional_parameters : dict, optional
+                High‑level, provider‑agnostic feature switches.  Recognised keys:
+
+                * ``response_modalities`` : list[str] – e.g. ``["text", "image"]``  
+                * ``grounding``           : bool  
+                * ``citations``           : bool  
+
+                Adapters that do not support a key ignore it silently.
+            **kwargs
+                Low‑level provider specific parameters (``max_tokens``,
+                ``reasoning``, SDK‑specific flags, …).  All keys are passed
+                unchanged to the adapter.
+
+            Returns
+            -------
+            llm_platform.services.conversation.Message
+                The newly generated assistant message, complete with any attached
+                files, internal “thinking” traces, tool‑use records and token usage
+                statistics.
+
+            Raises
+            ------
+            ValueError
+                If *model* does not exist in *models_config.yaml* or the associated
+                adapter cannot be instantiated.
+
+            Notes
+            -----
+            * A default ``max_tokens`` is injected automatically from the model
+            configuration when the argument is omitted.
+            * The conversation history grows with every invocation.  Call
+            ``handler.the_conversation.clear()`` to reset the context.
         """
         logging.info(f"Calling API with model {model}")
         adapter = self.get_adapter(model)

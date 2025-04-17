@@ -3,8 +3,9 @@ from openai import OpenAI, AsyncOpenAI
 import json
 from typing import List, Tuple, Dict, Callable
 from llm_platform.tools.base import BaseTool
-from llm_platform.services.conversation import Conversation, FunctionCall, FunctionResponse, Message
+from llm_platform.services.conversation import Conversation, FunctionCall, FunctionResponse, Message, ThinkingResponse
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
+from llm_platform.helpers.model_config import ModelConfig
 import logging
 import inspect
 import asyncio
@@ -16,6 +17,7 @@ class OpenAIAdapter(AdapterBase):
         super().__init__(logging_level)  
         self.client = OpenAI()
         self.async_client = AsyncOpenAI()
+        self.model_config = ModelConfig()
         
 
     def convert_conversation_history_to_adapter_format(self, 
@@ -75,18 +77,18 @@ class OpenAIAdapter(AdapterBase):
 
                         if (each_file.size < 32_000_000) and (each_file.number_of_pages < 100):
                             # Add the image to the content list
-                            image_content = {"type": "input_file",
+                            pdf_content = {"type": "input_file",
                                              "filename": each_file.name,
                                              "file_data": f"data:application/pdf;base64,{each_file.base64}"
                                             }
                         else:
                             # Add the text document to the history as a text in XML tags
-                            new_text_content = {
+                            pdf_content = {
                                 "type": "input_text",
                                 "text": f"""<document name="{each_file.name}">{each_file.text}</document>"""
                             }
                             
-                        history_message["content"].append(image_content)
+                        history_message["content"].append(pdf_content)
                     
                     # Text documents
                     elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
@@ -119,8 +121,9 @@ class OpenAIAdapter(AdapterBase):
                         use_previous_response_id: bool=True,
                         **kwargs
                         ) -> Dict:
-        # Remove 'max_tokens' and 'temperature' from kwargs if 'o1-' is in the model name
-        if model.lower() in ['o3', 'o4-mini', 'o1-pro']:
+        # Remove 'max_tokens' and 'temperature' from reasoning models
+        if self.model_config[model]['reasoning_effort'] == 1:
+            #if model.lower() in REASONING_MODELS:
             kwargs.pop('max_tokens', None)
             kwargs.pop('temperature', None)
 
@@ -142,6 +145,9 @@ class OpenAIAdapter(AdapterBase):
             "tools": tools,
         }
         parameters.update(kwargs)
+
+        if "reasoning" in parameters:
+            parameters["reasoning"]["summary"] = "auto"
 
         # Use previous_response_id if available
         if use_previous_response_id:
@@ -190,7 +196,13 @@ class OpenAIAdapter(AdapterBase):
                                             if getattr(each_content, 'type', "") == "output_text"]
                                 )
         
-        message = Message(role="assistant", content=answer_text, usage=usage, id=response.id)
+        # Save the reasoning
+        thinking_responses = [ThinkingResponse(content=each_summary.text, id=response.id) \
+                                    for each_output in getattr(response, 'output', []) \
+                                        for each_summary in getattr(each_output, 'summary', []) \
+                                            if getattr(each_summary, 'type', "") == "summary_text"]
+        
+        message = Message(role="assistant", content=answer_text, thinking_responses=thinking_responses, usage=usage, id=response.id)
         the_conversation.messages.append(message)
         
         return message
@@ -227,8 +239,13 @@ class OpenAIAdapter(AdapterBase):
                                         for each_content in getattr(each_output, 'content', []) \
                                             if getattr(each_content, 'type', "") == "output_text"]
                                 )
+        # Save the reasoning
+        thinking_responses = [ThinkingResponse(content=each_summary.text, id=response.id) \
+                                    for each_output in getattr(response, 'output', []) \
+                                        for each_summary in getattr(each_output, 'summary', []) \
+                                            if getattr(each_summary, 'type', "") == "summary_text"]
         
-        message = Message(role="assistant", content=answer_text, usage=usage, id=response.id)
+        message = Message(role="assistant", content=answer_text, thinking_responses=thinking_responses, usage=usage, id=response.id)
         the_conversation.messages.append(message)
         
         return message
@@ -442,7 +459,7 @@ class OpenAIAdapter(AdapterBase):
         return output_images
 
 
-    def voice_to_text(self, audio_file, response_format="text", language="en", model="whisper-1"):
+    def voice_to_text(self, audio_file, response_format="text", language="en", model="gpt-4o-transcribe"):
         assert response_format in ["text", "srt", "verbose_json"]
         assert model in ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"]
         self.latest_usage = None
