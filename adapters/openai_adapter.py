@@ -169,6 +169,26 @@ class OpenAIAdapter(AdapterBase):
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={},
                     **kwargs) -> Message:
+        """
+            Request a response from an OpenAI large language model.
+            This method handles sending a request to an LLM, processing the response,
+            and updating the conversation with the assistant's message.
+            Args:
+                model (str): The identifier of the LLM model to use (e.g., 'gpt-4', 'gpt-3.5-turbo').
+                the_conversation (Conversation): The conversation object containing message history.
+                functions (List[BaseTool], optional): Tools/functions that can be called by the model.
+                    If provided, will use function calling mode.
+                tool_output_callback (Callable, optional): Callback function to handle tool outputs.
+                    Only used when functions are provided.
+                additional_parameters (Dict, optional): Additional parameters to pass to the OpenAI API.
+                **kwargs: Additional keyword arguments passed to the underlying API call.
+            Returns:
+                Message: A Message object containing the assistant's response, usage statistics,
+                    and any thinking responses (if available).
+            Note:
+                The method appends the resulting message to the conversation object automatically.
+                When functions are provided, the request is delegated to request_llm_with_functions.
+        """
         
         if functions is None:
             parameters = self._create_parameters_for_calling_llm(model, 
@@ -446,12 +466,29 @@ class OpenAIAdapter(AdapterBase):
 
     def generate_image(self, prompt: str, n: int=1, **kwargs) -> List[ImageFile]:
         response = self.client.images.generate(
-            model="dall-e-3",
+            model="gpt-image-1",
             prompt=prompt,
-            size=kwargs.get('size', '1024x1024'), # ['256x256', '512x512', '1024x1024', '1024x1792', '1792x1024']
-            quality=kwargs.get('quality', 'hd'), #["standard", "hd"]
+            size=kwargs.get('size', '1024x1536'), # '1024x1024', '1024x1536', '1536x1024', 'auto'
+            quality=kwargs.get('quality', 'high'), #['low', 'medium', 'high', 'auto']
+            output_format=kwargs.get('output_format', 'png'), #['png', 'jpeg', 'webp']
+            #output_compression=kwargs.get('output_compression', 50), # You can adjust the compression level (from 0-100%) for JPEG and WEBP formats
             n=n,
-            response_format="b64_json",
+            #background="transparent", # You can choose to generate an image with a transparent background (only available for PNG or WEBP)
+            #moderation=kwargs.get('moderation', 'low'), #['low', 'auto']
+        )
+
+        output_images = [ImageFile.from_base64(base64_str=image_data.b64_json, file_name="image.png") for image_data in response.data]
+
+        return output_images
+    
+
+    def edit_image(self, prompt: str, images=List[ImageFile], n: int=1, **kwargs) -> List[ImageFile]:
+        response = self.client.images.edit(
+            model="gpt-image-1",
+            prompt=prompt,
+            image = [image.bytes_io for image in images],
+            size=kwargs.get('size', '1024x1536'), # '1024x1024', '1024x1536', '1536x1024', 'auto'
+            n=n,
         )
 
         output_images = [ImageFile.from_base64(base64_str=image_data.b64_json, file_name="image.png") for image_data in response.data]

@@ -222,29 +222,13 @@ models:
     grounding: 1
     code_execution: 1
 
-  - name: gemini-2.0-flash-exp
-    display_name: Gemini 2.0 Flash Exp (Image)
+  - name: gemini-2.5-flash-preview-04-17
+    display_name: Gemini 2.5 Flash
     adapter: GoogleAdapter
     pricing:
-      input: 0 # USD/1M tokens
-      output: 0 # USD/1M tokens
-    max_tokens: 8_192
-    context_window: 1_048_576
-    inputs:
-      - text
-      - image
-      - audio
-    outputs:
-      - text
-      - image
-
-  - name: gemini-2.0-flash
-    display_name: Gemini 2.0 Flash
-    adapter: GoogleAdapter
-    pricing:
-      input: 0.1 # USD/1M tokens
-      output: 0.4 # USD/1M tokens
-    max_tokens: 8_192
+      input: 0.15 # USD/1M tokens
+      output: 3.50 # USD/1M tokens
+    max_tokens: 65_536
     context_window: 1_048_576
     inputs:
       - text
@@ -254,19 +238,6 @@ models:
       - text
     function_calling: 1
     grounding: 1
-
-  - name: gemini-2.0-flash-thinking-exp-01-21
-    display_name: Gemini 2.0 Flash Thinking
-    adapter: GoogleAdapter
-    pricing:
-      input: 0.15 # USD/1M tokens
-      output: 0.6 # USD/1M tokens
-    max_tokens: 8192
-    inputs:
-      - text
-      - image
-      - audio
-    function_calling: 1
 
   - name: deepseek-chat
     display_name: DeepSeek-V3 Chat
@@ -335,6 +306,18 @@ models:
     inputs:
       - text
     function_calling: 1
+
+  - name: grok-2-vision
+    display_name: Grok 2 Vision
+    adapter: GrokAdapter
+    pricing:
+      input: 2 # USD/1M tokens
+      output: 10 # USD/1M tokens
+    max_tokens: 32_768
+    context_window: 32_768
+    inputs:
+      - text
+      - image
   
   - name: mistral-large-latest
     display_name: Mistral Large

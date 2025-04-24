@@ -65,11 +65,11 @@ class SpeechmaticsAdapter(AdapterBase):
                 transcript = client.wait_for_completion(job_id, transcription_format="txt")
                 # To see the full output, try setting transcription_format="json-v2".
                 #print(transcript)
+                return transcript
             except Exception as e:
                 print(f"Error: {str(e)}")
+                return str(e)
         
-        return transcript
-
     def generate_image(self, prompt: str, size: str, quality:str, n=1):
         NotImplementedError("Not implemented yet")
 

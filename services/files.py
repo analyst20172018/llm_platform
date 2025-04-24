@@ -8,6 +8,7 @@ import io
 from pydub import AudioSegment
 from PyPDF2 import PdfReader
 import pandas as pd
+import requests
 
 
 class BaseFile(ABC):
@@ -22,6 +23,12 @@ class BaseFile(ABC):
         if file_extension == "jpg":
             file_extension = "jpeg"
         return file_extension
+
+    @property
+    def bytes_io(self) -> BinaryIO:
+        output = io.BytesIO(self.file_bytes)
+        output.name = self.name
+        return output
 
 class DocumentFile(BaseFile):
     def __init__(self, name: str=""):
@@ -123,6 +130,30 @@ class MediaFile(BaseFile):
         file_name = os.path.basename(url)
         with open(url, "rb") as media_file:
             return cls(media_file.read(), file_name)
+        
+    @classmethod
+    def from_web_url(cls, url: str) -> 'MediaFile':
+        response = requests.get(url)
+        if response.status_code == 200:
+            file_name = os.path.basename(url)
+            # Try to convert the image to PNG format
+            try:
+                # Create BytesIO object from the response content
+                image_buffer = io.BytesIO(response.content)
+                # Try to open as an image
+                pil_image = Image.open(image_buffer)
+                # Convert to PNG
+                png_buffer = io.BytesIO()
+                pil_image.save(png_buffer, format="PNG")
+                png_buffer.seek(0)
+                # Update file name with .png extension
+                file_name = os.path.splitext(file_name)[0] + ".png"
+                # Return the PNG bytes
+                return cls(png_buffer.getvalue(), file_name)
+            except Exception:
+                raise ValueError(f"Failed to convert file to PNG.")
+        else:
+            raise ValueError(f"Failed to fetch file from URL: {url}")
 
     @classmethod
     def from_bytes(cls, file_bytes: bytes, file_name: str) -> 'MediaFile':
@@ -144,11 +175,8 @@ class ImageFile(MediaFile):
 
     @property
     def pil_image(self):
-        # Create a BytesIO object from file_bytes
-        image_buffer = io.BytesIO(self.file_bytes)
-
         # Open the image using PIL
-        pil_image = Image.open(image_buffer)
+        pil_image = Image.open(self.bytes_io)
         return pil_image
 
     @property

@@ -54,7 +54,7 @@ class DeepSeekAdapter(AdapterBase):
                         history_message["content"].append(image_content)
                     
                     # Audio
-                    if isinstance(each_file, AudioFile):
+                    elif isinstance(each_file, AudioFile):
                         # Update kwargs as needed
                         assert "gpt-4o-audio" in model
                         if 'modalities' not in kwargs:
@@ -126,18 +126,25 @@ class DeepSeekAdapter(AdapterBase):
             kwargs['temperature'] = temperature
 
         history, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
-        response = self.client.chat.completions.create(
-                        model=model,
-                        messages=history,
-                        **kwargs,
-                        )
-        
-        usage = {"model": model,
-                 "completion_tokens": response.usage.completion_tokens,
-                 "prompt_tokens": response.usage.prompt_tokens}
-        
-        message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
-        the_conversation.messages.append(message)
+
+        try:
+            response = self.client.chat.completions.create(
+                            model=model,
+                            messages=history,
+                            **kwargs,
+                            )
+            
+            usage = {"model": model,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "prompt_tokens": response.usage.prompt_tokens}
+            
+            message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
+            the_conversation.messages.append(message)
+        except Exception as e:
+            logging.error(f"Error in request_llm: {e}")
+            message = Message(role="assistant", content=f"Error: {e}", usage={})
+            the_conversation.messages.append(message)
+            return message
         
         return message
 

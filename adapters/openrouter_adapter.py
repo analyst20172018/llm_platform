@@ -38,11 +38,6 @@ class OpenRouterAdapter(AdapterBase):
                     # Images
                     if isinstance(each_file, ImageFile):
 
-                        # Check if the model supports images
-                        if model == 'o1-mini':
-                            logging.warning("The model 'o1-mini' does not support images yet. Image is ignored.")
-                            continue
-
                         # Ensure that history_message["content"] is a list, not a string
                         if not isinstance(history_message["content"], list):
                             history_message["content"] = [history_message["content"]]
@@ -54,7 +49,7 @@ class OpenRouterAdapter(AdapterBase):
                         history_message["content"].append(image_content)
                     
                     # Audio
-                    if isinstance(each_file, AudioFile):
+                    elif isinstance(each_file, AudioFile):
                         # Update kwargs as needed
                         assert "gpt-4o-audio" in model
                         if 'modalities' not in kwargs:
@@ -94,7 +89,7 @@ class OpenRouterAdapter(AdapterBase):
                         history_message["content"].insert(0, new_text_content)
 
                     else:
-                        raise ValueError(f"Unsupported file type: {message.file.get_type()}")
+                        raise ValueError(f"Unsupported file type in file {each_file.name}. The type is {type(each_file)}.")
 
             history.append(history_message)
 

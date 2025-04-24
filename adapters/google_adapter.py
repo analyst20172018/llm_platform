@@ -82,27 +82,27 @@ class GoogleAdapter(AdapterBase):
                     
                     # Images
                     if isinstance(each_file, ImageFile):
-                        print(f"File name: {each_file.name}, file extension: {each_file.extension}")
+                        #print(f"File name: {each_file.name}, file extension: {each_file.extension}")
                         part_with_image = genai.types.Part.from_bytes(data = each_file.file_bytes,
                                                                 mime_type = f"image/{each_file.extension}")
 
                         message_parts.append(part_with_image)
 
-                    if isinstance(each_file, AudioFile):
+                    elif isinstance(each_file, AudioFile):
                         part_with_audio = genai.types.Part.from_bytes(data = each_file.file_bytes,
                                                                 mime_type = f"audio/mp3")
 
                         message_parts.append(part_with_audio)
 
                     # Text documents
-                    if isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
+                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
                         document_as_text = f"""<document name="{each_file.name}">{each_file.text}</document>"""
                         part_with_text_document = genai.types.Part.from_text(text=document_as_text)
 
                         message_parts.append(part_with_text_document)
 
                     # PDF documents
-                    if isinstance(each_file, PDFDocumentFile):
+                    elif isinstance(each_file, PDFDocumentFile):
                         if (each_file.size < 20_000_000) and (each_file.number_of_pages < 3_600):
                             part_with_pdf = genai.types.Part.from_bytes(data = each_file.bytes,
                                                                 mime_type = f"application/pdf")

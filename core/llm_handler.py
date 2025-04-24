@@ -458,8 +458,9 @@ class APIHandler:
 
         Keyword Arguments:
             For the OpenAI adapter:
-                - size (str, optional): Supported values are '256x256', '512x512', '1024x1024', '1024x1792', and '1792x1024'.
-                - quality (str, optional): Supported values are 'standard' and 'hd'.
+                - size (str, optional): Supported values are '1024x1024', '1024x1536', '1536x1024', 'auto'.
+                - quality (str, optional): Supported values are 'low', 'medium', 'high', 'auto'.
+                - moderation (str, optional): Supported values are 'low', 'auto'
 
             For the Google adapter:
                 - negative_prompt (str, optional): A description of what to omit in the generated image.
@@ -491,6 +492,14 @@ class APIHandler:
             adapter = self._lazy_initialization_of_adapter("GrokAdapter")
             images = adapter.generate_image(prompt, n, **kwargs) # returns List[ImageFile]
             return images
+        else: 
+            raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'google' as providers. ")
+        
+    def edit_image(self, prompt: str, provider: str='openai', images=List[ImageFile], n=1, **kwargs):
+        if provider.lower() == 'openai':
+            adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
+            image_url = adapter.edit_image(prompt, images, n, **kwargs)
+            return image_url
         else: 
             raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'google' as providers. ")
 

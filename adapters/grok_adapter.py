@@ -60,7 +60,7 @@ class GrokAdapter(AdapterBase):
                         history_message["content"].append(image_content)
                     
                     # Audio
-                    if isinstance(each_file, AudioFile):
+                    elif isinstance(each_file, AudioFile):
                         # Update kwargs as needed
                         assert "gpt-4o-audio" in model
                         if 'modalities' not in kwargs:
