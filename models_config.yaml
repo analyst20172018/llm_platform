@@ -97,7 +97,6 @@ models:
       - text
     reasoning_effort: 1
     function_calling: 1
-    grounding: 1
       
   - name: o4-mini
     display_name: o4-mini
@@ -112,7 +111,6 @@ models:
       - image
     reasoning_effort: 1
     function_calling: 1
-    grounding: 1
       
   - name: o1-pro
     display_name: o1-pro

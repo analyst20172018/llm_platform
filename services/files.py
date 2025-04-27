@@ -173,6 +173,14 @@ class ImageFile(MediaFile):
     def __init__(self, file_bytes: bytes, name: str):
         super().__init__(file_bytes, name)
 
+    @classmethod
+    def from_pil_image(cls, pil_image: Image.Image, file_name: str = "image.png") -> 'ImageFile':
+        buffer = io.BytesIO()
+        pil_image.save(buffer, format="PNG")
+        buffer.seek(0)
+        file_bytes = buffer.getvalue()
+        return cls(file_bytes=file_bytes, name=file_name)
+    
     @property
     def pil_image(self):
         # Open the image using PIL

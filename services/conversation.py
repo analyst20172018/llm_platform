@@ -58,7 +58,7 @@ class FunctionCall:
     def to_anthropic(self) -> Dict:
         return {"id": self.id,
                 "name": self.name, 
-                "input": json.loads(self.arguments),
+                "input": self.arguments,
                 "type": "tool_use",
                 }
 

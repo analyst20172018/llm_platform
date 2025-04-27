@@ -11,6 +11,154 @@ import asyncio
 import json
 import inspect
 
+class ClaudeStreamProcessor:
+    """
+    Processes Claude API stream events and accumulates them into:
+    - thinking_text: The raw thinking text from thinking blocks
+    - response_text: The actual response text shown to the user
+    - tool_uses: A list of tools being used, with their parameters
+    """
+    def __init__(self):
+        # Output fields
+        self.thinking_text = ""
+        self.thinking_responses: List[ThinkingResponse] = []
+        self.response_text = ""
+        self.tool_uses = []
+        self.usage = {"model": "",
+                      "completion_tokens": 0,
+                      "prompt_tokens": 0 
+                }
+        self.stop_reason = None
+
+        # Internal state tracking
+        self._current_block_type = None
+        self._current_block_index = None
+        self._current_block_signature = None
+        self._current_tool_name = None
+        self._current_tool_id = None
+        self._current_tool_json = ""
+
+    def process_event(self, event):
+        """Process a single event from the Claude stream."""
+        if not hasattr(event, 'type'):
+            return
+
+        event_type = event.type
+
+        if event_type == 'message_start':
+            self._handle_message_start(event)
+        elif event_type == 'content_block_start':
+            self._handle_content_block_start(event)
+        elif event_type == 'content_block_delta':
+            self._handle_content_block_delta(event)
+        elif event_type == 'content_block_stop':
+            self._handle_content_block_stop(event)
+        elif event_type == 'message_delta':
+            self._handle_message_delta(event)
+
+    def _handle_message_start(self, event):
+        if not hasattr(event, 'message'):
+            return
+        
+        self.usage["model"] = event.message.model
+        self.usage["prompt_tokens"] = event.message.usage.input_tokens
+
+    def _handle_content_block_start(self, event):
+        """Handle the start of a content block."""
+        if not hasattr(event, 'content_block'):
+            return
+
+        content_block = event.content_block
+
+        # Set the current block type and index
+        if hasattr(content_block, 'type'):
+            self._current_block_type = content_block.type
+
+        if hasattr(event, 'index'):
+            self._current_block_index = event.index
+
+        # For tool use blocks, store the tool information
+        if self._current_block_type == 'tool_use':
+            if hasattr(content_block, 'name'):
+                self._current_tool_name = content_block.name
+
+            if hasattr(content_block, 'id'):
+                self._current_tool_id = content_block.id
+
+            # Reset the JSON accumulator for the new tool
+            self._current_tool_json = ""
+
+    def _handle_content_block_delta(self, event):
+        """Handle a delta update to a content block."""
+        if not hasattr(event, 'delta'):
+            return
+
+        delta = event.delta
+
+        if not hasattr(delta, 'type'):
+            return
+
+        delta_type = delta.type
+
+        # Accumulate thinking text
+        if delta_type == 'thinking_delta' and hasattr(delta, 'thinking'):
+            self.thinking_text += delta.thinking
+
+        # Accumulate response text
+        elif delta_type == 'text_delta' and hasattr(delta, 'text'):
+            self.response_text += delta.text
+
+        # Accumulate tool JSON
+        elif delta_type == 'input_json_delta' and hasattr(delta, 'partial_json'):
+            self._current_tool_json += delta.partial_json
+
+        # Save the signature of the current block
+        elif delta_type == 'signature_delta' and hasattr(delta, 'signature'):
+            self._current_block_signature = delta.signature
+
+    def _handle_content_block_stop(self, event):
+        """Handle the end of a content block."""
+        # Process completed tool use blocks
+        if self._current_block_type == 'tool_use' and self._current_tool_name:
+            try:
+                # Parse the complete JSON for the tool parameters
+                parameters = json.loads(self._current_tool_json) if self._current_tool_json else {}
+
+                # Add the tool use to our list
+                tool_use = {
+                    'name': self._current_tool_name,
+                    'parameters': parameters
+                }
+                if self._current_tool_id:
+                    tool_use['id'] = self._current_tool_id
+
+                self.tool_uses.append(tool_use)
+            except json.JSONDecodeError:
+                # Handle malformed JSON by using empty parameters
+                self.tool_uses.append({
+                    'name': self._current_tool_name,
+                    'id': self._current_tool_id,
+                    'parameters': {}
+                })
+
+            # Reset the tool-specific state
+            self._current_tool_name = None
+            self._current_tool_id = None
+            self._current_tool_json = ""
+
+        elif self._current_block_type == 'thinking':
+            self.thinking_responses.append(ThinkingResponse(content=self.thinking_text, id=self._current_block_signature))
+            self.thinking_text = ""
+
+        # Reset the block state
+        self._current_block_type = None
+        self._current_block_index = None
+        self._current_block_signature = None
+
+    def _handle_message_delta(self, event):
+        self.usage["completion_tokens"] = event.usage.output_tokens
+        self.stop_reason = event.delta.stop_reason
+
 class AnthropicAdapter(AdapterBase):
 
     def __init__(self, logging_level=logging.INFO):
@@ -178,7 +326,7 @@ class AnthropicAdapter(AdapterBase):
             # Check max_tokens and correct if necessary
             if 'max_tokens' in kwargs:
                 kwargs['max_tokens'] = self.correct_max_tokens(model, history, kwargs['max_tokens'])
-            
+
             stream = self.client.beta.messages.create(
                             model=model,
                             system = the_conversation.system_prompt,
@@ -188,42 +336,12 @@ class AnthropicAdapter(AdapterBase):
                             **kwargs,
                         )
             
-            usage = {"model": model,
-                    "completion_tokens": 0, #response.usage.output_tokens,
-                    "prompt_tokens": 0 #response.usage.input_tokens
-                }
-            
-            # Response from the stream
-            thinking_text = ""
-            response_text = ""
+            processor = ClaudeStreamProcessor()
             for event in stream:
-                # Get content (thinking or text)
-                if event.type == "content_block_delta":
-                    if event.delta.type == "thinking_delta":
-                        thinking_text += event.delta.thinking
-
-                    if event.delta.type == "text_delta":
-                        response_text += event.delta.text
-                    
-                # Get usage
-                if getattr(event, 'message', None):
-                    if getattr(event.message, 'usage', None):
-                        usage['prompt_tokens'] += getattr(event.message.usage, 'input_tokens', 0)
-                        usage['completion_tokens'] += getattr(event.message.usage, 'output_tokens', 0)
-                if getattr(event, 'usage', None):
-                    usage['prompt_tokens'] += getattr(event.usage, 'input_tokens', 0)
-                    usage['completion_tokens'] += getattr(event.usage, 'output_tokens', 0)
-
-            full_response = response_text
-
-            if thinking_text:
-                thinking_responses = [ThinkingResponse(content=thinking_text)]
-            else:
-                thinking_responses = []
-            message = Message(role="assistant", content=full_response, thinking_responses=thinking_responses, usage=usage)
+                processor.process_event(event)
 
         else:
-            response = self.request_llm_with_functions(
+            processor = self.request_llm_with_functions(
                             model=model,
                             the_conversation=the_conversation,
                             functions=functions,
@@ -232,20 +350,11 @@ class AnthropicAdapter(AdapterBase):
                             **kwargs,
              )
             
-            # Usually response is in response.content[0].text, but here Anthropic may answer with multiple messages
-            full_response = ''.join([each.text for each in response.content])
-            thinking_text = ""
-        
-            usage = {"model": model,
-                    "completion_tokens": response.usage.output_tokens,
-                    "prompt_tokens": response.usage.input_tokens
-                    }
-        
-            message = Message(role="assistant", content=full_response, usage=usage, thinking_responses=[])
-        
+        message = Message(role="assistant", content=processor.response_text, thinking_responses=processor.thinking_responses, usage=processor.usage)
         the_conversation.messages.append(message)
         
         return message
+
 
     def count_tokens(self, model, messages, tools=None):
         """Count tokens for a given message list."""
@@ -339,6 +448,7 @@ class AnthropicAdapter(AdapterBase):
             raise TypeError("func must be either a BaseTool or a function")
         return tool
     
+
     def request_llm_with_functions(self, model: str, 
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool], 
@@ -350,94 +460,74 @@ class AnthropicAdapter(AdapterBase):
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
         messages = self.convert_conversation_history_to_adapter_format(the_conversation)
 
-        # Check max_tokens and correct if necessary
-        #if 'max_tokens' in kwargs:
-        #    kwargs['max_tokens'] = self.correct_max_tokens(model, messages, kwargs['max_tokens'], tools=tools)
+        stream = self.client.beta.messages.create(
+                            model=model,
+                            system = the_conversation.system_prompt,
+                            messages=messages,
+                            temperature=temperature,
+                            tools=tools,
+                            stream=True,
+                            **kwargs,
+                        )
+        
+        processor = ClaudeStreamProcessor()
+        for event in stream:
+            processor.process_event(event)
 
-        chat_response = self.client.beta.messages.create(
-                        model=model,
-                        messages=messages,
-                        system = the_conversation.system_prompt,
-                        tools=tools,
-                        temperature=temperature,
-                        **kwargs,
-                    )
-        
-        usage = {"model": model,
-                    "completion_tokens": chat_response.usage.output_tokens,
-                    "prompt_tokens": chat_response.usage.input_tokens}
-        
         # If there are no tool calls, we can return the response
-        if chat_response.stop_reason != "tool_use":
-            return chat_response
+        if processor.stop_reason != "tool_use":
+            return processor
         
         function_call_records = []
         function_response_records = []
 
-        # Extract the assistant's text response
-        if isinstance(chat_response.content, str):
-            text_assistant_answer = chat_response.content
-        elif isinstance(chat_response.content, list):
-            text_answers = [each.text for each in chat_response.content if getattr(each, 'type', '') == 'text']
-            text_assistant_answer = '\n'.join(text_answers)
-        else:
-            raise ValueError(f"Unsupported response type: {type(chat_response.content)}. Must be str or list")
-        
         # Extract all requests to use the tools from the response
-        tool_use_requests = [each for each in chat_response.content if getattr(each, 'type', '') == 'tool_use']
-        for each_tool in tool_use_requests:
+        for each_tool in processor.tool_uses:
             # Find the requested function
-            function_index = next((i for i, tool in enumerate(tools) if tool['name'] == each_tool.name), -1)
+            function_index = next((i for i, tool in enumerate(tools) if tool['name'] == each_tool["name"]), -1)
             if function_index == -1:
-                raise ValueError(f"Function {each_tool.name} not found in tools")
+                raise ValueError(f"Function {each_tool['name']} not found in tools")
             function = functions[function_index]
 
             # Get all function parameters
             function_parameters = []
             for key, value in tools[function_index].get('input_schema', {}).get('properties', {}).items():
-                function_parameters.append(getattr(each_tool, "input", {}).get(key, ""))
+                function_parameters.append(each_tool["parameters"].get(key, ""))
 
             # Call the function
             function_response = function(*function_parameters)
 
             # Save function_call and function_response records
-            function_call_record = FunctionCall(id=getattr(each_tool, "id", ""),
-                                                name=each_tool.name,
-                                                arguments=json.dumps(getattr(each_tool, "input", {}))
+            function_call_record = FunctionCall(id=each_tool['id'],
+                                                name=each_tool['name'],
+                                                arguments=each_tool['parameters'],
                                                 )
             function_call_records.append(function_call_record)
 
-            function_response_record = FunctionResponse(name=each_tool.name,
-                                                        id=getattr(each_tool, "id", ""),
+            function_response_record = FunctionResponse(name=each_tool['name'],
+                                                        id=each_tool['id'],
                                                         response=function_response
                                                         )
             function_response_records.append(function_response_record)
 
             if tool_output_callback:
-                tool_output_callback(each_tool.name,
+                tool_output_callback(each_tool['name'],
                                      function_parameters,
                                      function_response
                                     )
-                
-        # Extract all responses with the thinking
-        thinking_responses_history = []
-        thinking_responses_from_llm = [each for each in chat_response.content if getattr(each, 'type', '') in ['thinking', 'redacted_thinking']]
-        for each_thinking_response in thinking_responses_from_llm:
-            new_thinking_response = ThinkingResponse(content=each_thinking_response.thinking, id=each_thinking_response.signature)
-            thinking_responses_history.append(new_thinking_response)
-
 
         message = Message(role="assistant", 
-                                    content=text_assistant_answer,
-                                    thinking_responses=thinking_responses_history,
+                                    content=processor.response_text,
+                                    thinking_responses=processor.thinking_responses,
                                     function_calls=function_call_records,
                                     function_responses=function_response_records,
-                                    usage=usage
+                                    usage=processor.usage
                                 )
         the_conversation.messages.append(message)
 
         final_response = self.request_llm_with_functions(model, the_conversation, functions, temperature, tool_output_callback=tool_output_callback, **kwargs)
         return final_response
+
 
     def request_llm_computer_use(self, model: str, 
                                  the_conversation: Conversation, 
@@ -471,9 +561,6 @@ class AnthropicAdapter(AdapterBase):
         messages = self.convert_conversation_history_to_adapter_format(the_conversation)
         system_prompt = the_conversation.system_prompt
 
-        print(tools)
-        print(messages)
-
         chat_response = self.client.beta.messages.create(
                         model=model,
                         messages=messages,
@@ -487,8 +574,6 @@ class AnthropicAdapter(AdapterBase):
         usage = {"model": model,
                 "completion_tokens": chat_response.usage.output_tokens,
                 "prompt_tokens": chat_response.usage.input_tokens}
-        
-        print(chat_response)
         
         # If there are no tool calls, we can return the response
         if chat_response.stop_reason != "tool_use":
@@ -528,7 +613,6 @@ class AnthropicAdapter(AdapterBase):
                     function_parameters.append(getattr(each_tool, "input", {}).get(key, ""))
 
             # Call the function
-            print(f"Function parameters: {function_parameters}")
             function_response = function(*function_parameters)
 
             message = Message(role="user", 
@@ -542,6 +626,7 @@ class AnthropicAdapter(AdapterBase):
 
         final_response = self.request_llm_with_functions(model, the_conversation, functions, temperature, **kwargs)
         return final_response
+
 
     def get_models(self) -> List[str]:
         # Retrieve the list of models
