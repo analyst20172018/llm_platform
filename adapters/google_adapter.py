@@ -136,46 +136,38 @@ class GoogleAdapter(AdapterBase):
             max_tokens = the_conversation.model_config.get_max_tokens(model)
             kwargs['max_output_tokens'] = max_tokens
 
-        # Remove reasoning parameter, since it is not supported by google
-        _ = kwargs.pop('reasoning', None)
-
         if functions is None:
 
             history = self.convert_conversation_history_to_adapter_format(the_conversation)
 
             # Prepare parameters for the generation config
             generation_config_params = {
+                "system_instruction": the_conversation.system_prompt if the_conversation.system_prompt else "",
                 "temperature": temperature,
                 "tools": [],
                 "safety_settings": self.safety_settings,
             }
-            generation_config_params.update(kwargs)
 
-            # Add system prompt to the generation config parameters
-            if model != 'gemini-2.0-flash-exp':
-                if the_conversation.system_prompt:
-                    generation_config_params["system_instruction"] = the_conversation.system_prompt
+            # Convert parameter `reasoning_efforts` to `thinking` parameter
+            if 'reasoning' in kwargs:
+                reasoning_effort = kwargs.pop('reasoning', {}).get('effort', 'low')
+                """
+                    reasoning_effort 'low' -> thinking is not used at all
+                    reasoning_effort 'medium' -> thinking budget is 8000
+                    reasoning_effort 'high' -> thinking budget is 32000
+                """
+                if reasoning_effort in ['high', 'medium']:
+                    reasoning_effort_map = {'high': 24_576, 'medium': 8_000}
+                    thinking_budget = reasoning_effort_map[reasoning_effort]
+                    generation_config_params["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
 
             # Add response modalities to the generation config parameters
             if "response_modalities" in additional_parameters:
                 generation_config_params["response_modalities"] = additional_parameters["response_modalities"]
 
-            generation_config = genai.types.GenerateContentConfig(**generation_config_params)
+            generation_config_params.update(kwargs)
 
-            """
-            # Examples of the generation_config
-            generation_config=genai.types.GenerateContentConfig(
-                temperature=0,
-                top_p=0.95,
-                top_k=20,
-                candidate_count=1,
-                seed=5,
-                max_output_tokens=100,
-                stop_sequences=['STOP!'],
-                presence_penalty=0.0,
-                frequency_penalty=0.0,
-            ),
-            """
+            generation_config = genai.types.GenerateContentConfig(**generation_config_params)
 
             # Grounding
             if additional_parameters.get("grounding", False):
@@ -271,14 +263,35 @@ class GoogleAdapter(AdapterBase):
                     # If it’s not a llm_platform.tools.base.BaseTool 
                     converted_functions.append(func)
 
-        generation_config = genai.types.GenerateContentConfig(
-                system_instruction = the_conversation.system_prompt if the_conversation.system_prompt else "",
-                temperature=temperature,
-                tools = converted_functions,
-                safety_settings=self.safety_settings,
-                **kwargs
-            )
-        
+        # Prepare parameters for the generation config
+        generation_config_params = {
+            "system_instruction": the_conversation.system_prompt if the_conversation.system_prompt else "",
+            "temperature": temperature,
+            "tools": converted_functions,
+            "safety_settings": self.safety_settings,
+        }
+
+        # Convert parameter `reasoning_efforts` to `thinking` parameter
+        if 'reasoning' in kwargs:
+            reasoning_effort = kwargs.pop('reasoning', {}).get('effort', 'low')
+            """
+                reasoning_effort 'low' -> thinking is not used at all
+                reasoning_effort 'medium' -> thinking budget is 8000
+                reasoning_effort 'high' -> thinking budget is 32000
+            """
+            if reasoning_effort in ['high', 'medium']:
+                reasoning_effort_map = {'high': 24_576, 'medium': 8_000}
+                thinking_budget = reasoning_effort_map[reasoning_effort]
+                generation_config_params["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
+
+        # Add response modalities to the generation config parameters
+        if "response_modalities" in additional_parameters:
+            generation_config_params["response_modalities"] = additional_parameters["response_modalities"]
+
+        generation_config_params.update(kwargs)
+
+        generation_config = genai.types.GenerateContentConfig(**generation_config_params)
+
         # Grounding
         if additional_parameters.get("grounding", False):
             grounding_tool = genai.types.Tool(google_search=genai.types.GoogleSearchRetrieval)
