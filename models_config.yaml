@@ -13,6 +13,7 @@ models:
     citations_enabled: 1
     function_calling: 1
     reasoning_effort: 1
+    grounding: 1
 
   - name: claude-3-5-sonnet-latest
     display_name: Claude 3.5 Sonnet
@@ -27,6 +28,7 @@ models:
       - text
     citations_enabled: 1
     function_calling: 1
+    grounding: 1
 
   - name: claude-3-opus-latest
     display_name: Claude 3 Opus
@@ -53,6 +55,7 @@ models:
       - text
     citations_enabled: 1
     function_calling: 1
+    grounding: 1
 
 
   - name: gpt-4.1

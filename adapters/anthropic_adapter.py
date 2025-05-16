@@ -259,7 +259,7 @@ class AnthropicAdapter(AdapterBase):
                         history_message["content"].insert(0, document_content)
                     
                     else:
-                        raise ValueError(f"Unsupported file type: {message.file.get_type()}")
+                        raise ValueError(f"Unsupported file type: {each_file.extension}")
                     
             # If there are any tool calls, add them into the content of the message
             if message.function_calls:
@@ -327,12 +327,22 @@ class AnthropicAdapter(AdapterBase):
             if 'max_tokens' in kwargs:
                 kwargs['max_tokens'] = self.correct_max_tokens(model, history, kwargs['max_tokens'])
 
+            tools = []
+            # Web-search
+            if additional_parameters.get("grounding", False):
+                tools = [{
+                            "type": "web_search_20250305",
+                            "name": "web_search",
+                            "max_uses": 10,
+                        }]
+
             stream = self.client.beta.messages.create(
                             model=model,
                             system = the_conversation.system_prompt,
                             messages=history,
                             temperature=temperature,
                             stream=True,
+                            tools=tools,
                             **kwargs,
                         )
             
@@ -460,10 +470,18 @@ class AnthropicAdapter(AdapterBase):
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
         messages = self.convert_conversation_history_to_adapter_format(the_conversation)
 
+        # Web-search
+        if additional_parameters.get("grounding", False):
+            tools.append({
+                        "type": "web_search_20250305",
+                        "name": "web_search",
+                        "max_uses": 10,
+                    })
+
         stream = self.client.beta.messages.create(
+                            messages=messages,
                             model=model,
                             system = the_conversation.system_prompt,
-                            messages=messages,
                             temperature=temperature,
                             tools=tools,
                             stream=True,

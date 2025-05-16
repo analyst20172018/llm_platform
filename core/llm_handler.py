@@ -284,7 +284,7 @@ class APIHandler:
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={}, 
-                    **kwargs) -> str:
+                    **kwargs) -> Message:
         """
             Dispatch the current ``Conversation`` to the language‑model adapter and
             return the assistant’s next message.
@@ -357,7 +357,8 @@ class APIHandler:
         if not "max_tokens" in kwargs:
             kwargs["max_tokens"] = self.model_config[model].max_tokens
 
-        response = adapter.request_llm(model=model, 
+        try:
+            response = adapter.request_llm(model=model, 
                                        the_conversation=self.the_conversation, 
                                        functions=functions,
                                        temperature = temperature,
@@ -365,7 +366,12 @@ class APIHandler:
                                        additional_parameters=additional_parameters,
                                        **kwargs)
 
-        return response
+            return response
+        except Exception as e:
+            logging.error(f"Error in API call: {e}")
+            message = Message(role="assistant", content=f"Error in API call: {e}", usage=None, files=[])
+            self.the_conversation.messages.append(message)
+            return message
     
     async def request_llm_async(self,
                         model: str,
