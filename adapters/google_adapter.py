@@ -174,6 +174,11 @@ class GoogleAdapter(AdapterBase):
                 grounding_tool = genai.types.Tool(google_search=genai.types.GoogleSearchRetrieval)
                 generation_config.tools.append(grounding_tool)
 
+            # URL context
+            if additional_parameters.get("url_context", False):
+                url_context_tool = genai.types.Tool(url_context=genai.types.UrlContext)
+                generation_config.tools.append(url_context_tool)
+
             response = self.client.models.generate_content(contents = history, 
                                                       model = model,
                                                       config = generation_config,

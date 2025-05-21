@@ -209,6 +209,7 @@ models:
     grounding: 1
     code_execution: 1
     reasoning_effort: 1
+    url_context: 1
 
   - name: gemini-2.5-pro-exp-03-25
     display_name: Gemini 2.5 Pro (free)
@@ -226,7 +227,7 @@ models:
     grounding: 1
     code_execution: 1
 
-  - name: gemini-2.5-flash-preview-04-17
+  - name: gemini-2.5-flash-preview-05-20
     display_name: Gemini 2.5 Flash
     adapter: GoogleAdapter
     pricing:
@@ -238,12 +239,14 @@ models:
       - text
       - image
       - audio
+      - video
     outputs:
       - text
     function_calling: 1
     grounding: 1
     code_execution: 1
     reasoning_effort: 1
+    url_context: 1
 
 
   - name: deepseek-chat
