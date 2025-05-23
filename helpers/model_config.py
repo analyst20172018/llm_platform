@@ -44,7 +44,7 @@ class ModelConfig:
     @staticmethod
     def load_model_config():
         config_path = Path(__file__).parent.parent / 'models_config.yaml'
-        with config_path.open('r') as file:
+        with config_path.open('r', encoding="utf-8") as file:
             return yaml.safe_load(file)
     
     def model_names(self) -> List[str]:

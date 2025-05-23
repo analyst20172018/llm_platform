@@ -1,10 +1,11 @@
 from .adapter_base import AdapterBase
 from openai import OpenAI
+import requests
 import os
 from typing import List, Tuple, Callable, Dict
 import logging
 from llm_platform.tools.base import BaseTool
-from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
+from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse, ThinkingResponse
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
 import json
 import inspect
@@ -17,6 +18,12 @@ class GrokAdapter(AdapterBase):
             api_key = os.getenv("XAI_API_KEY"),
             base_url = "https://api.x.ai/v1",
         )
+
+        self.completions_url = "https://api.x.ai/v1/chat/completions"
+        self.headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.getenv("XAI_API_KEY")}"
+        }
         
     def convert_conversation_history_to_adapter_format(self, 
                         the_conversation: Conversation, 
@@ -29,29 +36,33 @@ class GrokAdapter(AdapterBase):
         # Add history of messages
         for message in the_conversation.messages:
 
-            history_message = {"role": message.role, "content": message.content}
+            history_message = {
+                "role": message.role, 
+                "content": [{
+                        "type": "text",
+                        "text": message.content
+                }]
+            }
 
             # If there is an attribute tool_calls in message, then add it to history. 
             if message.function_calls:
-                history_message["tool_calls"] = [each_call.to_openai() for each_call in message.function_calls]
+                function_calls_message = {
+                    'content': '',
+                    'refusal': None,
+                    'role': 'assistant',
+                    'tool_calls': [],
+                }
+                
+                for each_function_call in message.function_calls:
+                    function_calls_message["tool_calls"].append(each_function_call.to_grok())
+                
+                history.append(function_calls_message)
 
             if not message.files is None:
                 for each_file in message.files:
                     
                     # Images
                     if isinstance(each_file, ImageFile):
-
-                        # Check if the model supports images
-                        if model == 'o1-mini':
-                            logging.warning("The model 'o1-mini' does not support images yet. Image is ignored.")
-                            continue
-
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [{
-                                "type": "text",
-                                "text": history_message["content"]
-                            }]
 
                         # Add the image to the content list
                         image_content = {"type": "image_url", 
@@ -61,16 +72,7 @@ class GrokAdapter(AdapterBase):
                     
                     # Audio
                     elif isinstance(each_file, AudioFile):
-                        # Update kwargs as needed
-                        assert "gpt-4o-audio" in model
-                        if 'modalities' not in kwargs:
-                            kwargs['modalities'] = ["text"] #["text", "audio"]
-                        if 'audio' not in kwargs:
-                            kwargs['audio'] = {"voice": "alloy", "format": "wav"}
-
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [history_message["content"]]
+                        raise NotImplementedError("Grok does not support audio files")
 
                         # Add audio to history
                         audio_content = {
@@ -85,13 +87,6 @@ class GrokAdapter(AdapterBase):
                     # Text documents
                     elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile)):
                         
-                        # Ensure that history_message["content"] is a list, not a string
-                        if not isinstance(history_message["content"], list):
-                            history_message["content"] = [{
-                                "type": "text",
-                                "text": history_message["content"]
-                            }]
-
                         # Add the text document to the history as a text in XML tags
                         new_text_content = {
                             "type": "text",
@@ -107,9 +102,33 @@ class GrokAdapter(AdapterBase):
             # Add all function responses to the history
             if message.function_responses:
                 for each_response in message.function_responses:
-                    history.append(each_response.to_openai())
+                    history.append(each_response.to_grok())
 
         return history, kwargs
+
+    def _create_parameters_for_calling_llm(self, 
+                        model: str,
+                        the_conversation: Conversation,
+                        additional_parameters: Dict={},
+                        **kwargs
+                        ) -> Dict:
+        messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
+
+        parameters = {
+            "model": model,
+            "messages": messages,
+            "tools": [],
+        }
+
+        # Add `reasoning` parameter if exists
+        if 'reasoning' in kwargs:
+            parameters['reasoning_effort'] = kwargs.pop('reasoning', {}).get('effort', 'low')
+
+        # Add web search parameter if exists
+        if additional_parameters.get("grounding", False):
+            parameters['search_parameters'] = {"mode": "auto"}
+
+        return parameters
 
     def request_llm(self, model: str, 
                     the_conversation: Conversation, 
@@ -118,38 +137,64 @@ class GrokAdapter(AdapterBase):
                     tool_output_callback: Callable=None, 
                     additional_parameters: Dict={},
                     **kwargs) -> Message:
-
-        if additional_parameters:
-            logging.warning("Additional parameters is not supported by Grok API")
-
-        # Remove 'max_tokens' from kwargs if it exists
-        max_tokens = kwargs.pop('max_tokens', None)
-        if max_tokens:
-            logging.warning("Max tokens parameter is removed.")
-
-        kwargs['temperature'] = temperature
-
+        """Requests a completion from the Language Model.
+                    This method sends the current conversation to the LLM and retrieves a response.
+                    It can handle both standard chat completions and completions involving function calls (tools).
+                    The conversation history is updated with the LLM's response.
+                    Args:
+                        model (str): The identifier of the LLM model to be used.
+                        the_conversation (Conversation): The conversation object containing the history
+                            of messages. This object will be updated with the LLM's response.
+                        functions (List[BaseTool], optional): A list of tools (functions) that the LLM
+                            can choose to call. Defaults to None, indicating no functions are available.
+                        temperature (int, optional): Controls the randomness of the LLM's output.
+                            default: 0; min: 0; max: 2 What sampling temperature to use, between 0 and 2. Higher values like 0.8 will make the output more random, while lower values like 0.2 will make it more focused and deterministic.
+                        tool_output_callback (Callable, optional): A callback function that is invoked
+                            if the LLM decides to call a tool. This function is responsible for
+                            executing the tool and returning its output. Required if `functions`
+                            are provided. Defaults to None.
+                        additional_parameters (Dict, optional): A dictionary of additional parameters
+                            to be passed to the LLM API. Defaults to an empty dictionary.
+                        **kwargs: Arbitrary keyword arguments that will be passed to the underlying
+                            LLM API calls.
+                    Returns:
+                        Message: A Message object representing the LLM's response, including its
+                            content and usage statistics. This message is also appended to
+                            `the_conversation.messages`.
+        """
         if functions is None:
-            messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
-            response = self.client.chat.completions.create(
-                            model=model,
-                            messages=messages,
-                            **kwargs,
-                            )
+            parameters = self._create_parameters_for_calling_llm(
+                            model, 
+                            the_conversation, 
+                            additional_parameters,
+                            **kwargs
+                        )
+
+            response = requests.post(self.completions_url, headers=self.headers, json=parameters)
+            response = response.json()
         else:
-             response = self.request_llm_with_functions(
+            response = self.request_llm_with_functions(
                             model=model,
                             the_conversation=the_conversation,
                             functions=functions,
                             tool_output_callback=tool_output_callback,
                             **kwargs,
-             )
+            )
         
         usage = {"model": model,
-                 "completion_tokens": response.usage.completion_tokens,
-                 "prompt_tokens": response.usage.prompt_tokens}
+                "completion_tokens": response['usage']['completion_tokens'],
+                "prompt_tokens": response['usage']['total_tokens']}
         
-        message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
+        thinking_responses = []
+        if 'reasoning_content' in response['choices'][0]['message']:
+            thinking_responses.append(ThinkingResponse(content=response['choices'][0]['message']['reasoning_content'], id=response['id']))
+        
+        message = Message(
+            role="assistant", 
+            content=response['choices'][0]['message']['content'], 
+            thinking_responses=thinking_responses,
+            usage=usage
+        )
         the_conversation.messages.append(message)
         
         return message
@@ -217,7 +262,6 @@ class GrokAdapter(AdapterBase):
                     'required': required_params,
                     "additionalProperties": False
                 },
-                "strict": True
             },
             'type': 'function',
         }
@@ -245,37 +289,40 @@ class GrokAdapter(AdapterBase):
                                    additional_parameters: Dict={},
                                    **kwargs):
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
-        messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation, model)
-
-        chat_response = self.client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        tools=tools,
-                        **kwargs,
+        parameters = self._create_parameters_for_calling_llm(
+                            model, 
+                            the_conversation, 
+                            additional_parameters,
+                            **kwargs
                         )
         
-        usage = {"model": model,
-                "completion_tokens": chat_response.usage.completion_tokens,
-                "prompt_tokens": chat_response.usage.prompt_tokens}
+        parameters['tools'] += tools
         
-        assistant_message = chat_response.choices[0].message
+        response = requests.post(self.completions_url, headers=self.headers, json=parameters)
+        response = response.json()
+
+        usage = {"model": model,
+                "completion_tokens": response['usage']['completion_tokens'],
+                "prompt_tokens": response['usage']['total_tokens']}
+        
+        assistant_message = response['choices'][0]['message']
 
         # Save tool_calls parameter from the openai answer for the history
-        if getattr(assistant_message, 'tool_calls', None) is not None:
-            function_call_records = [FunctionCall.from_openai(each_tool_call) for each_tool_call in assistant_message.tool_calls]
+        if assistant_message.get('tool_calls', None) is not None:
+            function_call_records = [FunctionCall.from_grok(each_tool_call) for each_tool_call in assistant_message['tool_calls']]
         else: 
             function_call_records = []
 
         # If there are no tool calls, we can return the response
-        if getattr(assistant_message, 'tool_calls', None) is None:
-            return chat_response
+        if assistant_message.get('tool_calls', None) is None:
+            return response
 
         function_response_records = []
-        for each_tools_call in getattr(assistant_message, 'tool_calls', []):
+        for each_tools_call in assistant_message.get('tool_calls', []):
 
-            tool_call_id = each_tools_call.id
-            tool_function_name = each_tools_call.function.name
-            tool_arguments = json.loads(each_tools_call.function.arguments)
+            tool_call_id = each_tools_call['id']
+            tool_function_name = each_tools_call['function']['name']
+            tool_arguments = json.loads(each_tools_call['function']['arguments'])
 
             # Find the requested function
             function_index = next((i for i, tool in enumerate(tools) if tool['function']['name'] == tool_function_name), -1)
@@ -302,12 +349,18 @@ class GrokAdapter(AdapterBase):
                                      function_response
                                     )
 
-        message = Message(role=assistant_message.role, 
-                            content=assistant_message.content,
-                            function_calls=function_call_records,
-                            function_responses=function_response_records,
-                            usage=usage
-                            )
+        thinking_responses = []
+        if 'reasoning_content' in response['choices'][0]['message']:
+            thinking_responses.append(ThinkingResponse(content=response['choices'][0]['message']['reasoning_content'], id=response['id']))
+        
+        message = Message(
+            role="assistant", 
+            content=response['choices'][0]['message']['content'], 
+            thinking_responses=thinking_responses,
+            function_calls=function_call_records,
+            function_responses=function_response_records,
+            usage=usage
+        )
         the_conversation.messages.append(message)
 
         final_response = self.request_llm_with_functions(model, the_conversation, functions, tool_output_callback=tool_output_callback, **kwargs)

@@ -317,7 +317,7 @@ class AnthropicAdapter(AdapterBase):
                 temperature = 1
                 
         if model == 'claude-3-7-sonnet-20250219':
-            kwargs['betas'] = ["output-128k-2025-02-19"]
+            kwargs['betas'] = ["out put-128k-2025-02-19"]
 
         if functions is None:
             # Add history of messages

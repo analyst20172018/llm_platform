@@ -326,9 +326,10 @@ class APIHandler:
 
                 Adapters that do not support a key ignore it silently.
             **kwargs
-                Low‑level provider specific parameters (``max_tokens``,
-                ``reasoning``, SDK‑specific flags, …).  All keys are passed
-                unchanged to the adapter.
+                Low‑level provider specific parameters:
+                    max_tokens: int
+                    reasoning: Dict = {"effort": "medium"}, # or "low" or "high"
+                All keys are passed unchanged to the adapter.
 
             Returns
             -------

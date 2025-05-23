@@ -1,4 +1,41 @@
 models:
+  - name: claude-sonnet-4-20250514
+    display_name: Claude 4 Sonnet 👍
+    adapter: AnthropicAdapter
+    pricing:
+      input: 3 # USD/1M tokens
+      output: 15 # USD/1M tokens
+    max_tokens: 64_000
+    context_window: 200_000
+    inputs:
+      - image
+      - text
+    outputs:
+      - text
+    citations_enabled: 1
+    function_calling: 1
+    grounding: 1
+    reasoning_effort: 1
+  
+  - name: claude-opus-4-20250514
+    display_name: Claude 4 Opus 💰
+    adapter: AnthropicAdapter
+    pricing:
+      input: 15 # USD/1M tokens
+      output: 75 # USD/1M tokens
+    max_tokens: 32_000
+    context_window: 200_000
+    inputs:
+      - image
+      - text
+    outputs:
+      - text
+    function_calling: 1
+    citations_enabled: 1
+    function_calling: 1
+    reasoning_effort: 1
+    grounding: 1
+
   - name: claude-3-7-sonnet-20250219
     display_name: Claude 3.7 Sonnet
     adapter: AnthropicAdapter
@@ -10,38 +47,13 @@ models:
     inputs:
       - image
       - text
+    outputs:
+      - text
     citations_enabled: 1
     function_calling: 1
     reasoning_effort: 1
     grounding: 1
-
-  - name: claude-3-5-sonnet-latest
-    display_name: Claude 3.5 Sonnet
-    adapter: AnthropicAdapter
-    pricing:
-      input: 3 # USD/1M tokens
-      output: 15 # USD/1M tokens
-    max_tokens: 8192
-    context_window: 200_000
-    inputs:
-      - image
-      - text
-    citations_enabled: 1
-    function_calling: 1
-    grounding: 1
-
-  - name: claude-3-opus-latest
-    display_name: Claude 3 Opus
-    adapter: AnthropicAdapter
-    pricing:
-      input: 15 # USD/1M tokens
-      output: 75 # USD/1M tokens
-    max_tokens: 4096
-    context_window: 200000
-    inputs:
-      - image
-      - text
-    function_calling: 1
+    visible: false
       
   - name: claude-3-5-haiku-latest
     display_name: Claude 3.5 Haiku
@@ -59,7 +71,7 @@ models:
 
 
   - name: gpt-4.1
-    display_name: GPT-4.1
+    display_name: GPT-4.1 👍
     adapter: OpenAIAdapter
     pricing:
       input: 2 # USD/1M tokens
@@ -75,7 +87,7 @@ models:
     grounding: 1
 
   - name: gpt-4.5-preview
-    display_name: GPT-4.5
+    display_name: GPT-4.5 💰
     adapter: OpenAIAdapter
     pricing:
       input: 75 # USD/1M tokens
@@ -89,7 +101,7 @@ models:
     grounding: 1
 
   - name: o3
-    display_name: o3
+    display_name: o3 💰
     adapter: OpenAIAdapter
     pricing:
       input: 10 # USD/1M tokens
@@ -117,7 +129,7 @@ models:
     function_calling: 1
       
   - name: o1-pro
-    display_name: o1-pro
+    display_name: o1-pro 💰
     adapter: OpenAIAdapter
     pricing:
       input: 150 # USD/1M tokens
@@ -129,6 +141,9 @@ models:
     inputs:
       - image
       - text
+    outputs:
+      - text
+    visible: false
 
   - name: gpt-4.1-mini
     display_name: GPT-4.1 mini
@@ -146,35 +161,6 @@ models:
     function_calling: 1
     grounding: 1
 
-  - name: gpt-4.1-nano
-    display_name: GPT-4.1 nano
-    adapter: OpenAIAdapter
-    pricing:
-      input: 0.1 # USD/1M tokens
-      output: 0.4 # USD/1M tokens
-    max_tokens: 32_768
-    context_window: 1_047_576
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    function_calling: 1
-    grounding: 1
-
-  - name: gpt-4o
-    display_name: GPT-4o
-    adapter: OpenAIAdapter
-    pricing:
-      input: 5 # USD/1M tokens
-      output: 15 # USD/1M tokens
-    max_tokens: 16384
-    context_window: 128000
-    inputs:
-      - text
-      - image
-    function_calling: 1
-    grounding: 1
 
   - name: gpt-4o-audio-preview
     display_name: GPT-4o Audio
@@ -191,10 +177,11 @@ models:
       - text
       - audio
     function_calling: 1
+    visible: false
 
 
   - name: gemini-2.5-pro-preview-05-06
-    display_name: Gemini 2.5 Pro (paid)
+    display_name: Gemini 2.5 Pro 👍
     adapter: GoogleAdapter
     pricing:
       input: 2.5 # USD/1M tokens
@@ -205,6 +192,8 @@ models:
       - text
       - image
       - audio
+    outputs:
+      - text
     function_calling: 1
     grounding: 1
     code_execution: 1
@@ -223,9 +212,12 @@ models:
       - text
       - image
       - audio
+    outputs:
+      - text
     function_calling: 1
     grounding: 1
     code_execution: 1
+    visible: false
 
   - name: gemini-2.5-flash-preview-05-20
     display_name: Gemini 2.5 Flash
@@ -260,6 +252,9 @@ models:
     inputs:
       - text
       - image
+    outputs:
+      - text
+    visible: false
 
   - name: deepseek-reasoner
     display_name: DeepSeek-R1 Reasoner
@@ -272,6 +267,8 @@ models:
     inputs:
       - text
       - image
+    outputs:
+      - text
 
   - name: deepseek/deepseek-chat-v3-0324:free
     display_name: DeepSeek-V3.1 Chat (free)
@@ -305,31 +302,12 @@ models:
     max_tokens: 131_072
     inputs:
       - text
-    function_calling: 1
-
-  - name: grok-3-mini
-    display_name: Grok 3 Mini
-    adapter: GrokAdapter
-    pricing:
-      input: 0.3 # USD/1M tokens
-      output: 0.5 # USD/1M tokens
-    max_tokens: 131_072
-    inputs:
+    outputs:
       - text
     function_calling: 1
+    grounding: 1
 
-  - name: grok-2-vision
-    display_name: Grok 2 Vision
-    adapter: GrokAdapter
-    pricing:
-      input: 2 # USD/1M tokens
-      output: 10 # USD/1M tokens
-    max_tokens: 32_768
-    context_window: 32_768
-    inputs:
-      - text
-      - image
-  
+
   - name: mistral-large-latest
     display_name: Mistral Large
     adapter: MistralAdapter
@@ -353,3 +331,4 @@ models:
     inputs:
       - image
       - text
+    visible: false
