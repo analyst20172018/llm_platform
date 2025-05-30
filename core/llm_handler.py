@@ -120,6 +120,7 @@ class APIHandler:
             Any: The adapter for the specified model.
         """
         adapter_name = self.model_config[model_name].adapter
+        print(f"Using adapter: {adapter_name} for model: {model_name}")
         return self._lazy_initialization_of_adapter(adapter_name)
 
     def request(self, 

@@ -136,6 +136,14 @@ class OpenAIAdapter(AdapterBase):
         if additional_parameters.get("grounding", False):
             tools = [{"type": "web_search_preview"}]
 
+        # Image output
+        if additional_parameters.get("response_modalities", []) and "image" in additional_parameters["response_modalities"]:
+            tools.append({
+                "type": "image_generation",
+                "quality": "high",
+                "size": "1536x1024", 
+            })
+
         messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
 
         parameters = {
@@ -161,6 +169,41 @@ class OpenAIAdapter(AdapterBase):
                     parameters["input"] = None
 
         return parameters
+
+
+    def _parse_response(self, response) -> Tuple[str, List[str], List[MediaFile], Dict]:
+        
+        usage = {"model": getattr(response, 'model', 'Unknown model'),
+                 "completion_tokens": response.usage.output_tokens,
+                 "prompt_tokens": response.usage.input_tokens}
+        
+        answer_text = '\n'.join([
+            each_content.text 
+            for each_output in (getattr(response, 'output', []) or [])
+            for each_content in (getattr(each_output, 'content', []) or [])
+            if getattr(each_content, 'type', "") == "output_text"
+        ])
+        
+        # Save the reasoning
+        thinking_responses = [ThinkingResponse(content=each_summary.text, id=response.id) \
+                                    for each_output in getattr(response, 'output', []) \
+                                        for each_summary in getattr(each_output, 'summary', []) \
+                                            if getattr(each_summary, 'type', "") == "summary_text"]
+        
+        # Save the generated image
+        files_from_response: List[MediaFile] = []
+        image_data = [
+            output.result
+            for output in response.output
+            if output.type == "image_generation_call"
+        ]
+        if image_data:
+            image_base64 = image_data[0]
+            image = ImageFile.from_base64(base64_str=image_base64, 
+                                          file_name=f"image_{len(files_from_response)}.png")
+            files_from_response.append(image)
+
+        return answer_text, thinking_responses, files_from_response, usage
 
 
     def request_llm(self, model: str, 
@@ -205,24 +248,16 @@ class OpenAIAdapter(AdapterBase):
                             tool_output_callback=tool_output_callback,
                             **kwargs,
              )
-
-        usage = {"model": model,
-                 "completion_tokens": response.usage.output_tokens,
-                 "prompt_tokens": response.usage.input_tokens}
         
-        answer_text = '\n'.join([each_content.text \
-                                    for each_output in getattr(response, 'output', []) \
-                                        for each_content in getattr(each_output, 'content', []) \
-                                            if getattr(each_content, 'type', "") == "output_text"]
-                                )
+        answer_text, thinking_responses, files_from_response, usage = self._parse_response(response)
         
-        # Save the reasoning
-        thinking_responses = [ThinkingResponse(content=each_summary.text, id=response.id) \
-                                    for each_output in getattr(response, 'output', []) \
-                                        for each_summary in getattr(each_output, 'summary', []) \
-                                            if getattr(each_summary, 'type', "") == "summary_text"]
-        
-        message = Message(role="assistant", content=answer_text, thinking_responses=thinking_responses, usage=usage, id=response.id)
+        message = Message(role="assistant", 
+                          content=answer_text, 
+                          thinking_responses=thinking_responses, 
+                          usage=usage, 
+                          id=response.id,
+                          files=files_from_response,
+        )
         the_conversation.messages.append(message)
         
         return message
@@ -250,22 +285,15 @@ class OpenAIAdapter(AdapterBase):
                             **kwargs,
              )
 
-        usage = {"model": model,
-                 "completion_tokens": response.usage.output_tokens,
-                 "prompt_tokens": response.usage.input_tokens}
+        answer_text, thinking_responses, files_from_response, usage = self._parse_response(response)
         
-        answer_text = '\n'.join([each_content.text \
-                                    for each_output in getattr(response, 'output', []) \
-                                        for each_content in getattr(each_output, 'content', []) \
-                                            if getattr(each_content, 'type', "") == "output_text"]
-                                )
-        # Save the reasoning
-        thinking_responses = [ThinkingResponse(content=each_summary.text, id=response.id) \
-                                    for each_output in getattr(response, 'output', []) \
-                                        for each_summary in getattr(each_output, 'summary', []) \
-                                            if getattr(each_summary, 'type', "") == "summary_text"]
-        
-        message = Message(role="assistant", content=answer_text, thinking_responses=thinking_responses, usage=usage, id=response.id)
+        message = Message(role="assistant", 
+                          content=answer_text, 
+                          thinking_responses=thinking_responses, 
+                          usage=usage, 
+                          id=response.id,
+                          files=files_from_response,
+        )
         the_conversation.messages.append(message)
         
         return message
@@ -288,15 +316,7 @@ class OpenAIAdapter(AdapterBase):
 
         chat_response = self.client.responses.create(**parameters)
         
-        usage = {"model": model,
-                "completion_tokens": chat_response.usage.output_tokens,
-                "prompt_tokens": chat_response.usage.input_tokens}
-        
-        assistant_message_text = '\n'.join([each_content.text \
-                                            for each_output in getattr(chat_response, 'output', []) \
-                                                for each_content in getattr(each_output, 'content', []) \
-                                                    if getattr(each_content, 'type', "") == "output_text"]
-                                        )
+        assistant_message_text, thinking_responses, files_from_response, usage = self._parse_response(chat_response)
         
         # Save tool_calls parameter from the openai answer for the history
         function_call_records = []
@@ -346,7 +366,9 @@ class OpenAIAdapter(AdapterBase):
                             function_calls=function_call_records,
                             function_responses=[],
                             usage=usage,
-                            id=chat_response.id
+                            id=chat_response.id,
+                            thinking_responses=thinking_responses,
+                            files=files_from_response,
                             )
         the_conversation.messages.append(message)
 
@@ -384,15 +406,7 @@ class OpenAIAdapter(AdapterBase):
 
         chat_response = await self.async_client.responses.create(**parameters)
         
-        usage = {"model": model,
-                "completion_tokens": chat_response.usage.output_tokens,
-                "prompt_tokens": chat_response.usage.input_tokens}
-        
-        assistant_message_text = '\n'.join([each_content.text \
-                                            for each_output in getattr(chat_response, 'output', []) \
-                                                for each_content in getattr(each_output, 'content', []) \
-                                                    if getattr(each_content, 'type', "") == "output_text"]
-                                        )
+        assistant_message_text, thinking_responses, files_from_response, usage = self._parse_response(chat_response)
         
         # Save tool_calls parameter from the openai answer for the history
         function_call_records = []
@@ -442,7 +456,9 @@ class OpenAIAdapter(AdapterBase):
                             function_calls=function_call_records,
                             function_responses=[],
                             usage=usage,
-                            id=chat_response.id
+                            id=chat_response.id,
+                            thinking_responses=thinking_responses,
+                            files=files_from_response,
                             )
         the_conversation.messages.append(message)
 

@@ -22,7 +22,7 @@ class GrokAdapter(AdapterBase):
         self.completions_url = "https://api.x.ai/v1/chat/completions"
         self.headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {os.getenv("XAI_API_KEY")}"
+            "Authorization": f"Bearer {os.getenv('XAI_API_KEY')}"
         }
         
     def convert_conversation_history_to_adapter_format(self, 

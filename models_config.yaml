@@ -85,6 +85,7 @@ models:
       - text
     function_calling: 1
     grounding: 1
+    image_generation: true
 
   - name: gpt-4.5-preview
     display_name: GPT-4.5 💰
@@ -99,6 +100,7 @@ models:
       - text
     function_calling: 1
     grounding: 1
+    image_generation: true
 
   - name: o3
     display_name: o3 💰
@@ -113,6 +115,7 @@ models:
       - text
     reasoning_effort: 1
     function_calling: 1
+    image_generation: true
       
   - name: o4-mini
     display_name: o4-mini
@@ -127,6 +130,7 @@ models:
       - image
     reasoning_effort: 1
     function_calling: 1
+    image_generation: true
       
   - name: o1-pro
     display_name: o1-pro 💰
@@ -144,6 +148,7 @@ models:
     outputs:
       - text
     visible: false
+    image_generation: true
 
   - name: gpt-4.1-mini
     display_name: GPT-4.1 mini
@@ -160,6 +165,7 @@ models:
       - text
     function_calling: 1
     grounding: 1
+    image_generation: true
 
 
   - name: gpt-4o-audio-preview
@@ -254,7 +260,7 @@ models:
       - image
     outputs:
       - text
-    visible: false
+    visible: true
 
   - name: deepseek-reasoner
     display_name: DeepSeek-R1 Reasoner

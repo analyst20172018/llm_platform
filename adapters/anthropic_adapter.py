@@ -190,7 +190,7 @@ class AnthropicAdapter(AdapterBase):
                 if not isinstance(history_message["content"], list):
                     history_message["content"] = [{
                         "type": "text",
-                        "text": history_message["content"]
+                        "text": history_message["content"] if history_message["content"] else " "
                     }]
 
                 for each_file in message.files:
@@ -305,10 +305,10 @@ class AnthropicAdapter(AdapterBase):
             """
                 reasoning_effort 'low' -> thinking is not used at all
                 reasoning_effort 'medium' -> thinking budget is 8000
-                reasoning_effort 'high' -> thinking budget is 32000
+                reasoning_effort 'high' -> thinking budget is 16000
             """
             if reasoning_effort in ['high', 'medium']:
-                reasoning_effort_map = {'high': 32_000, 'medium': 8_000}
+                reasoning_effort_map = {'high': 16_000, 'medium': 8_000}
                 budget_tokens = reasoning_effort_map[reasoning_effort]
                 kwargs['thinking'] = {
                         "type": "enabled",

@@ -34,6 +34,12 @@ class DocumentFile(BaseFile):
     def __init__(self, name: str=""):
         super().__init__(name=name)
 
+    @classmethod
+    def from_file(cls, filename: str) -> 'DocumentFile':
+        file_name = os.path.basename(filename)
+        with open(filename, "rb") as document_file:
+            return cls(document_file.read(), file_name)
+
 class TextDocumentFile(DocumentFile):
     def __init__(self, text: str, name: str=""):
         super().__init__(name=name)

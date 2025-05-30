@@ -164,6 +164,6 @@ class DeepSeekAdapter(AdapterBase):
         raise NotImplementedError("Not implemented yet")
 
     def get_models(self) -> List[str]:
-        NotImplementedError("Not implemented yet")
+        raise NotImplementedError("Not implemented yet")
 
     

@@ -1,5 +1,6 @@
 anthropic
 elevenlabs
+protobuf
 google-genai
 mistralai
 lxml

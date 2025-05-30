@@ -19,9 +19,11 @@ import json
 class GoogleAdapter(AdapterBase):
     
     def __init__(self, logging_level=logging.INFO):
-        super().__init__(logging_level)   
+        super().__init__(logging_level)
+        
         self.client = genai.Client(api_key=os.getenv('GOOGLE_GEMINI_API_KEY'),
-                                   http_options={'api_version': 'v1alpha'})
+                                   http_options={'api_version': 'v1beta'})
+
 
     def convert_conversation_history_to_adapter_format(self, the_conversation: Conversation):
         history = []
@@ -214,7 +216,11 @@ class GoogleAdapter(AdapterBase):
                 "completion_tokens": response.usage_metadata.prompt_token_count,
                 "prompt_tokens": response.usage_metadata.candidates_token_count}
         
-        message = Message(role="assistant", content=text_from_response, files=files_from_response, usage=usage)
+        message = Message(role="assistant", 
+                          content=text_from_response, 
+                          files=files_from_response, 
+                          usage=usage
+        )
         the_conversation.messages.append(message)
 
         return message
