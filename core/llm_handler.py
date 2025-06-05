@@ -361,12 +361,12 @@ class APIHandler:
 
         try:
             response = adapter.request_llm(model=model, 
-                                       the_conversation=self.the_conversation, 
-                                       functions=functions,
-                                       temperature = temperature,
-                                       tool_output_callback=tool_output_callback,
-                                       additional_parameters=additional_parameters,
-                                       **kwargs)
+                                        the_conversation=self.the_conversation, 
+                                        functions=functions,
+                                        temperature = temperature,
+                                        tool_output_callback=tool_output_callback,
+                                        additional_parameters=additional_parameters,
+                                        **kwargs)
 
             return response
         except Exception as e:

@@ -1,7 +1,7 @@
 from .adapter_base import AdapterBase
 from llm_platform.tools.base import BaseTool
 from llm_platform.services.files import MediaFile, ImageFile, AudioFile, VideoFile, TextDocumentFile, ExcelDocumentFile, PDFDocumentFile
-from llm_platform.services.conversation import Conversation, FunctionCall, FunctionResponse, Message
+from llm_platform.services.conversation import Conversation, FunctionCall, FunctionResponse, Message, ThinkingResponse
 
 from google import genai
 from google.protobuf import struct_pb2
@@ -138,59 +138,61 @@ class GoogleAdapter(AdapterBase):
             max_tokens = the_conversation.model_config.get_max_tokens(model)
             kwargs['max_output_tokens'] = max_tokens
 
+
+        # Prepare parameters for the generation config
+        generation_config_params = {
+            "system_instruction": the_conversation.system_prompt if the_conversation.system_prompt else "",
+            "temperature": temperature,
+            "tools": [],
+            "safety_settings": self.safety_settings,
+        }
+
+        # Convert parameter `reasoning_efforts` to `thinking` parameter
+        if 'reasoning' in kwargs:
+            reasoning_effort = kwargs.pop('reasoning', {}).get('effort', 'low')
+            """
+                reasoning_effort 'low' -> thinking is not used at all
+                reasoning_effort 'medium' -> thinking budget is 8000
+                reasoning_effort 'high' -> thinking budget is 32000
+            """
+            if reasoning_effort in ['high', 'medium']:
+                reasoning_effort_map = {'high': 24_576, 'medium': 8_000}
+                thinking_budget = reasoning_effort_map[reasoning_effort]
+                generation_config_params["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget, include_thoughts=True)
+
+        # Add response modalities to the generation config parameters
+        if "response_modalities" in additional_parameters:
+            generation_config_params["response_modalities"] = additional_parameters["response_modalities"]
+
+        generation_config_params.update(kwargs)
+
+        generation_config = genai.types.GenerateContentConfig(**generation_config_params)
+
+        # Grounding
+        if additional_parameters.get("grounding", False):
+            grounding_tool = genai.types.Tool(google_search=genai.types.GoogleSearchRetrieval)
+            generation_config.tools.append(grounding_tool)
+
+        # URL context
+        if additional_parameters.get("url_context", False):
+            url_context_tool = genai.types.Tool(url_context=genai.types.UrlContext)
+            generation_config.tools.append(url_context_tool)
+
         if functions is None:
 
             history = self.convert_conversation_history_to_adapter_format(the_conversation)
 
-            # Prepare parameters for the generation config
-            generation_config_params = {
-                "system_instruction": the_conversation.system_prompt if the_conversation.system_prompt else "",
-                "temperature": temperature,
-                "tools": [],
-                "safety_settings": self.safety_settings,
-            }
-
-            # Convert parameter `reasoning_efforts` to `thinking` parameter
-            if 'reasoning' in kwargs:
-                reasoning_effort = kwargs.pop('reasoning', {}).get('effort', 'low')
-                """
-                    reasoning_effort 'low' -> thinking is not used at all
-                    reasoning_effort 'medium' -> thinking budget is 8000
-                    reasoning_effort 'high' -> thinking budget is 32000
-                """
-                if reasoning_effort in ['high', 'medium']:
-                    reasoning_effort_map = {'high': 24_576, 'medium': 8_000}
-                    thinking_budget = reasoning_effort_map[reasoning_effort]
-                    generation_config_params["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
-
-            # Add response modalities to the generation config parameters
-            if "response_modalities" in additional_parameters:
-                generation_config_params["response_modalities"] = additional_parameters["response_modalities"]
-
-            generation_config_params.update(kwargs)
-
-            generation_config = genai.types.GenerateContentConfig(**generation_config_params)
-
-            # Grounding
-            if additional_parameters.get("grounding", False):
-                grounding_tool = genai.types.Tool(google_search=genai.types.GoogleSearchRetrieval)
-                generation_config.tools.append(grounding_tool)
-
-            # URL context
-            if additional_parameters.get("url_context", False):
-                url_context_tool = genai.types.Tool(url_context=genai.types.UrlContext)
-                generation_config.tools.append(url_context_tool)
 
             response = self.client.models.generate_content(contents = history, 
                                                       model = model,
                                                       config = generation_config,
                                                     )
         else:
-            response = self.request_llm_with_functions(model, 
-                                                       the_conversation, 
-                                                       functions, 
-                                                       temperature,
-                                                       tool_output_callback,
+            response = self.request_llm_with_functions(model = model, 
+                                                       config = generation_config,
+                                                       the_conversation = the_conversation, 
+                                                       functions = functions, 
+                                                       tool_output_callback = tool_output_callback,
                                                        **kwargs)
 
         finish_reason = response.candidates[0].finish_reason
@@ -198,18 +200,22 @@ class GoogleAdapter(AdapterBase):
 
         # Parse response
         text_from_response = ""
+        thoughts_from_response = []
         files_from_response: List[MediaFile] = []
 
         for part in response.candidates[0].content.parts:
-            if part.text is not None:
-                text_from_response += part.text
-            elif part.inline_data is not None:
-                if part.inline_data.mime_type == "image/png":
-                    image = ImageFile.from_bytes(file_bytes=part.inline_data.data, 
-                                                 file_name=f"image_{len(files_from_response)}.png")
-                    files_from_response.append(image)
+            if part.text:
+                if part.thought:
+                    thoughts_from_response.append(ThinkingResponse(content=part.text, id=None))
+                elif part.inline_data:
+                    if part.inline_data.mime_type == "image/png":
+                        image = ImageFile.from_bytes(file_bytes=part.inline_data.data, 
+                                                    file_name=f"image_{len(files_from_response)}.png")
+                        files_from_response.append(image)
+                    else:
+                        raise ValueError(f"Unsupported mime type: {part.inline_data.mime_type}")
                 else:
-                    raise ValueError(f"Unsupported mime type: {part.inline_data.mime_type}")
+                    text_from_response += part.text
 
         # Get usage
         usage = {"model": model,
@@ -218,6 +224,7 @@ class GoogleAdapter(AdapterBase):
         
         message = Message(role="assistant", 
                           content=text_from_response, 
+                          thinking_responses=thoughts_from_response,
                           files=files_from_response, 
                           usage=usage
         )
@@ -254,9 +261,9 @@ class GoogleAdapter(AdapterBase):
 
     def request_llm_with_functions(self,
                                    model: str, 
+                                   config: genai.types.GenerateContentConfig,
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool]=[], 
-                                   temperature: int=0, 
                                    tool_output_callback: Callable=None,
                                    additional_parameters: Dict={},
                                    **kwargs
@@ -274,39 +281,7 @@ class GoogleAdapter(AdapterBase):
                     # If it’s not a llm_platform.tools.base.BaseTool 
                     converted_functions.append(func)
 
-        # Prepare parameters for the generation config
-        generation_config_params = {
-            "system_instruction": the_conversation.system_prompt if the_conversation.system_prompt else "",
-            "temperature": temperature,
-            "tools": converted_functions,
-            "safety_settings": self.safety_settings,
-        }
-
-        # Convert parameter `reasoning_efforts` to `thinking` parameter
-        if 'reasoning' in kwargs:
-            reasoning_effort = kwargs.pop('reasoning', {}).get('effort', 'low')
-            """
-                reasoning_effort 'low' -> thinking is not used at all
-                reasoning_effort 'medium' -> thinking budget is 8000
-                reasoning_effort 'high' -> thinking budget is 32000
-            """
-            if reasoning_effort in ['high', 'medium']:
-                reasoning_effort_map = {'high': 24_576, 'medium': 8_000}
-                thinking_budget = reasoning_effort_map[reasoning_effort]
-                generation_config_params["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
-
-        # Add response modalities to the generation config parameters
-        if "response_modalities" in additional_parameters:
-            generation_config_params["response_modalities"] = additional_parameters["response_modalities"]
-
-        generation_config_params.update(kwargs)
-
-        generation_config = genai.types.GenerateContentConfig(**generation_config_params)
-
-        # Grounding
-        if additional_parameters.get("grounding", False):
-            grounding_tool = genai.types.Tool(google_search=genai.types.GoogleSearchRetrieval)
-            generation_config.tools.append(grounding_tool)
+        config.tools += converted_functions # Add functions to the config
 
         while True:
         
@@ -314,14 +289,18 @@ class GoogleAdapter(AdapterBase):
 
             response = self.client.models.generate_content(contents = history, 
                                                       model = model,
-                                                      config = generation_config,
+                                                      config = config,
                                                     )
             
             usage = {"model": model,
                 "completion_tokens": response.usage_metadata.prompt_token_count,
                 "prompt_tokens": response.usage_metadata.candidates_token_count
             }
-            
+
+            # Parse response
+            text_from_response = " "
+            thoughts_from_response = []
+            files_from_response: List[MediaFile] = []
             function_calls = []
             function_responses = []
             # Iterate through all function calls in the response
@@ -361,24 +340,34 @@ class GoogleAdapter(AdapterBase):
                                             function_args,
                                             function_response
                                             )
+                        
+                if part.text:
+                    if part.thought:
+                        thoughts_from_response.append(ThinkingResponse(content=part.text, id=None))
+                    elif part.inline_data:
+                        if part.inline_data.mime_type == "image/png":
+                            image = ImageFile.from_bytes(file_bytes=part.inline_data.data, 
+                                                        file_name=f"image_{len(files_from_response)}.png")
+                            files_from_response.append(image)
+                        else:
+                            raise ValueError(f"Unsupported mime type: {part.inline_data.mime_type}")
+                    else:
+                        text_from_response += part.text
 
             if len(function_calls) == 0:
-                message = Message(role="assistant", 
-                                    content=response.candidates[0].content.parts[0].text,
-                                    usage=usage
-                                    )
-                the_conversation.messages.append(message)
-
                 return response
 
             # Save function calls and function response to the history
             message = Message(role="assistant", 
-                                        content=" ",
+                                        content=text_from_response,
+                                        thinking_responses=thoughts_from_response,
+                                        files=files_from_response,
                                         function_calls=function_calls,
                                         function_responses=function_responses,
                                         usage=usage
                                         )
             the_conversation.messages.append(message)
+
 
     def get_models(self) -> List[str]:
         NotImplementedError("Not implemented yet")
