@@ -1,264 +1,322 @@
-from .adapter_base import AdapterBase
-from llm_platform.tools.base import BaseTool
-from llm_platform.services.files import MediaFile, ImageFile, AudioFile, VideoFile, TextDocumentFile, ExcelDocumentFile, PDFDocumentFile
-from llm_platform.services.conversation import Conversation, FunctionCall, FunctionResponse, Message, ThinkingResponse
+import json
+import logging
+import os
+import time
+import uuid
+from io import BytesIO
+from typing import Callable, Dict, List, Tuple
 
 from google import genai
-from google.protobuf import struct_pb2
 from google.genai import types
+from google.protobuf import struct_pb2
 
-import time
-from typing import List, Tuple, Callable, Dict
-import os
-import logging
-from io import BytesIO
-import asyncio
-import uuid
-import json
+from .adapter_base import AdapterBase
+from llm_platform.services.conversation import (Conversation, FunctionCall,
+                                                FunctionResponse, Message,
+                                                ThinkingResponse)
+from llm_platform.services.files import (AudioFile, ExcelDocumentFile,
+                                         ImageFile, MediaFile, PDFDocumentFile,
+                                         TextDocumentFile, VideoFile)
+from llm_platform.tools.base import BaseTool
+
 
 class GoogleAdapter(AdapterBase):
-    
+    """
+    Adapter for interacting with the Google Gemini API.
+    """
+    # Class-level constants for configuration and mapping
+    GEMINI_ROLE_MAPPING = {'user': 'user', 'assistant': 'model'}
+    REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000}
+    IMAGEN_MODEL = 'imagen-3.0-generate-002'
+    VEO_MODEL = 'veo-2.0-generate-001'
+
     def __init__(self, logging_level=logging.INFO):
         super().__init__(logging_level)
-        
-        self.client = genai.Client(api_key=os.getenv('GOOGLE_GEMINI_API_KEY'),
-                                   http_options={'api_version': 'v1beta'})
+        api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
+        if not api_key:
+            raise ValueError("GOOGLE_GEMINI_API_KEY environment variable not set.")
+        self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
 
+    def _convert_file_to_part(self, file: MediaFile) -> types.Part:
+        """Converts a MediaFile object to a Gemini API Part."""
+        if isinstance(file, ImageFile):
+            return types.Part.from_bytes(data=file.file_bytes, mime_type=f"image/{file.extension}")
+        if isinstance(file, AudioFile):
+            return types.Part.from_bytes(data=file.file_bytes, mime_type="audio/mp3")
+        if isinstance(file, (TextDocumentFile, ExcelDocumentFile)):
+            text = f'<document name="{file.name}">{file.text}</document>'
+            return types.Part.from_text(text=text)
+        if isinstance(file, PDFDocumentFile):
+            # Gemini has limits on direct PDF processing
+            if file.size < 20_000_000 and file.number_of_pages < 3_600:
+                return types.Part.from_bytes(data=file.bytes, mime_type="application/pdf")
+            else:
+                self.logger.warning(f"PDF '{file.name}' exceeds size/page limits; sending as text.")
+                text = f'<document name="{file.name}">{file.text}</document>'
+                return types.Part.from_text(text=text)
+        raise TypeError(f"Unsupported file type for Gemini: {type(file).__name__}")
 
-    def convert_conversation_history_to_adapter_format(self, the_conversation: Conversation):
+    def convert_conversation_history_to_adapter_format(self, conversation: Conversation) -> List[types.Content]:
+        """
+        Converts a Conversation object into the list of Content objects
+        required by the Gemini API.
+        """
         history = []
-
-        # Add history of messages
-        for message in the_conversation.messages:
-            GEMINI_ROLE_MAPPING = {
-                'user': 'user',
-                'assistant': 'model',
-                #'function': 'function'
-            }
+        for message in conversation.messages:
             try:
-                role = GEMINI_ROLE_MAPPING[message.role]
+                role = self.GEMINI_ROLE_MAPPING[message.role]
             except KeyError:
-                raise ValueError(f"Invalid role in history: {message.role}")
-            
-            # For role "function":
-            if message.function_calls or message.function_responses:
-                # Convert function calls to history format
-                function_calls_parts = []
-                for each_function_call in message.function_calls:
-                    struct_arguments = struct_pb2.Struct()
-                    struct_arguments.update(json.loads(each_function_call.arguments))
-                    function_call_part = genai.types.Part.from_function_call(name=each_function_call.name, args=struct_arguments)
-
-                    function_calls_parts.append(function_call_part)
-
-                # Convert function responses to history format
-                response_parts = []
-                for each_function_response in message.function_responses:
-                    #if isinstance(each_function_response.response, list): 
-                        # perhaps you want a dict with "value"? 
-                    #    payload = {"items": each_function_response.response} 
-                    #else: 
-                    #    payload = each_function_response.response
-                    
-                    response_part = genai.types.Part.from_function_response(name=each_function_response.name, 
-                                                                      response=each_function_response.response,
-                                                                    )
-                    response_parts.append(response_part)
-                    
-                    protos_message = genai.types.Content(role="function", 
-                                                        parts = function_calls_parts + response_parts)
-                    
-                    history.append(protos_message)
+                # 'function' role messages are generated from assistant responses, not directly mapped.
+                if message.role == 'function':
                     continue
-            
-            message_parts = []
-            
-            # Add text part
+                raise ValueError(f"Invalid message role for Gemini: '{message.role}'")
+
+            parts = []
             if message.content:
-                message_parts.append(genai.types.Part.from_text(text=message.content))
-                #protos_message = genai.types.Content(role=role, parts=[genai.types.Part.from_text(text=message.content)])
+                parts.append(types.Part.from_text(text=message.content))
 
-            # Add files to history (for the moment, only images)
-            if not message.files is None:
-                for each_file in message.files:
-                    
-                    # Images
-                    if isinstance(each_file, ImageFile):
-                        #print(f"File name: {each_file.name}, file extension: {each_file.extension}")
-                        part_with_image = genai.types.Part.from_bytes(data = each_file.file_bytes,
-                                                                mime_type = f"image/{each_file.extension}")
+            if message.files:
+                for file in message.files:
+                    try:
+                        parts.append(self._convert_file_to_part(file))
+                    except TypeError as e:
+                        self.logger.warning(e)
 
-                        message_parts.append(part_with_image)
+            if message.function_calls:
+                for fc in message.function_calls:
+                    struct_args = struct_pb2.Struct()
+                    struct_args.update(json.loads(fc.arguments))
+                    parts.append(types.Part.from_function_call(name=fc.name, args=struct_args))
 
-                    elif isinstance(each_file, AudioFile):
-                        part_with_audio = genai.types.Part.from_bytes(data = each_file.file_bytes,
-                                                                mime_type = f"audio/mp3")
+            if parts:
+                history.append(types.Content(role=role, parts=parts))
 
-                        message_parts.append(part_with_audio)
-
-                    # Text documents
-                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
-                        document_as_text = f"""<document name="{each_file.name}">{each_file.text}</document>"""
-                        part_with_text_document = genai.types.Part.from_text(text=document_as_text)
-
-                        message_parts.append(part_with_text_document)
-
-                    # PDF documents
-                    elif isinstance(each_file, PDFDocumentFile):
-                        if (each_file.size < 20_000_000) and (each_file.number_of_pages < 3_600):
-                            part_with_pdf = genai.types.Part.from_bytes(data = each_file.bytes,
-                                                                mime_type = f"application/pdf")
-
-                            message_parts.append(part_with_pdf)
-                        else: # Load pdf as text
-                            document_as_text = f"""<document name="{each_file.name}">{each_file.text}</document>"""
-                            part_with_text_document = genai.types.Part.from_text(text=document_as_text)
-
-                            message_parts.append(part_with_text_document)
-
-
-            protos_message = genai.types.Content(role=role, parts=message_parts)
-            history.append(protos_message)
-
+            # If an assistant message has function responses, add a subsequent 'function' role message
+            if message.function_responses:
+                response_parts = [
+                    types.Part.from_function_response(name=fr.name, response=fr.response)
+                    for fr in message.function_responses
+                ]
+                if response_parts:
+                    history.append(types.Content(role="function", parts=response_parts))
         return history
 
-    def request_llm(self, model: str,
-                    the_conversation: Conversation, 
-                    functions:List[Callable]=None, 
-                    temperature: int=0,  
-                    tool_output_callback: Callable=None,
-                    additional_parameters: Dict={},
-                    **kwargs) -> Message:
-        
-        # Modify kwargs to change max_tokens to max_output_tokens
+    def _prepare_generation_config(self, model: str, the_conversation: Conversation, temperature: float,
+                                   tools: List, additional_parameters: Dict, **kwargs) -> types.GenerateContentConfig:
+        """Prepares the GenerateContentConfig for a Gemini API call."""
+        # Gemini uses 'max_output_tokens'
         if 'max_tokens' in kwargs:
             kwargs['max_output_tokens'] = kwargs.pop('max_tokens')
         else:
-            # Fetch max_tokens from the model config
-            max_tokens = the_conversation.model_config.get_max_tokens(model)
-            kwargs['max_output_tokens'] = max_tokens
+            kwargs['max_output_tokens'] = the_conversation.model_config.get_max_tokens(model)
 
-
-        # Prepare parameters for the generation config
-        generation_config_params = {
-            "system_instruction": the_conversation.system_prompt if the_conversation.system_prompt else "",
+        config_params = {
             "temperature": temperature,
-            "tools": [],
+            "tools": tools,
             "safety_settings": self.safety_settings,
         }
 
-        # Convert parameter `reasoning_efforts` to `thinking` parameter
-        if 'reasoning' in kwargs:
-            reasoning_effort = kwargs.pop('reasoning', {}).get('effort', 'low')
-            """
-                reasoning_effort 'low' -> thinking is not used at all
-                reasoning_effort 'medium' -> thinking budget is 8000
-                reasoning_effort 'high' -> thinking budget is 32000
-            """
-            if reasoning_effort in ['high', 'medium']:
-                reasoning_effort_map = {'high': 24_576, 'medium': 8_000}
-                thinking_budget = reasoning_effort_map[reasoning_effort]
-                generation_config_params["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget, include_thoughts=True)
+        if the_conversation.system_prompt:
+            config_params["system_instruction"] = the_conversation.system_prompt
 
-        # Add response modalities to the generation config parameters
+        reasoning_effort = kwargs.pop('reasoning', {}).get('effort', 'low')
+        if thinking_budget := self.REASONING_EFFORT_MAP.get(reasoning_effort):
+            config_params["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=thinking_budget, include_thoughts=True
+            )
+
         if "response_modalities" in additional_parameters:
-            generation_config_params["response_modalities"] = additional_parameters["response_modalities"]
+            config_params["response_modalities"] = additional_parameters["response_modalities"]
 
-        generation_config_params.update(kwargs)
+        if additional_parameters.get("grounding"):
+            config_params["tools"].append(types.Tool(google_search=types.GoogleSearchRetrieval()))
+        if additional_parameters.get("url_context"):
+            config_params["tools"].append(types.Tool(url_context=types.UrlContext()))
 
-        generation_config = genai.types.GenerateContentConfig(**generation_config_params)
+        config_params.update(kwargs)
 
-        # Grounding
-        if additional_parameters.get("grounding", False):
-            grounding_tool = genai.types.Tool(google_search=genai.types.GoogleSearchRetrieval)
-            generation_config.tools.append(grounding_tool)
+        return types.GenerateContentConfig(**config_params)
 
-        # URL context
-        if additional_parameters.get("url_context", False):
-            url_context_tool = genai.types.Tool(url_context=genai.types.UrlContext)
-            generation_config.tools.append(url_context_tool)
+    def _parse_gemini_response(self, response_candidate: types.Candidate, model_name: str,
+                               usage_metadata: types.UsageMetadata) -> Message:
+        """Parses a Gemini API response candidate into a Message object."""
+        text_content, thoughts, files, function_calls = "", [], [], []
 
-        if functions is None:
-
-            history = self.convert_conversation_history_to_adapter_format(the_conversation)
-
-
-            response = self.client.models.generate_content(contents = history, 
-                                                      model = model,
-                                                      config = generation_config,
-                                                    )
-        else:
-            response = self.request_llm_with_functions(model = model, 
-                                                       config = generation_config,
-                                                       the_conversation = the_conversation, 
-                                                       functions = functions, 
-                                                       tool_output_callback = tool_output_callback,
-                                                       **kwargs)
-
-        finish_reason = response.candidates[0].finish_reason
-        safety_ratings = response.candidates[0].safety_ratings
-
-        # Parse response
-        text_from_response = ""
-        thoughts_from_response = []
-        files_from_response: List[MediaFile] = []
-
-        for part in response.candidates[0].content.parts:
-            if part.text:
+        for part in response_candidate.content.parts:
+            if fc := part.function_call:
+                function_calls.append(FunctionCall(
+                    id=str(uuid.uuid4()),
+                    name=fc.name,
+                    arguments=json.dumps(dict(fc.args))
+                ))
+            elif part.text:
                 if part.thought:
-                    thoughts_from_response.append(ThinkingResponse(content=part.text, id=None))
-                elif part.inline_data:
-                    if part.inline_data.mime_type == "image/png":
-                        image = ImageFile.from_bytes(file_bytes=part.inline_data.data, 
-                                                    file_name=f"image_{len(files_from_response)}.png")
-                        files_from_response.append(image)
-                    else:
-                        raise ValueError(f"Unsupported mime type: {part.inline_data.mime_type}")
+                    thoughts.append(ThinkingResponse(content=part.text, id=None))
                 else:
-                    text_from_response += part.text
+                    text_content += part.text
+            elif part.inline_data and part.inline_data.mime_type == "image/png":
+                files.append(ImageFile.from_bytes(
+                    file_bytes=part.inline_data.data,
+                    file_name=f"image_{len(files)}.png"
+                ))
 
-        # Get usage
-        usage = {"model": model,
-                "completion_tokens": response.usage_metadata.prompt_token_count,
-                "prompt_tokens": response.usage_metadata.candidates_token_count}
-        
-        message = Message(role="assistant", 
-                          content=text_from_response, 
-                          thinking_responses=thoughts_from_response,
-                          files=files_from_response, 
-                          usage=usage
+        usage = {
+            "model": model_name,
+            "prompt_tokens": usage_metadata.prompt_token_count,
+            "completion_tokens": usage_metadata.candidates_token_count,
+            "total_tokens": usage_metadata.total_token_count
+        }
+
+        return Message(
+            role="assistant",
+            content=text_content.strip(),
+            thinking_responses=thoughts,
+            files=files,
+            function_calls=function_calls,
+            usage=usage
         )
-        the_conversation.messages.append(message)
 
-        return message
-    
-    @property
-    def safety_settings(self):
-        # Safety config
-        safety_settings = [
-            genai.types.SafetySetting(
-                category=genai.types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                threshold=genai.types.HarmBlockThreshold.BLOCK_NONE,
-            ),
-            genai.types.SafetySetting(
-                category=genai.types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                threshold=genai.types.HarmBlockThreshold.BLOCK_NONE,
-            ),
-            genai.types.SafetySetting(
-                category=genai.types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                threshold=genai.types.HarmBlockThreshold.BLOCK_NONE,
-            ),
-            genai.types.SafetySetting(
-                category=genai.types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                threshold=genai.types.HarmBlockThreshold.BLOCK_NONE,
-            ),
-            genai.types.SafetySetting(
-                category=genai.types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
-                threshold=genai.types.HarmBlockThreshold.BLOCK_NONE,
-            ),
+    def request_llm(self, model: str, the_conversation: Conversation, functions: List[BaseTool] = None,
+                    temperature: float = 0.0, tool_output_callback: Callable = None,
+                    additional_parameters: Dict = None, **kwargs) -> Message:
+        """
+        Sends a request to the Gemini LLM, handling standard chat and function calling.
+        """
+        functions = functions or []
+        additional_parameters = additional_parameters or {}
+
+        converted_tools = [
+            types.Tool(function_declarations=[func.to_params(provider="google")])
+            for func in functions if isinstance(func, BaseTool)
         ]
-        return safety_settings
 
+        generation_config = self._prepare_generation_config(
+            model=model, the_conversation=the_conversation, temperature=temperature,
+            tools=converted_tools, additional_parameters=additional_parameters, **kwargs
+        )
+
+        while True:
+            history = self.convert_conversation_history_to_adapter_format(the_conversation)
+            response = self.client.models.generate_content(
+                contents=history, model=model, config=generation_config
+            )
+
+            candidate = response.candidates[0]
+            assistant_message = self._parse_gemini_response(
+                response_candidate=candidate, model_name=model, usage_metadata=response.usage_metadata
+            )
+            the_conversation.messages.append(assistant_message)
+
+            if not assistant_message.function_calls:
+                return assistant_message  # Final response from the model
+
+            # --- Handle Function Calling ---
+            function_responses = []
+            for fc in assistant_message.function_calls:
+                function_to_call = next((f for f in functions if f.__name__ == fc.name), None)
+                if not function_to_call:
+                    raise ValueError(f"Function '{fc.name}' not found in provided tools.")
+
+                try:
+                    args = json.loads(fc.arguments)
+                    result = function_to_call(**args)
+                except Exception as e:
+                    result = {"error": f"Execution failed: {e}"}
+                    self.logger.error(f"Error executing function '{fc.name}': {e}")
+
+                function_responses.append(FunctionResponse(name=fc.name, response=result, id=fc.id))
+                if tool_output_callback:
+                    tool_output_callback(fc.name, args, result)
+
+            assistant_message.function_responses = function_responses
+            # Loop will continue, sending the function results back to the model
+
+    @property
+    def safety_settings(self) -> List[types.SafetySetting]:
+        """Returns safety settings to disable all content blocking."""
+        return [
+            types.SafetySetting(category=category, threshold=types.HarmBlockThreshold.BLOCK_NONE)
+            for category in (
+                types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+            )
+        ]
+
+    def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
+        """Generates images using the Imagen model."""
+        response = self.client.models.generate_images(
+            model=self.IMAGEN_MODEL,
+            prompt=prompt,
+            config=types.GenerateImagesConfig(number_of_images=n, **kwargs),
+        )
+        return [
+            ImageFile.from_bytes(
+                file_bytes=img.image.image_bytes,
+                file_name=f"generated_image_{i}.webp"
+            )
+            for i, img in enumerate(response.generated_images)
+        ]
+
+    async def generate_image_async(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
+        """Asynchronously generates images using the Imagen model."""
+        response = await self.client.aio.models.generate_images(
+            model=self.IMAGEN_MODEL,
+            prompt=prompt,
+            config=types.GenerateImagesConfig(number_of_images=n, **kwargs)
+        )
+        return [
+            ImageFile.from_bytes(
+                file_bytes=img.image.image_bytes,
+                file_name=f"generated_image_{i}.webp"
+            )
+            for i, img in enumerate(response.generated_images)
+        ]
+
+    def generate_video(self, prompt: str, aspect_ratio: str = "16:9", person_generation: str = "ALLOW_ADULT",
+                       image: ImageFile = None, number_of_videos: int = 1, negative_prompt: str = None,
+                       duration_seconds: int = 5) -> List[VideoFile]:
+        """Generates videos using the Veo model."""
+        params = {"model": self.VEO_MODEL, "prompt": prompt}
+        if image:
+            params["image"] = types.Image(image_bytes=image.file_bytes, mime_type=f"image/{image.extension}")
+            person_generation = "DONT_ALLOW"  # Required for image-to-video
+        if negative_prompt:
+            params["negative_prompt"] = negative_prompt
+
+        config = types.GenerateVideosConfig(
+            person_generation=person_generation,
+            aspect_ratio=aspect_ratio,
+            number_of_videos=number_of_videos,
+            duration_seconds=duration_seconds
+        )
+        params["config"] = config
+
+        operation = self.client.models.generate_videos(**params)
+        self.logger.info(f"Polling for video generation operation: {operation.operation.name}")
+
+        while not operation.done:
+            time.sleep(20)  # Polling interval
+            operation = self.client.operations.get(operation)
+
+        self.logger.info("Video generation complete.")
+        video_files = []
+        for i, generated_video in enumerate(operation.response.generated_videos):
+            with BytesIO() as buffer:
+                generated_video.video.save(buffer)
+                buffer.seek(0)
+                video_files.append(VideoFile.from_bytes(
+                    file_bytes=buffer.read(),
+                    file_name=f"generated_video_{i}.mp4"
+                ))
+        return video_files
+
+    def get_models(self) -> List[str]:
+        """Retrieves a list of available models."""
+        return [m.name for m in self.client.models.list()]
+    
     def request_llm_with_functions(self,
                                    model: str, 
                                    config: genai.types.GenerateContentConfig,
@@ -268,249 +326,8 @@ class GoogleAdapter(AdapterBase):
                                    additional_parameters: Dict={},
                                    **kwargs
                                    ): 
-        # Convert all functions by letting your BaseTool clean the schema 
-        converted_functions = [] 
-        for func in functions: 
-                if isinstance(func, BaseTool): 
-                    # This will remove 'title' from the schema 
-                    function_decls = func.to_params(provider="google") 
-                    
-                    # Wrap in "function_declarations" as the gemini client expects 
-                    converted_functions.append({"function_declarations": [function_decls]}) 
-                else: 
-                    # If it’s not a llm_platform.tools.base.BaseTool 
-                    converted_functions.append(func)
-
-        config.tools += converted_functions # Add functions to the config
-
-        while True:
-        
-            history = self.convert_conversation_history_to_adapter_format(the_conversation)
-
-            response = self.client.models.generate_content(contents = history, 
-                                                      model = model,
-                                                      config = config,
-                                                    )
-            
-            usage = {"model": model,
-                "completion_tokens": response.usage_metadata.prompt_token_count,
-                "prompt_tokens": response.usage_metadata.candidates_token_count
-            }
-
-            # Parse response
-            text_from_response = " "
-            thoughts_from_response = []
-            files_from_response: List[MediaFile] = []
-            function_calls = []
-            function_responses = []
-            # Iterate through all function calls in the response
-            for part in response.candidates[0].content.parts:
-
-                # Call each requested function
-                if function_call := part.function_call:
-                    # Get function name and arguments
-                    function_id = str(uuid.uuid4())
-                    function_args = dict(function_call.args)
-                    function_name = function_call.name
-
-                    # Save record of the function call
-                    function_call_record = FunctionCall(id=function_id,
-                                                        name=function_name,
-                                                        arguments=json.dumps(function_args))
-                    function_calls.append(function_call_record)
-
-                    # Find the requested function
-                    function = next((each_function for each_function in functions if each_function.__name__ == function_name), None)
-                    if function is None:
-                        raise ValueError(f"Function {function_name} not found in tools")
-
-                    # Call the function
-                    # IMPORTANT!: function response should be Dict
-                    function_response = function(**function_args)
-
-                    #logging.debug(f"Function response: {function_response}")
-                    response_struct = FunctionResponse(name=function_name,
-                                                        response=function_response,
-                                                        id = function_id
-                                                        )
-                    function_responses.append(response_struct)
-
-                    if tool_output_callback:
-                        tool_output_callback(function_name,
-                                            function_args,
-                                            function_response
-                                            )
-                        
-                if part.text:
-                    if part.thought:
-                        thoughts_from_response.append(ThinkingResponse(content=part.text, id=None))
-                    elif part.inline_data:
-                        if part.inline_data.mime_type == "image/png":
-                            image = ImageFile.from_bytes(file_bytes=part.inline_data.data, 
-                                                        file_name=f"image_{len(files_from_response)}.png")
-                            files_from_response.append(image)
-                        else:
-                            raise ValueError(f"Unsupported mime type: {part.inline_data.mime_type}")
-                    else:
-                        text_from_response += part.text
-
-            if len(function_calls) == 0:
-                return response
-
-            # Save function calls and function response to the history
-            message = Message(role="assistant", 
-                                        content=text_from_response,
-                                        thinking_responses=thoughts_from_response,
-                                        files=files_from_response,
-                                        function_calls=function_calls,
-                                        function_responses=function_responses,
-                                        usage=usage
-                                        )
-            the_conversation.messages.append(message)
-
-
-    def get_models(self) -> List[str]:
-        NotImplementedError("Not implemented yet")
-
-    def generate_image(self, prompt: str, n: int=1, **kwargs) -> List[ImageFile]: 
         """
-        Parameters:
-            prompt: The text prompt for the image.
-            number_of_images: The number of images to generate, from 1 to 4 (inclusive). The default is 4.
-            aspect_ratio: Changes the aspect ratio of the generated image. 
-                Supported values are "1:1", "3:4", "4:3", "9:16", and "16:9". The default is "1:1".
-            safety_filter_level: Adds a filter level to safety filtering. The following values are valid:
-                "BLOCK_LOW_AND_ABOVE": Block when the probability score or the severity score is LOW, MEDIUM, or HIGH.
-                "BLOCK_MEDIUM_AND_ABOVE": Block when the probability score or the severity score is MEDIUM or HIGH.
-                "BLOCK_ONLY_HIGH": Block when the probability score or the severity score is HIGH.
-            person_generation: Allow the model to generate images of people. The following values are supported:
-                "DONT_ALLOW": Block generation of images of people.
-                "ALLOW_ADULT": Generate images of adults, but not children. This is the default.
+        Not implemented
+        This method is not implemented in the GoogleAdapter.
         """
-
-        """
-            # Examples of the generation_config
-            generation_config=genai.types.GenerateContentConfig(
-                temperature=0,
-                top_p=0.95,
-                top_k=20,
-                candidate_count=1,
-                seed=5,
-                max_output_tokens=100,
-                stop_sequences=['STOP!'],
-                presence_penalty=0.0,
-                frequency_penalty=0.0,
-            ),
-        """
-
-        response = self.client.models.generate_images(
-            model='imagen-3.0-generate-002',
-            prompt=prompt,
-            config=genai.types.GenerateImagesConfig(
-                number_of_images=n,
-                **kwargs
-            ),
-        )
-
-        images = [ImageFile.from_bytes(file_bytes=generated_image.image.image_bytes, file_name="image.webp") for generated_image in response.generated_images]
-            
-        return images
-    
-    async def generate_image_async(self, prompt: str, n: int=1, **kwargs) -> List[BytesIO]: 
-        """
-        Parameters:
-            prompt: The text prompt for the image.
-            number_of_images: The number of images to generate, from 1 to 4 (inclusive). The default is 4.
-            aspect_ratio: Changes the aspect ratio of the generated image. 
-                Supported values are "1:1", "3:4", "4:3", "9:16", and "16:9". The default is "1:1".
-            safety_filter_level: Adds a filter level to safety filtering. The following values are valid:
-                "BLOCK_LOW_AND_ABOVE": Block when the probability score or the severity score is LOW, MEDIUM, or HIGH.
-                "BLOCK_MEDIUM_AND_ABOVE": Block when the probability score or the severity score is MEDIUM or HIGH.
-                "BLOCK_ONLY_HIGH": Block when the probability score or the severity score is HIGH.
-            person_generation: Allow the model to generate images of people. The following values are supported:
-                "DONT_ALLOW": Block generation of images of people.
-                "ALLOW_ADULT": Generate images of adults, but not children. This is the default.
-        """
-
-        """
-            # Examples of the generation_config
-            generation_config=genai.types.GenerateContentConfig(
-                temperature=0,
-                top_p=0.95,
-                top_k=20,
-                candidate_count=1,
-                seed=5,
-                max_output_tokens=100,
-                stop_sequences=['STOP!'],
-                presence_penalty=0.0,
-                frequency_penalty=0.0,
-            ),
-        """
-
-        response = self.client.aio.models.generate_images(
-            model='imagen-3.0-generate-002',
-            prompt=prompt,
-            config=genai.types.GenerateImagesConfig(
-                number_of_images=n,
-                **kwargs
-            )
-        )
-
-        images = [BytesIO(generated_image.image.image_bytes) for generated_image in response.generated_images]
-            
-        return images
-
-    def generate_video(self, 
-                       prompt: str, 
-                       aspect_ratio: str="16:9", 
-                       person_generation: str="ALLOW_ADULT", 
-                       image: ImageFile=None, 
-                       number_of_videos: int=1,
-                       negative_prompt: str=None,
-                       duration_seconds: int=5,
-                    ):
-        """
-        Parameters:
-            prompt: str The text prompt for the image.
-            aspect_ratio: str Changes the aspect ratio of the generated image. 
-                Supported values are "9:16", and "16:9".
-            person_generation: str Allow the model to generate images of people. The following values are supported:
-                "DONT_ALLOW": Block generation of images of people.
-                "ALLOW_ADULT": Generate images of adults, but not children. This is the default.
-            image: ImageFile The image to use as a reference for the video generation.
-            number_of_videos: int The number of videos to generate. The default is 1.
-            negative_prompt: str The text prompt for the image.
-            duration_seconds: int The duration of the video in seconds (from 5 to 8). The default is 5 seconds.
-        """
-        
-        parameters = {"model": "veo-2.0-generate-001",
-                      "prompt": prompt,
-                    }
-        
-        if image:
-            parameters["image"] = genai.types.Image(image=image.file_bytes, mime_type=f"image/{image.extension}")
-            person_generation = "DONT_ALLOW" # person_generation only accepts "dont_allow" for image-to-video
-
-        if negative_prompt:
-            parameters["negative_prompt"] = negative_prompt
-
-        config = types.GenerateVideosConfig(
-                person_generation=person_generation,  # "dont_allow" or "allow_adult"
-                aspect_ratio=aspect_ratio,  # "16:9" or "9:16"
-                number_of_videos=number_of_videos,  # Number of videos to generate
-        )
-
-        if duration_seconds:
-            config.duration_seconds = duration_seconds
-
-        parameters["config"] = config
-
-        operation = self.client.models.generate_videos(**parameters)
-
-        while not operation.done:
-            time.sleep(20)
-            operation = self.client.operations.get(operation)
-
-        for n, generated_video in enumerate(operation.response.generated_videos):
-            self.client.files.download(file=generated_video.video)
-            generated_video.video.save(f"video{n}.mp4")  # save the video
+        raise NotImplementedError("request_llm_with_functions is not implemented in GoogleAdapter.")
