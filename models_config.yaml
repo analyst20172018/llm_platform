@@ -168,7 +168,7 @@ models:
     image_generation: true
 
 
-  - name: gpt-4o-audio-preview
+  - name: gpt-4o-audio-preview-2025-06-03
     display_name: GPT-4o Audio
     adapter: OpenAIOldAdapter
     pricing:
