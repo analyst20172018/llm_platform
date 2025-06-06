@@ -33,7 +33,7 @@ class ElenenlabsAdapter:
         audio = self.client.generate(
             text=text,
             voice=voice,
-            model="eleven_multilingual_v2"
+            model="eleven_multilingual_v3"
         )
         return audio
     
@@ -41,7 +41,7 @@ class ElenenlabsAdapter:
         try:
             transcription = self.client.speech_to_text.convert(
                 file=audio_file,
-                model_id="scribe_v1", # Model to use, for now only "scribe_v1" is supported
+                model_id="scribe_v1_experimental", # The ID of the model to use for transcription, currently only ‘scribe_v1’ and ‘scribe_v1_experimental’ are available.
                 tag_audio_events=True, # Tag audio events like laughter, applause, etc.
                 language_code=language, # Language of the audio file, according to ISO 639. If set to None, the model will detect the language automatically.
                 diarize=True, # Whether to annotate who is speaking

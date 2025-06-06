@@ -1,148 +1,204 @@
-from .adapter_base import AdapterBase
-from openai import OpenAI, AsyncOpenAI
-import json
-from typing import List, Tuple, Dict, Callable
-from llm_platform.tools.base import BaseTool
-from llm_platform.services.conversation import Conversation, FunctionCall, FunctionResponse, Message, ThinkingResponse
-from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
-from llm_platform.helpers.model_config import ModelConfig
-import logging
-import inspect
+# <document name="openai_adapter.py">
+"""
+Adapter for interacting with the OpenAI API.
+
+This module provides a class, OpenAIAdapter, that conforms to the AdapterBase
+interface and handles the specifics of formatting requests and parsing responses
+for the OpenAI platform. It supports standard chat completions, function calling,
+image generation, and audio transcription.
+"""
+
 import asyncio
+import inspect
+import json
+import logging
+from typing import Callable, Dict, List, Tuple, Union
+
+from openai import AsyncOpenAI, OpenAI
+
+from llm_platform.helpers.model_config import ModelConfig
+from llm_platform.services.conversation import (Conversation, FunctionCall,
+                                                FunctionResponse, Message,
+                                                ThinkingResponse)
+from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
+                                         ExcelDocumentFile, ImageFile,
+                                         MediaFile, PDFDocumentFile,
+                                         TextDocumentFile, VideoFile)
+from llm_platform.tools.base import BaseTool
+
+from .adapter_base import AdapterBase
+
+# Constants for response types
+TEXT_INPUT_TYPE = "input_text"
+TEXT_OUTPUT_TYPE = "output_text"
+IMAGE_INPUT_TYPE = "input_image"
+AUDIO_INPUT_TYPE = "input_audio"
+FILE_INPUT_TYPE = "input_file"
+SUMMARY_TEXT_TYPE = "summary_text"
+FUNCTION_CALL_TYPE = "function_call"
+IMAGE_GENERATION_CALL_TYPE = "image_generation_call"
+
+# Constants for transcription models
+WHISPER_1 = "whisper-1"
+IMAGE_MODEL = "gpt-image-1"
+GPT4O_TRANSCRIBE = "gpt-4o-transcribe"
+GPT4O_MINI_TRANSCRIBE = "gpt-4o-mini-transcribe"
+
 
 class OpenAIAdapter(AdapterBase):
-    
-    
-    def __init__(self, logging_level=logging.INFO):
-        super().__init__(logging_level)  
+    """
+    An adapter to interact with OpenAI's large language models.
+
+    This class handles the translation between the platform's generic data
+    structures (like Conversation and Message) and the format required by
+    the OpenAI API. It supports both synchronous and asynchronous requests.
+    """
+
+    def __init__(self, logging_level: int = logging.INFO):
+        """
+        Initializes the OpenAIAdapter with synchronous and asynchronous clients.
+
+        Args:
+            logging_level: The logging level to use for the adapter's logger.
+        """
+        super().__init__(logging_level)
         self.client = OpenAI()
         self.async_client = AsyncOpenAI()
         self.model_config = ModelConfig()
-        
 
-    def convert_conversation_history_to_adapter_format(self, 
-                        the_conversation: Conversation, 
-                        model: str, 
-                        **kwargs):
-        
-        history = []
+    def _convert_file_to_content(self, file: BaseFile) -> Dict | None:
+        """
+        Converts a BaseFile object into an OpenAI-compatible content dictionary.
 
-        # Add history of messages
-        for message in the_conversation.messages:
+        Args:
+            file: The file object to convert.
 
-            # Add all function calls to the history
-            if message.function_calls:
-                for each_function_call in message.function_calls:
-                    history.append(each_function_call.to_openai())
-
-            history_message = {
-                "role": message.role, 
-                "content": []
+        Returns:
+            A dictionary representing the file content for the API, or None if
+            the file type is unsupported.
+        """
+        if isinstance(file, ImageFile):
+            return {
+                "type": IMAGE_INPUT_TYPE,
+                "image_url": f"data:image/{file.extension};base64,{file.base64}",
+            }
+        if isinstance(file, AudioFile):
+            return {
+                "type": AUDIO_INPUT_TYPE,
+                "input_audio": {"data": file.base64, "format": "mp3"},
+            }
+        if isinstance(file, PDFDocumentFile):
+            # Small PDFs can be uploaded directly as files
+            if file.size < 32_000_000 and file.number_of_pages < 100:
+                return {
+                    "type": FILE_INPUT_TYPE,
+                    "filename": file.name,
+                    "file_data": f"data:application/pdf;base64,{file.base64}",
+                }
+            # For larger PDFs, provide the extracted text content
+            return {
+                "type": TEXT_INPUT_TYPE,
+                "text": f'<document name="{file.name}">{file.text}</document>',
+            }
+        if isinstance(file, (TextDocumentFile, ExcelDocumentFile)):
+            return {
+                "type": TEXT_INPUT_TYPE,
+                "text": f'<document name="{file.name}">{file.text}</document>',
             }
 
-            if not message.content is None and message.content != "":
-                history_message["content"].append(
-                        {
-                            "type": "input_text" if message.role == "user" else "output_text",
-                            "text": message.content
-                        }
+        self.logger.warning(f"Unsupported file type for conversion: {type(file)}. Skipping file.")
+        return None
+
+    def convert_conversation_history_to_adapter_format(
+        self, the_conversation: Conversation, model: str, **kwargs
+    ) -> Tuple[List[Dict], Dict]:
+        """
+        Converts the platform's Conversation object into the list format
+        required by the OpenAI API.
+
+        Args:
+            the_conversation: The conversation object to convert.
+            model: The model being targeted (unused in this implementation but
+                   part of the signature).
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            A tuple containing the list of messages for the API and the passed-in kwargs.
+        """
+        history = []
+        for message in the_conversation.messages:
+            # Add any function calls that preceded the main content
+            if message.function_calls:
+                history.extend(fc.to_openai() for fc in message.function_calls)
+
+            content_items = []
+            # Add text content if it exists
+            if message.content:
+                content_items.append(
+                    {
+                        "type": TEXT_INPUT_TYPE if message.role == "user" else TEXT_OUTPUT_TYPE,
+                        "text": message.content,
+                    }
                 )
 
-            if not message.files is None:
-
-                for each_file in message.files:
-                    
-                    # Images
-                    if isinstance(each_file, ImageFile):
-                        # Add the image to the content list
-                        image_content = {"type": "input_image", 
-                                         "image_url": f"data:image/{each_file.extension};base64,{each_file.base64}"
-                                         }
-                        history_message["content"].append(image_content)
-                    
-                    # Audio
-                    elif isinstance(each_file, AudioFile):
-                        # Add audio to history
-                        audio_content = {
-                            "type": "input_audio",
-                            "input_audio": {
-                                "data": each_file.base64,
-                                "format": "mp3"
-                            }
-                        }
-                        history_message["content"].append(audio_content)
-
-                    # PDF File
-                    elif isinstance(each_file, PDFDocumentFile):
-
-                        if (each_file.size < 32_000_000) and (each_file.number_of_pages < 100):
-                            # Add the image to the content list
-                            pdf_content = {"type": "input_file",
-                                             "filename": each_file.name,
-                                             "file_data": f"data:application/pdf;base64,{each_file.base64}"
-                                            }
+            # Add file content
+            if message.files:
+                for file in message.files:
+                    if file_content := self._convert_file_to_content(file):
+                        # Prepend document text to give it context priority
+                        if file_content["type"] == TEXT_INPUT_TYPE and "<document" in file_content["text"]:
+                            content_items.insert(0, file_content)
                         else:
-                            # Add the text document to the history as a text in XML tags
-                            pdf_content = {
-                                "type": "input_text",
-                                "text": f"""<document name="{each_file.name}">{each_file.text}</document>"""
-                            }
-                            
-                        history_message["content"].append(pdf_content)
-                    
-                    # Text documents
-                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
-                        
-                        # Add the text document to the history as a text in XML tags
-                        new_text_content = {
-                            "type": "input_text",
-                            "text": f"""<document name="{each_file.name}">{each_file.text}</document>"""
-                        }
-                        history_message["content"].insert(0, new_text_content)
+                            content_items.append(file_content)
 
-                    else:
-                        raise ValueError(f"Unsupported file type: {type(each_file)}")
+            if content_items:
+                history.append({"role": message.role, "content": content_items})
 
-            if len(history_message["content"]) > 0:
-                history.append(history_message)
-
-            # Add all function responses to the history
+            # Add any function responses that followed the main content
             if message.function_responses:
-                for each_response in message.function_responses:
-                    history.append(each_response.to_openai())
+                history.extend(fr.to_openai() for fr in message.function_responses)
 
         return history, kwargs
 
+    def _create_parameters_for_calling_llm(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        additional_parameters: Dict = None,
+        use_previous_response_id: bool = True,
+        **kwargs,
+    ) -> Dict:
+        """
+        Constructs the dictionary of parameters for an OpenAI API call.
 
-    def _create_parameters_for_calling_llm(self, 
-                        model: str,
-                        the_conversation: Conversation,
-                        additional_parameters: Dict={},
-                        use_previous_response_id: bool=True,
-                        **kwargs
-                        ) -> Dict:
-        # Remove 'max_tokens' and 'temperature' from reasoning models
-        if self.model_config[model]['reasoning_effort'] == 1:
-            #if model.lower() in REASONING_MODELS:
-            kwargs.pop('max_tokens', None)
-            kwargs.pop('temperature', None)
+        Args:
+            model: The model identifier.
+            the_conversation: The current conversation state.
+            additional_parameters: A dictionary of extra parameters like 'grounding'.
+            use_previous_response_id: Flag to enable delta-based conversation updates.
+            **kwargs: Additional keyword arguments to pass to the API.
 
-        # Model OpenAI has 'max_output_tokens' instead of 'max_tokens'
-        if 'max_tokens' in kwargs:
-            kwargs['max_output_tokens'] = kwargs.pop('max_tokens')
+        Returns:
+            A dictionary of parameters ready for the OpenAI client.
+        """
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        # For reasoning-focused models, certain parameters are not needed
+        model_object = self.model_config[model]
+        if model_object and model_object["reasoning_effort"] == 1:
+            kwargs.pop("max_tokens", None)
+            kwargs.pop("temperature", None)
+
+        # Rename 'max_tokens' to OpenAI's expected 'max_output_tokens'
+        if "max_tokens" in kwargs:
+            kwargs["max_output_tokens"] = kwargs.pop("max_tokens")
 
         tools = []
-        # Web-search
-        if additional_parameters.get("grounding", False):
-            tools = [{"type": "web_search_preview"}]
-
-        # Image output
-        if additional_parameters.get("response_modalities", []) and "image" in additional_parameters["response_modalities"]:
-            tools.append({
-                "type": "image_generation",
-                "quality": "high",
-                "size": "1536x1024", 
-            })
+        if additional_parameters.get("grounding"):
+            tools.append({"type": "web_search_preview"})
+        if "image" in additional_parameters.get("response_modalities", []):
+            tools.append({"type": "image_generation", "quality": "high", "size": "1536x1024"})
 
         messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
 
@@ -157,441 +213,498 @@ class OpenAIAdapter(AdapterBase):
         if "reasoning" in parameters:
             parameters["reasoning"]["summary"] = "auto"
 
-        # Use previous_response_id if available
-        if use_previous_response_id:
-            previous_response_id = the_conversation.previous_response_id_for_openai
-            if previous_response_id:
-                parameters["previous_response_id"] = previous_response_id
-                messages_from_user = [each_message for each_message in messages if each_message["role"] == "user"]
-                if len(messages_from_user) > 0:
-                    parameters["input"] = [messages_from_user[-1]]
-                else:
-                    parameters["input"] = None
+        # Use previous_response_id for more efficient, stateful conversations
+        if use_previous_response_id and (prev_id := the_conversation.previous_response_id_for_openai):
+            parameters["previous_response_id"] = prev_id
+            # When using a previous ID, only the latest user message is needed
+            user_messages = [msg for msg in messages if msg.get("role") == "user"]
+            parameters["input"] = [user_messages[-1]] if user_messages else None
 
         return parameters
 
+    def _parse_response(self, response) -> Tuple[str, List[ThinkingResponse], List[MediaFile], Dict]:
+        """
+        Parses the raw OpenAI response into structured data.
 
-    def _parse_response(self, response) -> Tuple[str, List[str], List[MediaFile], Dict]:
-        
-        usage = {"model": getattr(response, 'model', 'Unknown model'),
-                 "completion_tokens": response.usage.output_tokens,
-                 "prompt_tokens": response.usage.input_tokens}
-        
-        answer_text = '\n'.join([
-            each_content.text 
-            for each_output in (getattr(response, 'output', []) or [])
-            for each_content in (getattr(each_output, 'content', []) or [])
-            if getattr(each_content, 'type', "") == "output_text"
-        ])
-        
-        # Save the reasoning
-        thinking_responses = [ThinkingResponse(content=each_summary.text, id=response.id) \
-                                    for each_output in getattr(response, 'output', []) \
-                                        for each_summary in getattr(each_output, 'summary', []) \
-                                            if getattr(each_summary, 'type', "") == "summary_text"]
-        
-        # Save the generated image
-        files_from_response: List[MediaFile] = []
-        image_data = [
-            output.result
-            for output in response.output
-            if output.type == "image_generation_call"
+        Args:
+            response: The response object from the OpenAI client.
+
+        Returns:
+            A tuple containing the answer text, a list of thinking responses,
+            a list of generated media files, and a usage dictionary.
+        """
+        usage = {
+            "model": getattr(response, "model", "Unknown model"),
+            "completion_tokens": response.usage.output_tokens,
+            "prompt_tokens": response.usage.input_tokens,
+        }
+
+        outputs = getattr(response, "output", [])
+
+        text_parts = [
+            content.text
+            for output in outputs
+            for content in (getattr(output, "content", []) or [])
+            if getattr(content, "type", "") == TEXT_OUTPUT_TYPE
         ]
-        if image_data:
-            image_base64 = image_data[0]
-            image = ImageFile.from_base64(base64_str=image_base64, 
-                                          file_name=f"image_{len(files_from_response)}.png")
-            files_from_response.append(image)
+        answer_text = "\n".join(text_parts)
+
+        thinking_responses = [
+            ThinkingResponse(content=summary.text, id=response.id)
+            for output in outputs
+            for summary in (getattr(output, "summary", []) or [])
+            if getattr(summary, "type", "") == SUMMARY_TEXT_TYPE
+        ]
+
+        image_b64_data = [
+            output.result
+            for output in outputs
+            if getattr(output, "type", "") == IMAGE_GENERATION_CALL_TYPE
+        ]
+        files_from_response = [
+            ImageFile.from_base64(base64_str=b64, file_name=f"image_{i}.png")
+            for i, b64 in enumerate(image_b64_data)
+        ]
 
         return answer_text, thinking_responses, files_from_response, usage
 
+    def _get_function_calls_from_response(self, response) -> List[FunctionCall]:
+        """Extracts function call records from an OpenAI response."""
+        return [
+            FunctionCall.from_openai(output)
+            for output in getattr(response, "output", [])
+            if getattr(output, "type", "") == FUNCTION_CALL_TYPE
+        ]
 
-    def request_llm(self, model: str, 
-                    the_conversation: Conversation, 
-                    functions:List[BaseTool]=None, 
-                    tool_output_callback: Callable=None,
-                    additional_parameters: Dict={},
-                    **kwargs) -> Message:
-        """
-            Request a response from an OpenAI large language model.
-            This method handles sending a request to an LLM, processing the response,
-            and updating the conversation with the assistant's message.
-            Args:
-                model (str): The identifier of the LLM model to use (e.g., 'gpt-4', 'gpt-3.5-turbo').
-                the_conversation (Conversation): The conversation object containing message history.
-                functions (List[BaseTool], optional): Tools/functions that can be called by the model.
-                    If provided, will use function calling mode.
-                tool_output_callback (Callable, optional): Callback function to handle tool outputs.
-                    Only used when functions are provided.
-                additional_parameters (Dict, optional): Additional parameters to pass to the OpenAI API.
-                **kwargs: Additional keyword arguments passed to the underlying API call.
-            Returns:
-                Message: A Message object containing the assistant's response, usage statistics,
-                    and any thinking responses (if available).
-            Note:
-                The method appends the resulting message to the conversation object automatically.
-                When functions are provided, the request is delegated to request_llm_with_functions.
-        """
-        
-        if functions is None:
-            parameters = self._create_parameters_for_calling_llm(model, 
-                                                                 the_conversation, 
-                                                                 additional_parameters,
-                                                                 use_previous_response_id=True, 
-                                                                 **kwargs)
-            response = self.client.responses.create(**parameters)
-        else:
-             response = self.request_llm_with_functions(
-                            model=model,
-                            the_conversation=the_conversation,
-                            functions=functions,
-                            tool_output_callback=tool_output_callback,
-                            **kwargs,
-             )
-        
-        answer_text, thinking_responses, files_from_response, usage = self._parse_response(response)
-        
-        message = Message(role="assistant", 
-                          content=answer_text, 
-                          thinking_responses=thinking_responses, 
-                          usage=usage, 
-                          id=response.id,
-                          files=files_from_response,
+    def _append_tool_messages_to_conversation(
+        self,
+        the_conversation: Conversation,
+        response_id: str,
+        usage: Dict,
+        assistant_message_text: str,
+        function_calls: List[FunctionCall],
+        function_responses: List[FunctionResponse],
+        thinking_responses: List[ThinkingResponse],
+        files_from_response: List[MediaFile],
+    ):
+        """Appends the assistant's function call and the user's function response messages to the conversation."""
+        # 1. Assistant's message with the function call request
+        assistant_message = Message(
+            role="assistant",
+            id=response_id,
+            usage=usage,
+            content=assistant_message_text,
+            function_calls=function_calls,
+            thinking_responses=thinking_responses,
+            files=files_from_response,
         )
-        the_conversation.messages.append(message)
-        
-        return message
+        the_conversation.messages.append(assistant_message)
 
-    async def request_llm_async(self, model: str, 
-                    the_conversation: Conversation, 
-                    functions:List[BaseTool]=None, 
-                    tool_output_callback: Callable=None,
-                    additional_parameters: Dict={},
-                    **kwargs) -> Message:
-        
-        if functions is None:
-            parameters = self._create_parameters_for_calling_llm(model, 
-                                                                 the_conversation, 
-                                                                 additional_parameters,
-                                                                 use_previous_response_id=True, 
-                                                                 **kwargs)
-            response = await self.async_client.responses.create(**parameters)
-        else:
-             response = await self.request_llm_with_functions_async(
-                            model=model,
-                            the_conversation=the_conversation,
-                            functions=functions,
-                            tool_output_callback=tool_output_callback,
-                            **kwargs,
-             )
-
-        answer_text, thinking_responses, files_from_response, usage = self._parse_response(response)
-        
-        message = Message(role="assistant", 
-                          content=answer_text, 
-                          thinking_responses=thinking_responses, 
-                          usage=usage, 
-                          id=response.id,
-                          files=files_from_response,
+        # 2. User's message containing the function execution results
+        user_response_message = Message(
+            role="user", content=None, function_responses=function_responses
         )
-        the_conversation.messages.append(message)
-        
-        return message
+        the_conversation.messages.append(user_response_message)
 
+    def _execute_tool_calls(
+        self,
+        function_calls: List[FunctionCall],
+        functions: List[Union[BaseTool, Callable]],
+        tools: List[Dict],
+        tool_output_callback: Callable = None,
+    ) -> List[FunctionResponse]:
+        """Finds and executes synchronous tool calls."""
+        response_records = []
+        for tool_call in function_calls:
+            function_name = tool_call.name
+            arguments = json.loads(tool_call.arguments)
 
-    def request_llm_with_functions(self, model: str, 
-                                   the_conversation: Conversation, 
-                                   functions: List[BaseTool | Callable], 
-                                   tool_output_callback: Callable=None,
-                                   additional_parameters: Dict={},
-                                   **kwargs):
-        tools = [self._convert_function_to_tool(each_function) for each_function in functions]
-
-        parameters = self._create_parameters_for_calling_llm(model, 
-                                                             the_conversation, 
-                                                             additional_parameters,
-                                                             use_previous_response_id=False, 
-                                                             **kwargs)
-        parameters['tools'] += tools
-
-        chat_response = self.client.responses.create(**parameters)
-        
-        assistant_message_text, thinking_responses, files_from_response, usage = self._parse_response(chat_response)
-        
-        # Save tool_calls parameter from the openai answer for the history
-        function_call_records = []
-        for each_output in chat_response.output:
-            if each_output.type == "function_call":
-                new_function_call = FunctionCall.from_openai(each_output)
-                function_call_records.append(new_function_call)
-
-        # If there are no tool calls, we can return the response
-        if len(function_call_records) == 0:
-            return chat_response
-
-        function_response_records = []
-        for each_tools_call in function_call_records:
-
-            tool_call_id = each_tools_call.call_id
-            tool_function_name = each_tools_call.name
-            tool_arguments = json.loads(each_tools_call.arguments)
-
-            # Find the requested function
-            function_index = next((i for i, tool in enumerate(tools) if tool['name'] == tool_function_name), -1)
-            if function_index == -1:
-                raise ValueError(f"Function {each_tools_call.function.name} not found in tools")
-            function = functions[function_index]
-
-            # Get all function parameters
-            function_parameters = []
-            for key, value in tools[function_index].get('parameters', {}).get('properties', {}).items():
-                function_parameters.append(tool_arguments[key])
-
-            # Call the function
-            function_response = function(*function_parameters)
-
-            function_response_record = FunctionResponse(name=tool_function_name,
-                                                        call_id=tool_call_id,
-                                                        response=function_response)
-            function_response_records.append(function_response_record)
-            
-            if tool_output_callback:
-                tool_output_callback(tool_function_name,
-                                     function_parameters,
-                                     function_response
-                                    )
-
-        message = Message(role="assistant", 
-                            content=assistant_message_text,
-                            function_calls=function_call_records,
-                            function_responses=[],
-                            usage=usage,
-                            id=chat_response.id,
-                            thinking_responses=thinking_responses,
-                            files=files_from_response,
-                            )
-        the_conversation.messages.append(message)
-
-        message = Message(role="user", 
-                            content=None,
-                            function_calls=[],
-                            function_responses=function_response_records,
-                            usage=usage
-                            )
-        the_conversation.messages.append(message)
-
-        final_response = self.request_llm_with_functions(model, 
-                                                         the_conversation, 
-                                                         functions, 
-                                                         tool_output_callback=tool_output_callback,
-                                                         additional_parameters=additional_parameters,
-                                                         **kwargs)
-
-        return final_response
-    
-    async def request_llm_with_functions_async(self, model: str, 
-                                   the_conversation: Conversation, 
-                                   functions: List[BaseTool | Callable], 
-                                   tool_output_callback: Callable=None,
-                                   additional_parameters: Dict={},
-                                   **kwargs):
-        tools = [self._convert_function_to_tool(each_function) for each_function in functions]
-
-        parameters = self._create_parameters_for_calling_llm(model, 
-                                                             the_conversation, 
-                                                             additional_parameters,
-                                                             use_previous_response_id=False, 
-                                                             **kwargs)
-        parameters['tools'] += tools
-
-        chat_response = await self.async_client.responses.create(**parameters)
-        
-        assistant_message_text, thinking_responses, files_from_response, usage = self._parse_response(chat_response)
-        
-        # Save tool_calls parameter from the openai answer for the history
-        function_call_records = []
-        for each_output in chat_response.output:
-            if each_output.type == "function_call":
-                new_function_call = FunctionCall.from_openai(each_output)
-                function_call_records.append(new_function_call)
-
-        # If there are no tool calls, we can return the response
-        if len(function_call_records) == 0:
-            return chat_response
-
-        function_response_records = []
-        for each_tools_call in function_call_records:
-
-            tool_call_id = each_tools_call.call_id
-            tool_function_name = each_tools_call.name
-            tool_arguments = json.loads(each_tools_call.arguments)
-
-            # Find the requested function
-            function_index = next((i for i, tool in enumerate(tools) if tool['name'] == tool_function_name), -1)
-            if function_index == -1:
-                raise ValueError(f"Function {each_tools_call.function.name} not found in tools")
-            function = functions[function_index]
-
-            # Get all function parameters
-            function_parameters = []
-            for key, value in tools[function_index].get('parameters', {}).get('properties', {}).items():
-                function_parameters.append(tool_arguments[key])
-
-            # Call the function
-            function_response = await function(*function_parameters)
-
-            function_response_record = FunctionResponse(name=tool_function_name,
-                                                        call_id=tool_call_id,
-                                                        response=function_response)
-            function_response_records.append(function_response_record)
-            
-            if tool_output_callback:
-                tool_output_callback(tool_function_name,
-                                     function_parameters,
-                                     function_response
-                                    )
-
-        message = Message(role="assistant", 
-                            content=assistant_message_text,
-                            function_calls=function_call_records,
-                            function_responses=[],
-                            usage=usage,
-                            id=chat_response.id,
-                            thinking_responses=thinking_responses,
-                            files=files_from_response,
-                            )
-        the_conversation.messages.append(message)
-
-        message = Message(role="user", 
-                            content=None,
-                            function_calls=[],
-                            function_responses=function_response_records,
-                            usage=usage
-                            )
-        the_conversation.messages.append(message)
-
-        final_response = await self.request_llm_with_functions_async(model, 
-                                                         the_conversation, 
-                                                         functions, 
-                                                         tool_output_callback=tool_output_callback,
-                                                         additional_parameters=additional_parameters,
-                                                         **kwargs)
-
-        return final_response
-
-
-    def generate_image(self, prompt: str, n: int=1, **kwargs) -> List[ImageFile]:
-        response = self.client.images.generate(
-            model="gpt-image-1",
-            prompt=prompt,
-            size=kwargs.get('size', '1024x1536'), # '1024x1024', '1024x1536', '1536x1024', 'auto'
-            quality=kwargs.get('quality', 'high'), #['low', 'medium', 'high', 'auto']
-            output_format=kwargs.get('output_format', 'png'), #['png', 'jpeg', 'webp']
-            #output_compression=kwargs.get('output_compression', 50), # You can adjust the compression level (from 0-100%) for JPEG and WEBP formats
-            n=n,
-            #background="transparent", # You can choose to generate an image with a transparent background (only available for PNG or WEBP)
-            #moderation=kwargs.get('moderation', 'low'), #['low', 'auto']
-        )
-
-        output_images = [ImageFile.from_base64(base64_str=image_data.b64_json, file_name="image.png") for image_data in response.data]
-
-        return output_images
-    
-
-    def edit_image(self, prompt: str, images=List[ImageFile], n: int=1, **kwargs) -> List[ImageFile]:
-        response = self.client.images.edit(
-            model="gpt-image-1",
-            prompt=prompt,
-            image = [image.bytes_io for image in images],
-            size=kwargs.get('size', '1024x1536'), # '1024x1024', '1024x1536', '1536x1024', 'auto'
-            n=n,
-        )
-
-        output_images = [ImageFile.from_base64(base64_str=image_data.b64_json, file_name="image.png") for image_data in response.data]
-
-        return output_images
-
-
-    def voice_to_text(self, audio_file, response_format="text", language="en", model="gpt-4o-transcribe"):
-        assert response_format in ["text", "srt", "verbose_json"]
-        assert model in ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"]
-        self.latest_usage = None
-
-        transcript = self.client.audio.transcriptions.create(
-                model=model, 
-                file=audio_file,
-                response_format=response_format,
-                language=language
+            try:
+                # Find the corresponding function object using the tool definition name
+                function_to_call = next(
+                    f for i, f in enumerate(functions) if tools[i]["name"] == function_name
                 )
-        return transcript
+            except StopIteration:
+                raise ValueError(f"Function '{function_name}' not found in provided tools.")
 
+            # Execute the function with keyword arguments for robustness
+            response_content = function_to_call(**arguments)
+
+            response_records.append(
+                FunctionResponse(
+                    name=function_name, call_id=tool_call.call_id, response=response_content
+                )
+            )
+
+            if tool_output_callback:
+                tool_output_callback(function_name, arguments, response_content)
+
+        return response_records
+
+    async def _execute_tool_calls_async(
+        self,
+        function_calls: List[FunctionCall],
+        functions: List[Union[BaseTool, Callable]],
+        tools: List[Dict],
+        tool_output_callback: Callable = None,
+    ) -> List[FunctionResponse]:
+        """Finds and executes tool calls, handling both sync and async functions."""
+
+        async def execute_single_call(tool_call: FunctionCall) -> FunctionResponse:
+            function_name = tool_call.name
+            arguments = json.loads(tool_call.arguments)
+
+            try:
+                function_to_call = next(
+                    f for i, f in enumerate(functions) if tools[i]["name"] == function_name
+                )
+            except StopIteration:
+                raise ValueError(f"Function '{function_name}' not found in provided tools.")
+
+            if inspect.iscoroutinefunction(function_to_call):
+                response_content = await function_to_call(**arguments)
+            else:
+                response_content = function_to_call(**arguments)
+
+            if tool_output_callback:
+                # Note: Assumes callback is synchronous. If it can be async,
+                # this would need further enhancement.
+                tool_output_callback(function_name, arguments, response_content)
+
+            return FunctionResponse(
+                name=function_name, call_id=tool_call.call_id, response=response_content
+            )
+
+        # Execute all tool calls concurrently
+        tasks = [execute_single_call(tc) for tc in function_calls]
+        return await asyncio.gather(*tasks)
+
+    def request_llm(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[BaseTool] = None,
+        tool_output_callback: Callable = None,
+        additional_parameters: Dict = None,
+        **kwargs,
+    ) -> Message:
+        """
+        Requests a response from an OpenAI LLM, handling standard chat and
+        function calling (tool use).
+
+        This method orchestrates sending a request, processing the response,
+        and updating the conversation. If tools are provided, it will handle
+        the multi-step tool-use conversation flow.
+
+        Args:
+            model: The identifier of the LLM model to use.
+            the_conversation: The conversation object containing message history.
+            functions: A list of tools/functions the model can call.
+            tool_output_callback: A callback executed after each tool call.
+            additional_parameters: Extra parameters for the API call.
+            **kwargs: Additional keyword arguments for the OpenAI client.
+
+        Returns:
+            The final assistant Message object after all processing.
+        """
+        if functions:
+            response = self.request_llm_with_functions(
+                model=model,
+                the_conversation=the_conversation,
+                functions=functions,
+                tool_output_callback=tool_output_callback,
+                additional_parameters=additional_parameters,
+                **kwargs,
+            )
+        else:
+            parameters = self._create_parameters_for_calling_llm(
+                model, the_conversation, additional_parameters, use_previous_response_id=True, **kwargs
+            )
+            response = self.client.responses.create(**parameters)
+
+        answer_text, thinking_responses, files_from_response, usage = self._parse_response(response)
+
+        message = Message(
+            role="assistant",
+            id=response.id,
+            usage=usage,
+            content=answer_text,
+            thinking_responses=thinking_responses,
+            files=files_from_response,
+        )
+        the_conversation.messages.append(message)
+        return message
+
+    async def request_llm_async(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[BaseTool] = None,
+        tool_output_callback: Callable = None,
+        additional_parameters: Dict = None,
+        **kwargs,
+    ) -> Message:
+        """
+        Asynchronously requests a response from an OpenAI LLM.
+
+        This method is the asynchronous counterpart to `request_llm`.
+
+        Args:
+            model: The identifier of the LLM model to use.
+            the_conversation: The conversation object containing message history.
+            functions: A list of tools/functions the model can call.
+            tool_output_callback: A callback executed after each tool call.
+            additional_parameters: Extra parameters for the API call.
+            **kwargs: Additional keyword arguments for the OpenAI client.
+
+        Returns:
+            The final assistant Message object after all processing.
+        """
+        if functions:
+            response = await self.request_llm_with_functions_async(
+                model=model,
+                the_conversation=the_conversation,
+                functions=functions,
+                tool_output_callback=tool_output_callback,
+                additional_parameters=additional_parameters,
+                **kwargs,
+            )
+        else:
+            parameters = self._create_parameters_for_calling_llm(
+                model, the_conversation, additional_parameters, use_previous_response_id=True, **kwargs
+            )
+            response = await self.async_client.responses.create(**parameters)
+
+        answer_text, thinking_responses, files_from_response, usage = self._parse_response(response)
+
+        message = Message(
+            role="assistant",
+            id=response.id,
+            usage=usage,
+            content=answer_text,
+            thinking_responses=thinking_responses,
+            files=files_from_response,
+        )
+        the_conversation.messages.append(message)
+        return message
+
+    def request_llm_with_functions(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[Union[BaseTool, Callable]],
+        tool_output_callback: Callable = None,
+        additional_parameters: Dict = None,
+        **kwargs,
+    ):
+        """Handles the synchronous, recursive logic for tool-use conversations."""
+        tools = [self._convert_function_to_tool(f) for f in functions]
+        parameters = self._create_parameters_for_calling_llm(
+            model, the_conversation, additional_parameters, use_previous_response_id=False, **kwargs
+        )
+        parameters["tools"].extend(tools)
+
+        # 1. Get response from the model
+        response = self.client.responses.create(**parameters)
+        text, thinking, files, usage = self._parse_response(response)
+        function_calls = self._get_function_calls_from_response(response)
+
+        # 2. If no tools were called, the conversation is over.
+        if not function_calls:
+            return response
+
+        # 3. Execute the requested tools
+        function_responses = self._execute_tool_calls(
+            function_calls, functions, tools, tool_output_callback
+        )
+
+        # 4. Append the assistant's call and the tool results to the history
+        self._append_tool_messages_to_conversation(
+            the_conversation, response.id, usage, text, function_calls, function_responses, thinking, files
+        )
+
+        # 5. Call the model again with the updated history to get the final answer
+        return self.request_llm_with_functions(
+            model, the_conversation, functions, tool_output_callback, additional_parameters, **kwargs
+        )
+
+    async def request_llm_with_functions_async(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[Union[BaseTool, Callable]],
+        tool_output_callback: Callable = None,
+        additional_parameters: Dict = None,
+        **kwargs,
+    ):
+        """Handles the asynchronous, recursive logic for tool-use conversations."""
+        tools = [self._convert_function_to_tool(f) for f in functions]
+        parameters = self._create_parameters_for_calling_llm(
+            model, the_conversation, additional_parameters, use_previous_response_id=False, **kwargs
+        )
+        parameters["tools"].extend(tools)
+
+        # 1. Get response from the model
+        response = await self.async_client.responses.create(**parameters)
+        text, thinking, files, usage = self._parse_response(response)
+        function_calls = self._get_function_calls_from_response(response)
+
+        # 2. If no tools were called, the conversation is over.
+        if not function_calls:
+            return response
+
+        # 3. Execute the requested tools
+        function_responses = await self._execute_tool_calls_async(
+            function_calls, functions, tools, tool_output_callback
+        )
+
+        # 4. Append the assistant's call and the tool results to the history
+        self._append_tool_messages_to_conversation(
+            the_conversation, response.id, usage, text, function_calls, function_responses, thinking, files
+        )
+
+        # 5. Call the model again with the updated history to get the final answer
+        return await self.request_llm_with_functions_async(
+            model, the_conversation, functions, tool_output_callback, additional_parameters, **kwargs
+        )
+
+    def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
+        """
+        Generates images from a text prompt using gpt-image-1.
+
+        Args:
+            prompt: The text description of the desired image(s).
+            n: The number of images to generate.
+            **kwargs: Additional parameters like 'size', 'quality', etc.
+
+        Returns:
+            A list of ImageFile objects.
+        """
+        response = self.client.images.generate(
+            model=IMAGE_MODEL,
+            prompt=prompt,
+            n=n,
+            size=kwargs.get("size", "1024x1536"),
+            quality=kwargs.get("quality", "high"),
+            output_format=kwargs.get("output_format", "png"),
+            **kwargs,
+        )
+        return [
+            ImageFile.from_base64(base64_str=img.b64_json, file_name=f"generated_image_{i}.png")
+            for i, img in enumerate(response.data)
+        ]
+
+    def edit_image(self, prompt: str, images: List[ImageFile], n: int = 1, **kwargs) -> List[ImageFile]:
+        """
+        Edits existing images based on a text prompt.
+
+        Args:
+            prompt: The text description of the edits to make.
+            images: A list of ImageFile objects to edit.
+            n: The number of edited versions to generate per input image.
+            **kwargs: Additional parameters like 'size'.
+
+        Returns:
+            A list of the edited ImageFile objects.
+        """
+        response = self.client.images.edit(
+            model=IMAGE_MODEL,
+            prompt=prompt,
+            image=[image.bytes_io for image in images],
+            n=n,
+            size=kwargs.get("size", "1024x1536"),
+            **kwargs,
+        )
+        return [
+            ImageFile.from_base64(base64_str=img.b64_json, file_name=f"edited_image_{i}.png")
+            for i, img in enumerate(response.data)
+        ]
+
+    def voice_to_text(
+        self, audio_file, response_format: str = "text", language: str = "en", model: str = GPT4O_TRANSCRIBE
+    ):
+        """
+        Transcribes an audio file to text using a Whisper model.
+
+        Args:
+            audio_file: The audio file object to transcribe.
+            response_format: The desired output format ('text', 'srt', 'verbose_json').
+            language: The language of the audio in ISO-639-1 format.
+            model: The transcription model to use.
+
+        Returns:
+            The transcription result in the specified format.
+        """
+        VALID_FORMATS = ["text", "srt", "verbose_json"]
+        VALID_MODELS = [GPT4O_TRANSCRIBE, GPT4O_MINI_TRANSCRIBE, WHISPER_1]
+        if response_format not in VALID_FORMATS:
+            raise ValueError(f"Invalid response_format. Must be one of {VALID_FORMATS}")
+        if model not in VALID_MODELS:
+            raise ValueError(f"Invalid model. Must be one of {VALID_MODELS}")
+
+        return self.client.audio.transcriptions.create(
+            model=model, file=audio_file, response_format=response_format, language=language
+        )
 
     def _convert_func_to_tool(self, func: Callable) -> Dict:
-        # Get function signature
+        """Converts a Python function to an OpenAI tool definition using inspection."""
         sig = inspect.signature(func)
+        TYPE_MAP = {
+            str: "string", int: "integer", float: "number",
+            bool: "boolean", list: "array", dict: "object",
+        }
 
-        # Create parameters dictionary
-        parameters = {}
-        required_params = []
-
-        # Analyze each parameter
-        for param_name, param in sig.parameters.items():
-            param_info = {}
-
-            # Get parameter type annotation if available
-            if param.annotation != inspect.Parameter.empty:
-                if param.annotation == str:
-                    param_info['type'] = 'string'
-                elif param.annotation == int:
-                    param_info['type'] = 'integer'
-                elif param.annotation == float:
-                    param_info['type'] = 'number'
-                elif param.annotation == bool:
-                    param_info['type'] = 'boolean'
-                elif param.annotation == list:
-                    param_info['type'] = 'array'
-                elif param.annotation == dict:
-                    param_info['type'] = 'object'
-                else:
-                    param_info['type'] = 'string'  # default to string for unknown types
-            else:
-                param_info['type'] = 'string'  # default to string if no type annotation
-
-            # Check if parameter is required
+        properties = {}
+        required = []
+        for name, param in sig.parameters.items():
+            # Default to 'string' if type is missing or not in our map
+            schema_type = TYPE_MAP.get(param.annotation, "string")
+            properties[name] = {"type": schema_type, "description": ""}  # Description can be enhanced
             if param.default == inspect.Parameter.empty:
-                required_params.append(param_name)
+                required.append(name)
 
-            parameters[param_name] = param_info
-
-        # Create the tool dictionary
-        tool = {
-            'name': func.__name__,
-            'description': func.__doc__ or '',
-            'parameters': {
-                'type': 'object',
-                'properties': parameters,
-                'required': required_params,
-                "additionalProperties": False
+        return {
+            "type": "function",
+            "name": func.__name__,
+            "description": func.__doc__ or f"Executes the {func.__name__} function.",
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+                "additionalProperties": False,
             },
             "strict": True,
-            'type': 'function',
         }
-        return tool
 
+    def _convert_function_to_tool(self, func: Union[BaseTool, Callable]) -> Dict:
+        """
+        Converts a BaseTool or a standard Python function into an OpenAI
+        tool definition.
 
-    def _convert_function_to_tool(self, func: BaseTool | Callable) -> Dict:
-        # Convert the function to a tool for OpenAI
+        Args:
+            func: The function or BaseTool instance to convert.
+
+        Returns:
+            A dictionary representing the OpenAI tool.
+
+        Raises:
+            TypeError: If the input is not a BaseTool or a callable function.
+        """
         if isinstance(func, BaseTool):
-            tool = func.to_params(provider='openai')
-            tool['type'] = 'function'
-        
+            tool = func.to_params(provider="openai")
+            tool["type"] = "function"
         elif callable(func):
             tool = self._convert_func_to_tool(func)
         else:
-            raise TypeError("func must be either a BaseTool or a function")
+            raise TypeError("func must be either a BaseTool instance or a callable function")
         return tool
 
-
     def get_models(self) -> List[str]:
+        """
+        Retrieves a list of available model IDs from OpenAI.
+
+        Returns:
+            A list of string identifiers for the available models.
+        """
         models = self.client.models.list()
         return [model.id for model in models.data]
