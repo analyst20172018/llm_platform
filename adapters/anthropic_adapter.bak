@@ -1,0 +1,881 @@
+"""Anthropic Claude adapter for the LLM platform."""
+
+import asyncio
+import inspect
+import json
+import logging
+import os
+from typing import Any, Callable, Dict, List, Optional, Union
+
+import anthropic
+
+from .adapter_base import AdapterBase
+from llm_platform.helpers.model_config import ModelConfig
+from llm_platform.services.conversation import (
+    Conversation,
+    FunctionCall,
+    FunctionResponse,
+    Message,
+    ThinkingResponse,
+)
+from llm_platform.services.files import (
+    AudioFile,
+    BaseFile,
+    DocumentFile,
+    ExcelDocumentFile,
+    ImageFile,
+    MediaFile,
+    PDFDocumentFile,
+    TextDocumentFile,
+    VideoFile,
+)
+from llm_platform.tools.base import BaseTool
+
+class ClaudeStreamProcessor:
+    """Processes Claude API stream events and accumulates content.
+    
+    This class processes streaming events from the Claude API and accumulates:
+    - thinking_text: The raw thinking text from thinking blocks
+    - response_text: The actual response text shown to the user  
+    - tool_uses: A list of tools being used, with their parameters
+    """
+    
+    def __init__(self) -> None:
+        # Output fields
+        self.thinking_text: str = ""
+        self.thinking_responses: List[ThinkingResponse] = []
+        self.response_text: str = ""
+        self.tool_uses: List[Dict[str, Any]] = []
+        self.usage: Dict[str, Union[str, int]] = {
+            "model": "",
+            "completion_tokens": 0,
+            "prompt_tokens": 0
+        }
+        self.stop_reason: Optional[str] = None
+
+        # Internal state tracking
+        self._current_block_type: Optional[str] = None
+        self._current_block_index: Optional[int] = None
+        self._current_block_signature: Optional[str] = None
+        self._current_tool_name: Optional[str] = None
+        self._current_tool_id: Optional[str] = None
+        self._current_tool_json: str = ""
+
+    def process_event(self, event: Any) -> None:
+        """Process a single event from the Claude stream."""
+        if not hasattr(event, 'type'):
+            return
+
+        event_handlers = {
+            'message_start': self._handle_message_start,
+            'content_block_start': self._handle_content_block_start,
+            'content_block_delta': self._handle_content_block_delta,
+            'content_block_stop': self._handle_content_block_stop,
+            'message_delta': self._handle_message_delta,
+        }
+        
+        handler = event_handlers.get(event.type)
+        if handler:
+            handler(event)
+
+    def _handle_message_start(self, event: Any) -> None:
+        """Handle message start event to extract model and token usage."""
+        if not hasattr(event, 'message'):
+            return
+        
+        self.usage["model"] = event.message.model
+        self.usage["prompt_tokens"] = event.message.usage.input_tokens
+
+    def _handle_content_block_start(self, event: Any) -> None:
+        """Handle the start of a content block."""
+        if not hasattr(event, 'content_block'):
+            return
+
+        content_block = event.content_block
+
+        # Set the current block type and index
+        self._current_block_type = getattr(content_block, 'type', None)
+        self._current_block_index = getattr(event, 'index', None)
+
+        # For tool use blocks, store the tool information
+        if self._current_block_type == 'tool_use':
+            self._current_tool_name = getattr(content_block, 'name', None)
+            self._current_tool_id = getattr(content_block, 'id', None)
+            self._current_tool_json = ""
+
+    def _handle_content_block_delta(self, event: Any) -> None:
+        """Handle a delta update to a content block."""
+        if not hasattr(event, 'delta'):
+            return
+
+        delta = event.delta
+        delta_type = getattr(delta, 'type', None)
+        
+        if not delta_type:
+            return
+
+        delta_handlers = {
+            'thinking_delta': lambda: self._accumulate_thinking(delta),
+            'text_delta': lambda: self._accumulate_text(delta),
+            'input_json_delta': lambda: self._accumulate_tool_json(delta),
+            'signature_delta': lambda: self._save_signature(delta),
+        }
+        
+        handler = delta_handlers.get(delta_type)
+        if handler:
+            handler()
+    
+    def _accumulate_thinking(self, delta: Any) -> None:
+        """Accumulate thinking text from delta."""
+        if hasattr(delta, 'thinking'):
+            self.thinking_text += delta.thinking
+    
+    def _accumulate_text(self, delta: Any) -> None:
+        """Accumulate response text from delta."""
+        if hasattr(delta, 'text'):
+            self.response_text += delta.text
+    
+    def _accumulate_tool_json(self, delta: Any) -> None:
+        """Accumulate tool JSON from delta."""
+        if hasattr(delta, 'partial_json'):
+            self._current_tool_json += delta.partial_json
+    
+    def _save_signature(self, delta: Any) -> None:
+        """Save block signature from delta."""
+        if hasattr(delta, 'signature'):
+            self._current_block_signature = delta.signature
+
+    def _handle_content_block_stop(self, event: Any) -> None:
+        """Handle the end of a content block."""
+        if self._current_block_type == 'tool_use':
+            self._process_completed_tool_use()
+        elif self._current_block_type == 'thinking':
+            self._process_completed_thinking()
+        
+        self._reset_block_state()
+    
+    def _process_completed_tool_use(self) -> None:
+        """Process a completed tool use block."""
+        if not self._current_tool_name:
+            return
+            
+        try:
+            parameters = json.loads(self._current_tool_json) if self._current_tool_json else {}
+        except json.JSONDecodeError:
+            parameters = {}
+
+        tool_use = {
+            'name': self._current_tool_name,
+            'parameters': parameters
+        }
+        
+        if self._current_tool_id:
+            tool_use['id'] = self._current_tool_id
+
+        self.tool_uses.append(tool_use)
+        
+        # Reset tool-specific state
+        self._current_tool_name = None
+        self._current_tool_id = None
+        self._current_tool_json = ""
+    
+    def _process_completed_thinking(self) -> None:
+        """Process a completed thinking block."""
+        thinking_response = ThinkingResponse(
+            content=self.thinking_text, 
+            id=self._current_block_signature
+        )
+        self.thinking_responses.append(thinking_response)
+        self.thinking_text = ""
+    
+    def _reset_block_state(self) -> None:
+        """Reset the current block state."""
+        self._current_block_type = None
+        self._current_block_index = None
+        self._current_block_signature = None
+
+    def _handle_message_delta(self, event: Any) -> None:
+        """Handle message delta to update usage and stop reason."""
+        if hasattr(event, 'usage') and hasattr(event.usage, 'output_tokens'):
+            self.usage["completion_tokens"] = event.usage.output_tokens
+        
+        if hasattr(event, 'delta') and hasattr(event.delta, 'stop_reason'):
+            self.stop_reason = event.delta.stop_reason
+
+class AnthropicAdapter(AdapterBase):
+    """Adapter for Anthropic's Claude API.
+    
+    Provides integration with Anthropic's Claude models including support for:
+    - Text generation with streaming
+    - Tool use and function calling
+    - Document processing (PDFs, text files, images)
+    - Thinking/reasoning capabilities
+    """
+
+    def __init__(self, logging_level: int = logging.INFO) -> None:
+        """Initialize the Anthropic adapter.
+        
+        Args:
+            logging_level: The logging level to use
+            
+        Raises:
+            ValueError: If ANTHROPIC_API_KEY environment variable is not set
+        """
+        super().__init__(logging_level)
+        
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY environment variable must be set")
+            
+        self.client = anthropic.Anthropic(api_key=api_key)
+        self.model_config = ModelConfig()
+
+    def convert_conversation_history_to_adapter_format(
+        self, 
+        the_conversation: Conversation, 
+        additional_parameters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Convert conversation history to Anthropic API format.
+        
+        Args:
+            the_conversation: The conversation to convert
+            additional_parameters: Additional parameters like citations
+            
+        Returns:
+            List of message dictionaries formatted for Anthropic API
+        """
+        if additional_parameters is None:
+            additional_parameters = {}
+        
+        history = []
+        
+        for message in the_conversation.messages:
+            history_message = self._convert_message_to_anthropic_format(message, additional_parameters)
+            history.append(history_message)
+            
+            # Add function responses as separate user message if present
+            if message.function_responses:
+                function_response_message = {
+                    "role": "user", 
+                    "content": [response.to_anthropic() for response in message.function_responses]
+                }
+                history.append(function_response_message)
+
+        return history
+    
+    def _convert_message_to_anthropic_format(
+        self, 
+        message: Message, 
+        additional_parameters: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Convert a single message to Anthropic format."""
+        history_message = {
+            "role": message.role, 
+            "content": message.content or " "
+        }
+        
+        # Process files if present
+        if message.files:
+            history_message["content"] = self._ensure_content_is_list(history_message["content"])
+            self._add_files_to_content(message.files, history_message["content"], additional_parameters)
+        
+        # Process function calls if present
+        if message.function_calls:
+            history_message["content"] = self._ensure_content_is_list(history_message["content"])
+            self._add_function_calls_to_content(message, history_message["content"])
+        
+        return history_message
+    
+    def _ensure_content_is_list(self, content: Union[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        """Ensure content is a list format for multimodal content."""
+        if isinstance(content, list):
+            return content
+        
+        return [{
+            "type": "text",
+            "text": content if content else " "
+        }]
+    
+    def _add_files_to_content(
+        self, 
+        files: List[BaseFile], 
+        content: List[Dict[str, Any]], 
+        additional_parameters: Dict[str, Any]
+    ) -> None:
+        """Add files to the content list."""
+        for file in files:
+            if isinstance(file, ImageFile):
+                self._add_image_to_content(file, content)
+            elif isinstance(file, (TextDocumentFile, ExcelDocumentFile)):
+                self._add_text_document_to_content(file, content, additional_parameters)
+            elif isinstance(file, PDFDocumentFile):
+                self._add_pdf_document_to_content(file, content, additional_parameters)
+            else:
+                raise ValueError(f"Unsupported file type: {file.extension}")
+    
+    def _add_image_to_content(self, image_file: ImageFile, content: List[Dict[str, Any]]) -> None:
+        """Add an image file to the content list."""
+        image_content = {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": f"image/{image_file.extension}",
+                "data": image_file.base64,
+            },
+        }
+        content.append(image_content)
+    
+    def _add_text_document_to_content(
+        self, 
+        doc_file: Union[TextDocumentFile, ExcelDocumentFile], 
+        content: List[Dict[str, Any]], 
+        additional_parameters: Dict[str, Any]
+    ) -> None:
+        """Add a text document to the content list."""
+        document_content = {
+            "type": "document",
+            "source": {
+                "type": "text",
+                "media_type": "text/plain",
+                "data": doc_file.text
+            },
+            "title": doc_file.name,
+            "context": "This is a trustworthy document.",
+            "citations": {"enabled": additional_parameters.get("citations", False)}
+        }
+        content.insert(0, document_content)
+    
+    def _add_pdf_document_to_content(
+        self, 
+        pdf_file: PDFDocumentFile, 
+        content: List[Dict[str, Any]], 
+        additional_parameters: Dict[str, Any]
+    ) -> None:
+        """Add a PDF document to the content list."""
+        # Use base64 for smaller PDFs, text for larger ones
+        use_base64 = pdf_file.size < 32_000_000 and pdf_file.number_of_pages < 100
+        
+        source_config = {
+            "type": "base64" if use_base64 else "text",
+            "media_type": "application/pdf" if use_base64 else "text/plain",
+            "data": pdf_file.base64 if use_base64 else pdf_file.text
+        }
+        
+        document_content = {
+            "type": "document",
+            "source": source_config,
+            "title": pdf_file.name,
+            "context": "This is a trustworthy document.",
+            "citations": {"enabled": additional_parameters.get("citations", False)}
+        }
+        content.insert(0, document_content)
+    
+    def _add_function_calls_to_content(self, message: Message, content: List[Dict[str, Any]]) -> None:
+        """Add function calls and thinking responses to content."""
+        # Add thinking responses first
+        if message.thinking_responses:
+            for thinking_response in message.thinking_responses:
+                content.insert(0, thinking_response.to_anthropic())
+        
+        # Add function calls
+        for function_call in message.function_calls:
+            content.append(function_call.to_anthropic())
+
+    def request_llm(
+        self, 
+        model: str, 
+        the_conversation: Conversation, 
+        functions: Optional[List[BaseTool]] = None, 
+        temperature: int = 0,  
+        tool_output_callback: Optional[Callable] = None,
+        additional_parameters: Optional[Dict[str, Any]] = None, 
+        **kwargs
+    ) -> Message:
+        """Request a response from the LLM.
+        
+        Args:
+            model: The model to use
+            the_conversation: The conversation context
+            functions: Optional list of tools/functions to make available
+            temperature: Sampling temperature (0-1)
+            tool_output_callback: Optional callback for tool outputs
+            additional_parameters: Additional parameters like grounding, citations
+            **kwargs: Additional model parameters
+            
+        Returns:
+            The assistant's response message
+        """
+        if additional_parameters is None:
+            additional_parameters = {}
+        
+        # Handle reasoning configuration
+        self._configure_reasoning(kwargs)
+        
+        # Handle model-specific configurations
+        self._configure_model_specific_settings(model, kwargs)
+        
+        # Route to appropriate request method
+        if functions is None:
+            processor = self._request_without_functions(
+                model, the_conversation, temperature, additional_parameters, **kwargs
+            )
+        else:
+            processor = self.request_llm_with_functions(
+                model=model,
+                the_conversation=the_conversation,
+                functions=functions,
+                temperature=temperature,
+                tool_output_callback=tool_output_callback,
+                additional_parameters=additional_parameters,
+                **kwargs,
+            )
+            
+        # Create and append the response message
+        message = Message(
+            role="assistant", 
+            content=processor.response_text, 
+            thinking_responses=processor.thinking_responses, 
+            usage=processor.usage
+        )
+        the_conversation.messages.append(message)
+        
+        return message
+    
+    def _configure_reasoning(self, kwargs: Dict[str, Any]) -> None:
+        """Configure reasoning/thinking parameters."""
+        if 'reasoning' not in kwargs:
+            return
+            
+        reasoning_config = kwargs.pop('reasoning', {})
+        reasoning_effort = reasoning_config.get('effort', 'low')
+        
+        if reasoning_effort in ['high', 'medium']:
+            effort_to_budget = {'high': 16_000, 'medium': 8_000}
+            kwargs['thinking'] = {
+                "type": "enabled",
+                "budget_tokens": effort_to_budget[reasoning_effort]
+            }
+    
+    def _configure_model_specific_settings(self, model: str, kwargs: Dict[str, Any]) -> None:
+        """Configure model-specific settings."""
+        if model == 'claude-3-7-sonnet-20250219':
+            kwargs['betas'] = ["output-128k-2025-02-19"]
+    
+    def _request_without_functions(
+        self, 
+        model: str, 
+        the_conversation: Conversation, 
+        temperature: int,
+        additional_parameters: Dict[str, Any],
+        **kwargs
+    ) -> ClaudeStreamProcessor:
+        """Handle requests without function calling."""
+        history = self.convert_conversation_history_to_adapter_format(
+            the_conversation, additional_parameters
+        )
+        
+        # Adjust max_tokens if necessary
+        if 'max_tokens' in kwargs:
+            kwargs['max_tokens'] = self.correct_max_tokens(model, history, kwargs['max_tokens'])
+        
+        # Configure tools for web search if enabled
+        tools = self._get_base_tools(additional_parameters)
+        
+        # Create streaming request
+        stream = self.client.beta.messages.create(
+            model=model,
+            system=the_conversation.system_prompt,
+            messages=history,
+            temperature=temperature,
+            stream=True,
+            tools=tools,
+            **kwargs,
+        )
+        
+        # Process the stream
+        processor = ClaudeStreamProcessor()
+        for event in stream:
+            processor.process_event(event)
+            
+        return processor
+    
+    def _get_base_tools(self, additional_parameters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Get base tools like web search if enabled."""
+        tools = []
+        if additional_parameters.get("grounding", False):
+            tools.append({
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 10,
+            })
+        return tools
+
+
+    def count_tokens(
+        self, 
+        model: str, 
+        messages: List[Dict[str, Any]], 
+        tools: Optional[List[Dict[str, Any]]] = None
+    ) -> int:
+        """Count tokens for a given message list.
+        
+        Args:
+            model: The model name
+            messages: List of messages
+            tools: Optional list of tools
+            
+        Returns:
+            Number of input tokens
+        """
+        count_params = {"model": model, "messages": messages}
+        if tools:
+            count_params["tools"] = tools
+            
+        result = self.client.messages.count_tokens(**count_params)
+        return result.input_tokens
+    
+    def correct_max_tokens(
+        self, 
+        model: str, 
+        messages: List[Dict[str, Any]], 
+        max_tokens: int, 
+        tools: Optional[List[Dict[str, Any]]] = None
+    ) -> int:
+        """Check and correct max_tokens if it exceeds context window.
+        
+        Args:
+            model: The model name
+            messages: List of messages
+            max_tokens: Requested max tokens
+            tools: Optional list of tools
+            
+        Returns:
+            Corrected max_tokens value
+        """
+        request_tokens = self.count_tokens(model, messages, tools=tools)
+        context_window_size = self.model_config[model].context_window
+        
+        if request_tokens + max_tokens >= context_window_size:
+            # Reserve 1000 tokens for safety margin
+            updated_max_tokens = context_window_size - request_tokens - 1000
+            logging.warning(
+                f"Request tokens ({request_tokens}) + Max tokens ({max_tokens}) "
+                f"exceeds context window ({context_window_size}). "
+                f"Correcting max tokens to {updated_max_tokens}."
+            )
+            return updated_max_tokens
+        
+        return max_tokens
+
+    def voice_to_text(self, audio_file: Any) -> None:
+        """Voice to text is not supported by Anthropic."""
+        raise NotImplementedError("Anthropic does not support voice to text")
+
+    def generate_image(self, prompt: str, size: str, quality: str, n: int = 1) -> None:
+        """Image generation is not supported by Anthropic."""
+        raise NotImplementedError("Anthropic does not support image generation")
+
+    def _convert_func_to_tool(self, func: Callable) -> Dict[str, Any]:
+        """Convert a callable function to Anthropic tool format.
+        
+        Args:
+            func: The function to convert
+            
+        Returns:
+            Tool dictionary in Anthropic format
+        """
+        sig = inspect.signature(func)
+        parameters = {}
+        required_params = []
+
+        # Map Python types to JSON schema types
+        type_mapping = {
+            str: 'string',
+            int: 'integer', 
+            float: 'number',
+            bool: 'boolean',
+            list: 'array',
+            dict: 'object'
+        }
+
+        for param_name, param in sig.parameters.items():
+            # Determine parameter type
+            param_type = 'string'  # default
+            if param.annotation != inspect.Parameter.empty:
+                param_type = type_mapping.get(param.annotation, 'string')
+            
+            parameters[param_name] = {'type': param_type}
+            
+            # Check if parameter is required (no default value)
+            if param.default == inspect.Parameter.empty:
+                required_params.append(param_name)
+
+        return {
+            'name': func.__name__,
+            'description': func.__doc__ or '',
+            'input_schema': {
+                'type': 'object',
+                'properties': parameters,
+                'required': required_params,
+            },
+        }
+
+    def _convert_function_to_tool(self, func: Union[BaseTool, Callable]) -> Dict[str, Any]:
+        """Convert a function or BaseTool to Anthropic tool format.
+        
+        Args:
+            func: Either a BaseTool instance or a callable function
+            
+        Returns:
+            Tool dictionary in Anthropic format
+            
+        Raises:
+            TypeError: If func is neither a BaseTool nor callable
+        """
+        if isinstance(func, BaseTool):
+            return func.to_params(provider='anthropic')
+        elif callable(func):
+            return self._convert_func_to_tool(func)
+        else:
+            raise TypeError("func must be either a BaseTool or a callable function")
+    
+
+    def request_llm_with_functions(
+        self, 
+        model: str, 
+        the_conversation: Conversation, 
+        functions: List[BaseTool], 
+        temperature: int = 0,  
+        tool_output_callback: Optional[Callable] = None,
+        additional_parameters: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> ClaudeStreamProcessor:
+        """Request LLM with function calling capabilities.
+        
+        Args:
+            model: The model to use
+            the_conversation: The conversation context
+            functions: List of functions/tools to make available
+            temperature: Sampling temperature
+            tool_output_callback: Optional callback for tool outputs
+            additional_parameters: Additional parameters
+            **kwargs: Additional model parameters
+            
+        Returns:
+            The stream processor with the response
+        """
+        if additional_parameters is None:
+            additional_parameters = {}
+        
+        tools = [self._convert_function_to_tool(each_function) for each_function in functions]
+        messages = self.convert_conversation_history_to_adapter_format(the_conversation)
+
+        # Add web search if grounding is enabled
+        if additional_parameters.get("grounding", False):
+            tools.append({
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 10,
+            })
+
+        stream = self.client.beta.messages.create(
+            messages=messages,
+            model=model,
+            system=the_conversation.system_prompt,
+            temperature=temperature,
+            tools=tools,
+            stream=True,
+            **kwargs,
+        )
+        
+        processor = ClaudeStreamProcessor()
+        for event in stream:
+            processor.process_event(event)
+
+        # If there are no tool calls, we can return the response
+        if processor.stop_reason != "tool_use":
+            return processor
+        
+        function_call_records = []
+        function_response_records = []
+
+        # Process tool use requests
+        for tool_use in processor.tool_uses:
+            try:
+                # Find the requested function
+                function_index = next(
+                    (i for i, tool in enumerate(tools) if tool['name'] == tool_use["name"]), 
+                    -1
+                )
+                if function_index == -1:
+                    raise ValueError(f"Function {tool_use['name']} not found in tools")
+                
+                function = functions[function_index]
+
+                # Extract function parameters
+                function_parameters = []
+                tool_schema = tools[function_index].get('input_schema', {}).get('properties', {})
+                for key in tool_schema.keys():
+                    function_parameters.append(tool_use["parameters"].get(key, ""))
+
+                # Call the function
+                function_response = function(*function_parameters)
+
+                # Record function call and response
+                function_call_record = FunctionCall(
+                    id=tool_use['id'],
+                    name=tool_use['name'],
+                    arguments=tool_use['parameters']
+                )
+                function_call_records.append(function_call_record)
+
+                function_response_record = FunctionResponse(
+                    name=tool_use['name'],
+                    id=tool_use['id'],
+                    response=function_response
+                )
+                function_response_records.append(function_response_record)
+
+                # Call the output callback if provided
+                if tool_output_callback:
+                    tool_output_callback(
+                        tool_use['name'],
+                        function_parameters,
+                        function_response
+                    )
+                    
+            except Exception as e:
+                logging.error(f"Error processing tool use {tool_use.get('name', 'unknown')}: {e}")
+                # Continue processing other tools rather than failing completely
+                continue
+
+        # Create message with function calls and responses
+        message = Message(
+            role="assistant", 
+            content=processor.response_text,
+            thinking_responses=processor.thinking_responses,
+            function_calls=function_call_records,
+            function_responses=function_response_records,
+            usage=processor.usage
+        )
+        the_conversation.messages.append(message)
+
+        # Make recursive call to get final response
+        return self.request_llm_with_functions(
+            model=model,
+            the_conversation=the_conversation,
+            functions=functions,
+            temperature=temperature,
+            tool_output_callback=tool_output_callback,
+            additional_parameters=additional_parameters,
+            **kwargs
+        )
+
+
+    def request_llm_computer_use(self, model: str, 
+                                 the_conversation: Conversation, 
+                                 functions: List[Callable], 
+                                 temperature: int=0,  
+                                 **kwargs):
+        
+        if not functions is None:
+            tools = [self._convert_function_to_tool(each_function) for each_function in functions]
+        
+        tools += [
+            #{
+            #    "type": "computer_20241022",
+            #    "name": "computer",
+            #    "display_width_px": 3840,
+            #    "display_height_px": 2160,
+            #    "display_number": 1,
+            #},
+            {
+                "type": "text_editor_20241022",
+                "name": "str_replace_editor"
+            },
+            {
+                "type": "bash_20241022",
+                "name": "bash"
+            },
+        ]
+        
+        
+        
+        messages = self.convert_conversation_history_to_adapter_format(the_conversation)
+        system_prompt = the_conversation.system_prompt
+
+        chat_response = self.client.beta.messages.create(
+                        model=model,
+                        messages=messages,
+                        #system=system_prompt,
+                        tools=tools,
+                        #temperature=temperature,
+                        betas=["computer-use-2024-10-22"],
+                        **kwargs,
+                    )
+        
+        usage = {"model": model,
+                "completion_tokens": chat_response.usage.output_tokens,
+                "prompt_tokens": chat_response.usage.input_tokens}
+        
+        # If there are no tool calls, we can return the response
+        if chat_response.stop_reason != "tool_use":
+            return chat_response
+        
+        # Extract all requests to use the tools from the response
+        tool_use_requests = [each for each in chat_response.content if getattr(each, 'type', '') == 'tool_use']
+        
+        #Save request to use tool by assistant to the history of messages
+        message = Message(role="assistant", 
+                            content=chat_response.content, 
+                            usage=usage)
+        the_conversation.messages.append(message)
+        
+        for each_tool in tool_use_requests:
+            # Find the requested function
+            function_index = next((i for i, tool in enumerate(tools) if tool['name'] == each_tool.name), -1)
+            if function_index == -1:
+                raise ValueError(f"Function {each_tool.name} not found in tools")
+            function = functions[function_index]
+
+            # Get all function parameters
+            """
+            BetaToolUseBlock(
+                id="toolu_01MeD8RaAVZ4E1Qhq5YvgQkA",
+                input={"action": "mouse_move", "coordinate": [400, 386]},
+                name="computer",
+                type="tool_use",
+            ),
+            """
+            function_parameters = []
+            if each_tool.name == "computer":
+                for key, value in each_tool.input.items():
+                    function_parameters.append(value)
+            else:
+                for key, value in tools[function_index].get('input_schema', {}).get('properties', {}).items():
+                    function_parameters.append(getattr(each_tool, "input", {}).get(key, ""))
+
+            # Call the function
+            function_response = function(*function_parameters)
+
+            message = Message(role="user", 
+                                content=[{
+                                            "type": "tool_result",
+                                            "tool_use_id": getattr(each_tool, "id", ""),
+                                            "content": str(function_response)
+                                        }],
+                                usage=usage)
+            the_conversation.messages.append(message)
+
+        final_response = self.request_llm_with_functions(model, the_conversation, functions, temperature, **kwargs)
+        return final_response
+
+
+    def get_models(self) -> List[str]:
+        """Retrieve the list of available models.
+        
+        Returns:
+            List of model IDs
+        """
+        response = self.client.models.list_models()
+        return [model['id'] for model in response['data']]
