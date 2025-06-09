@@ -1,7 +1,7 @@
 anthropic
 elevenlabs
 protobuf
-google-genai
+google-genai # 	New library (Recommended). Old library was ´google-generativeai´
 mistralai
 lxml
 openai

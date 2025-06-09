@@ -575,20 +575,29 @@ class OpenAIAdapter(AdapterBase):
         Args:
             prompt: The text description of the desired image(s).
             n: The number of images to generate.
-            **kwargs: Additional parameters like 'size', 'quality', etc.
+            **kwargs: Additional parameters for the OpenAI API like 'size', 'quality', etc.
 
         Returns:
             A list of ImageFile objects.
         """
+        # Start with default parameters
+        params = {
+            "size": "1024x1536",
+            "quality": "high",
+            "output_format": "png",
+        }
+
+        # Update the defaults with any user-provided kwargs
+        # This allows users to override 'size', 'quality', etc.
+        params.update(kwargs)
+
         response = self.client.images.generate(
             model=IMAGE_MODEL,
             prompt=prompt,
             n=n,
-            size=kwargs.get("size", "1024x1536"),
-            quality=kwargs.get("quality", "high"),
-            output_format=kwargs.get("output_format", "png"),
-            **kwargs,
+            **params,  # Unpack the combined parameters
         )
+
         return [
             ImageFile.from_base64(base64_str=img.b64_json, file_name=f"generated_image_{i}.png")
             for i, img in enumerate(response.data)
