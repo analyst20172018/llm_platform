@@ -30,7 +30,7 @@ from .adapter_base import AdapterBase
 
 # Model-specific beta flags for experimental features
 BETA_FLAGS = {
-    "claude-3-7-sonnet-20250219": ["out put-128k-2025-02-19"],
+    "claude-3-7-sonnet-20250219": ["output-128k-2025-02-19"],
 }
 
 # Reasoning effort to 'thinking' token budget mapping
@@ -474,7 +474,7 @@ class AnthropicAdapter(AdapterBase):
 
     # --- Token Counting ---
 
-    def count_tokens(self, model: str, messages: List[Dict], tools: List[Dict] = None) -> int:
+    def count_tokens(self, model: str, messages: List[Dict], tools: List[Dict] = []) -> int:
         """Counts the number of input tokens for a given model, message list, and tools."""
         try:
             response = self.client.messages.count_tokens(model=model, messages=messages, tools=tools)
@@ -483,7 +483,7 @@ class AnthropicAdapter(AdapterBase):
             logging.warning(f"Could not count tokens for model {model}: {e}")
             return 0
 
-    def correct_max_tokens(self, model: str, messages: List[Dict], max_tokens: int, tools: List[Dict] = None) -> int:
+    def correct_max_tokens(self, model: str, messages: List[Dict], max_tokens: int, tools: List[Dict] = []) -> int:
         """Adjusts max_tokens to prevent exceeding the model's context window."""
         request_tokens = self.count_tokens(model, messages, tools)
         specific_model_object = self.model_config[model]
