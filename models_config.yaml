@@ -87,36 +87,43 @@ models:
     grounding: 1
     image_generation: true
 
-  - name: gpt-4.5-preview
-    display_name: GPT-4.5 💰
-    adapter: OpenAIAdapter
-    pricing:
-      input: 75 # USD/1M tokens
-      output: 150 # USD/1M tokens
-    max_tokens: 16_384
-    context_window: 128_000
-    inputs:
-      - image
-      - text
-    function_calling: 1
-    grounding: 1
-    image_generation: true
-
   - name: o3
-    display_name: o3 💰
+    display_name: o3 👍
     adapter: OpenAIAdapter
     pricing:
-      input: 10 # USD/1M tokens
-      output: 40 # USD/1M tokens
+      input: 2 # USD/1M tokens
+      output: 8 # USD/1M tokens
     max_tokens: 100_000
     context_window: 200_000
     inputs:
       - image
       - text
+    outputs:
+      - text
+      - image
     reasoning_effort: 1
     function_calling: 1
     image_generation: true
       
+  - name: o3-pro
+    display_name: o3-pro 💰
+    adapter: OpenAIAdapter
+    pricing:
+      input: 20 # USD/1M tokens
+      output: 80 # USD/1M tokens
+    max_tokens: 100_000
+    context_window: 200_000
+    reasoning_effort: 1
+    function_calling: 1
+    inputs:
+      - image
+      - text
+    outputs:
+      - text
+      - image
+    visible: true
+    image_generation: true
+
   - name: o4-mini
     display_name: o4-mini
     adapter: OpenAIAdapter
@@ -131,23 +138,20 @@ models:
     reasoning_effort: 1
     function_calling: 1
     image_generation: true
-      
-  - name: o1-pro
-    display_name: o1-pro 💰
+  
+  - name: gpt-4.5-preview
+    display_name: GPT-4.5 💰
     adapter: OpenAIAdapter
     pricing:
-      input: 150 # USD/1M tokens
-      output: 600 # USD/1M tokens
-    max_tokens: 100_000
-    context_window: 200_000
-    reasoning_effort: 1
-    function_calling: 1
+      input: 75 # USD/1M tokens
+      output: 150 # USD/1M tokens
+    max_tokens: 16_384
+    context_window: 128_000
     inputs:
       - image
       - text
-    outputs:
-      - text
-    visible: false
+    function_calling: 1
+    grounding: 1
     image_generation: true
 
   - name: gpt-4.1-mini
@@ -165,8 +169,8 @@ models:
       - text
     function_calling: 1
     grounding: 1
+    visible: false
     image_generation: true
-
 
   - name: gpt-4o-audio-preview-2025-06-03
     display_name: GPT-4o Audio
