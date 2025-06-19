@@ -189,7 +189,7 @@ models:
     visible: false
 
 
-  - name: gemini-2.5-pro-preview-06-05
+  - name: gemini-2.5-pro
     display_name: Gemini 2.5 Pro 👍
     adapter: GoogleAdapter
     pricing:
@@ -208,32 +208,36 @@ models:
     code_execution: 1
     reasoning_effort: 1
     url_context: 1
+    visible: true
 
-  - name: gemini-2.5-pro-exp-03-25
-    display_name: Gemini 2.5 Pro (free)
+  - name: gemini-2.5-flash
+    display_name: Gemini 2.5 Flash
     adapter: GoogleAdapter
     pricing:
-      input: 2.5 # USD/1M tokens
-      output: 15 # USD/1M tokens
+      input: 0.3 # USD/1M tokens
+      output: 2.50 # USD/1M tokens
     max_tokens: 64_000
     context_window: 1_000_000
     inputs:
       - text
       - image
       - audio
+      - video
     outputs:
       - text
     function_calling: 1
     grounding: 1
     code_execution: 1
-    visible: false
+    reasoning_effort: 1
+    url_context: 1
+    visible: true
 
-  - name: gemini-2.5-flash-preview-05-20
-    display_name: Gemini 2.5 Flash
+  - name: gemini-2.5-flash-lite-preview-06-17
+    display_name: Gemini 2.5 Flash Lite
     adapter: GoogleAdapter
     pricing:
-      input: 0.15 # USD/1M tokens
-      output: 3.50 # USD/1M tokens
+      input: 0.1 # USD/1M tokens
+      output: 0.4 # USD/1M tokens
     max_tokens: 65_536
     context_window: 1_048_576
     inputs:
@@ -248,6 +252,7 @@ models:
     code_execution: 1
     reasoning_effort: 1
     url_context: 1
+    visible: false
 
 
   - name: deepseek-chat

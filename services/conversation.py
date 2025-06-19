@@ -196,7 +196,7 @@ class ThinkingResponse:
         return {
                 "type": "thinking",
                 "thinking": self.content,
-                "signature": self.id 
+                "signature": self.id if self.id else "0", 
             }
 
     def __str__(self):
