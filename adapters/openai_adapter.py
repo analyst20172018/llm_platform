@@ -174,7 +174,7 @@ class OpenAIAdapter(AdapterBase):
         Args:
             model: The model identifier.
             the_conversation: The current conversation state.
-            additional_parameters: A dictionary of extra parameters like 'grounding'.
+            additional_parameters: A dictionary of extra parameters like 'web_search'.
             use_previous_response_id: Flag to enable delta-based conversation updates.
             **kwargs: Additional keyword arguments to pass to the API.
 
@@ -195,7 +195,7 @@ class OpenAIAdapter(AdapterBase):
             kwargs["max_output_tokens"] = kwargs.pop("max_tokens")
 
         tools = []
-        if additional_parameters.get("grounding"):
+        if additional_parameters.get("web_search"):
             tools.append({"type": "web_search_preview"})
         if "image" in additional_parameters.get("response_modalities", []):
             tools.append({"type": "image_generation", "quality": "high", "size": "1536x1024"})

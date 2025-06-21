@@ -128,7 +128,7 @@ class GoogleAdapter(AdapterBase):
         if "response_modalities" in additional_parameters:
             config_params["response_modalities"] = additional_parameters["response_modalities"]
 
-        if additional_parameters.get("grounding"):
+        if additional_parameters.get("web_search"):
             config_params["tools"].append(types.Tool(google_search=types.GoogleSearchRetrieval()))
         if additional_parameters.get("url_context"):
             config_params["tools"].append(types.Tool(url_context=types.UrlContext()))

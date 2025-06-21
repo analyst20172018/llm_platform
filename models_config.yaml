@@ -14,7 +14,7 @@ models:
       - text
     citations_enabled: 1
     function_calling: 1
-    grounding: 1
+    web_search: 1
     reasoning_effort: 1
   
   - name: claude-opus-4-20250514
@@ -34,7 +34,7 @@ models:
     citations_enabled: 1
     function_calling: 1
     reasoning_effort: 1
-    grounding: 1
+    web_search: 1
 
   - name: claude-3-7-sonnet-20250219
     display_name: Claude 3.7 Sonnet
@@ -52,7 +52,7 @@ models:
     citations_enabled: 1
     function_calling: 1
     reasoning_effort: 1
-    grounding: 1
+    web_search: 1
     visible: false
       
   - name: claude-3-5-haiku-latest
@@ -67,7 +67,7 @@ models:
       - text
     citations_enabled: 1
     function_calling: 1
-    grounding: 1
+    web_search: 1
 
 
   - name: gpt-4.1
@@ -85,7 +85,7 @@ models:
       - text
       - image
     function_calling: 1
-    grounding: 1
+    web_search: 1
 
   - name: o3
     display_name: o3 👍
@@ -151,7 +151,7 @@ models:
       - text
       - image
     function_calling: 1
-    grounding: 1
+    web_search: 1
 
   - name: gpt-4.1-mini
     display_name: GPT-4.1 mini
@@ -168,7 +168,7 @@ models:
       - text
       - image
     function_calling: 1
-    grounding: 1
+    web_search: 1
     visible: false
 
   - name: gpt-4o-audio-preview-2025-06-03
@@ -204,7 +204,7 @@ models:
     outputs:
       - text
     function_calling: 1
-    grounding: 1
+    web_search: 1
     code_execution: 1
     reasoning_effort: 1
     url_context: 1
@@ -226,7 +226,7 @@ models:
     outputs:
       - text
     function_calling: 1
-    grounding: 1
+    web_search: 1
     code_execution: 1
     reasoning_effort: 1
     url_context: 1
@@ -248,7 +248,7 @@ models:
     outputs:
       - text
     function_calling: 1
-    grounding: 1
+    web_search: 1
     code_execution: 1
     reasoning_effort: 1
     url_context: 1
@@ -319,7 +319,7 @@ models:
     outputs:
       - text
     function_calling: 1
-    grounding: 1
+    web_search: 1
 
 
   - name: mistral-large-latest

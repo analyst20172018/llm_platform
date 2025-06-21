@@ -125,7 +125,7 @@ class GrokAdapter(AdapterBase):
             parameters['reasoning_effort'] = kwargs.pop('reasoning', {}).get('effort', 'low')
 
         # Add web search parameter if exists
-        if additional_parameters.get("grounding", False):
+        if additional_parameters.get("web_search", False):
             parameters['search_parameters'] = {"mode": "auto"}
 
         return parameters

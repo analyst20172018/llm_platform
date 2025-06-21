@@ -175,7 +175,7 @@ class APIHandler:
                 * ``response_modalities`` : list[str]  
                 e.g. ``["text", "image", "audio"]`` – request multimodal output
                 from OpenAI or Gemini.
-                * ``grounding`` : bool  
+                * ``web_search`` : bool  
                 When *True* the model may call an integrated web‑search /
                 retrieval tool (OpenAI, Gemini).
                 * ``citations`` : bool  
@@ -211,7 +211,7 @@ class APIHandler:
             ...     model="gpt-4o",
             ...     prompt="Summarise the attached PDF in bullet points.",
             ...     files=[PDFDocumentFile.from_bytes(pdf_bytes, "report.pdf")],
-            ...     additional_parameters={"grounding": True},
+            ...     additional_parameters={"web_search": True},
             ... )
             >>> print(reply.content)
             • …
@@ -322,7 +322,7 @@ class APIHandler:
                 High‑level, provider‑agnostic feature switches.  Recognised keys:
 
                 * ``response_modalities`` : list[str] – e.g. ``["text", "image"]``  
-                * ``grounding``           : bool  
+                * ``web_search``           : bool  
                 * ``citations``           : bool  
 
                 Adapters that do not support a key ignore it silently.

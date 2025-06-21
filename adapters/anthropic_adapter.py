@@ -242,7 +242,7 @@ class AnthropicAdapter(AdapterBase):
             request_kwargs['max_tokens'] = self.correct_max_tokens(model, history, request_kwargs['max_tokens'])
 
         tools = []
-        if additional_parameters.get("grounding", False):
+        if additional_parameters.get("web_search", False):
             tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
 
         stream = self.client.beta.messages.create(
@@ -273,7 +273,7 @@ class AnthropicAdapter(AdapterBase):
         """Handles the recursive, streaming tool-use loop."""
         history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
         tools = [self._convert_function_to_tool(func) for func in functions]
-        if additional_parameters.get("grounding", False):
+        if additional_parameters.get("web_search", False):
             tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
 
         request_kwargs, temp = self._prepare_request_kwargs(model, temperature, **kwargs)
