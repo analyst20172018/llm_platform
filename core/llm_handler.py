@@ -492,7 +492,7 @@ class APIHandler:
             adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
             image_url = adapter.generate_image(prompt, n, **kwargs)
             return image_url
-        elif provider.lower() == 'google':
+        elif provider.lower() in ['google_standard', 'google_ultra']:
             adapter = self._lazy_initialization_of_adapter("GoogleAdapter")
             images = adapter.generate_image(prompt, n, **kwargs)
             return images

@@ -27,7 +27,7 @@ class GoogleAdapter(AdapterBase):
     # Class-level constants for configuration and mapping
     GEMINI_ROLE_MAPPING = {'user': 'user', 'assistant': 'model'}
     REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000}
-    IMAGEN_MODEL = 'imagen-3.0-generate-002'
+    IMAGEN_DEFAULT_MODEL = 'imagen-4.0-generate-preview-06-06'
     VEO_MODEL = 'veo-2.0-generate-001'
 
     def __init__(self, logging_level=logging.INFO):
@@ -247,8 +247,9 @@ class GoogleAdapter(AdapterBase):
 
     def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
         """Generates images using the Imagen model."""
+        model_name = kwargs.pop('model', self.IMAGEN_DEFAULT_MODEL)
         response = self.client.models.generate_images(
-            model=self.IMAGEN_MODEL,
+            model=model_name,
             prompt=prompt,
             config=types.GenerateImagesConfig(number_of_images=n, **kwargs),
         )
