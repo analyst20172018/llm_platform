@@ -307,13 +307,14 @@ models:
     inputs:
       - text
   
-  - name: grok-3
-    display_name: Grok 3
+  - name: grok-4
+    display_name: Grok 4
     adapter: GrokAdapter
     pricing:
       input: 3 # USD/1M tokens
       output: 15 # USD/1M tokens
-    max_tokens: 131_072
+    max_tokens: 64_000
+    context_window: 256_000
     inputs:
       - text
     outputs:
