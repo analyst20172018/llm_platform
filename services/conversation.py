@@ -32,10 +32,10 @@ class FunctionCall:
     
     @classmethod
     def from_grok(cls, tool_call):
-        return cls(id = tool_call['id'], 
-                   name = tool_call['function']['name'], 
-                   arguments = str(tool_call['function']['arguments']),
-                   call_id = tool_call['id']
+        return cls(id = tool_call.id, 
+                   name = tool_call.function.name, 
+                   arguments = str(tool_call.function.arguments),
+                   call_id = tool_call.id
                    )
     
     @classmethod
@@ -140,16 +140,6 @@ class FunctionResponse:
                 "call_id": self.call_id, 
                 #"name": self.name, 
                 "output": json.dumps(self.response)
-        }
-    
-    def to_grok(self) -> Dict:
-        if self.files:
-            print("WARNING: Files are not supported in function responses for OpenAI")
-        return {
-                "role":"tool", 
-                "tool_call_id": self.call_id, 
-                "name": self.name, 
-                "content": json.dumps(self.response)
         }
     
     def to_openai_old(self) -> Dict:

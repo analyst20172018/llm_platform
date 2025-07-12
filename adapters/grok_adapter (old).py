@@ -1,8 +1,6 @@
 from .adapter_base import AdapterBase
-from xai_sdk import Client
-from xai_sdk.chat import user, system, image, assistant, tool, tool_result
-from xai_sdk.proto import chat_pb2
-from xai_sdk.search import SearchParameters
+from openai import OpenAI
+import requests
 import os
 from typing import List, Tuple, Callable, Dict
 import logging
@@ -14,84 +12,123 @@ import inspect
 
 class GrokAdapter(AdapterBase):
     
-    ROLE_MAPPLING = {
-        "user": chat_pb2.MessageRole.ROLE_USER,
-        "assistant": chat_pb2.MessageRole.ROLE_ASSISTANT,
-    }
-
     def __init__(self, logging_level=logging.INFO):
         super().__init__(logging_level)   
-        self.client = Client(api_key = os.getenv("XAI_API_KEY"))
+        self.client = OpenAI(
+            api_key = os.getenv("XAI_API_KEY"),
+            base_url = "https://api.x.ai/v1",
+        )
 
-    def convert_conversation_history_to_adapter_format(self,
-                        chat,
+        self.completions_url = "https://api.x.ai/v1/chat/completions"
+        self.headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.getenv('XAI_API_KEY')}"
+        }
+        
+    def convert_conversation_history_to_adapter_format(self, 
                         the_conversation: Conversation, 
                         model: str, 
                         **kwargs):
         
         # Add system prompt as the message from the user "system"
-        chat.append(system(the_conversation.system_prompt))
+        history = [{"role": "system", "content": the_conversation.system_prompt}]
 
         # Add history of messages
         for message in the_conversation.messages:
 
-            text_content = chat_pb2.Content(text=message.content)
-            message_parameters = {
-                "role": self.ROLE_MAPPLING.get(message.role),
-                "content": [text_content],
+            history_message = {
+                "role": message.role, 
+                "content": [{
+                        "type": "text",
+                        "text": message.content
+                }]
             }
 
             # If there is an attribute tool_calls in message, then add it to history. 
             if message.function_calls:
-                tool_calls = []
-                for each_function_call in message.function_calls:
-                    tool_call = chat_pb2.ToolCall(
-                        id=each_function_call.id,
-                        function=chat_pb2.FunctionCall(
-                            name=each_function_call.name,
-                            arguments=each_function_call.arguments
-                        ),
-                    )
-                    tool_calls.append(tool_call)
-
-                message_parameters["tool_calls"] = tool_calls
+                function_calls_message = {
+                    'content': '',
+                    'refusal': None,
+                    'role': 'assistant',
+                    'tool_calls': [],
+                }
                 
+                for each_function_call in message.function_calls:
+                    function_calls_message["tool_calls"].append(each_function_call.to_grok())
+                
+                history.append(function_calls_message)
+
             if not message.files is None:
                 for each_file in message.files:
                     
                     # Images
                     if isinstance(each_file, ImageFile):
 
-                        image_parameter = image(image_url=f"data:image/{each_file.extension};base64,{each_file.base64}", detail="high")
-                        message_parameters["content"].append(image_parameter)
+                        # Add the image to the content list
+                        image_content = {"type": "image_url", 
+                                         "image_url": {"url": f"data:image/{each_file.extension};base64,{each_file.base64}"}
+                                         }
+                        history_message["content"].append(image_content)
                     
                     # Audio
                     elif isinstance(each_file, AudioFile):
                         raise NotImplementedError("Grok does not support audio files")
 
+                        # Add audio to history
+                        audio_content = {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": each_file.base64,
+                                "format": "mp3"
+                            }
+                        }
+                        history_message["content"].append(audio_content)
+                    
                     # Text documents
                     elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile)):
                         
                         # Add the text document to the history as a text in XML tags
-                        document_content_as_text = f"""<document name="{each_file.name}">{each_file.text}</document>"""
-                        document_content = chat_pb2.Content(text=document_content_as_text)
-
-                        # Add document content to the arguments into message content
-                        message_parameters["content"].append(document_content)
+                        new_text_content = {
+                            "type": "text",
+                            "text": f"""<document name="{each_file.name}">{each_file.text}</document>"""
+                        }
+                        history_message["content"].insert(0, new_text_content)
 
                     else:
                         raise ValueError(f"Unsupported file type: {message.file.get_type()}")
 
-            chat.append(
-                chat_pb2.Message(**message_parameters)
-            )
+            history.append(history_message)
 
-            # Add all function responses to the chat
+            # Add all function responses to the history
             if message.function_responses:
                 for each_response in message.function_responses:
-                    chat.append(tool_result(result = str(each_response.response)))
+                    history.append(each_response.to_grok())
 
-        return chat, kwargs
+        return history, kwargs
+
+    def _create_parameters_for_calling_llm(self, 
+                        model: str,
+                        the_conversation: Conversation,
+                        additional_parameters: Dict={},
+                        **kwargs
+                        ) -> Dict:
+        messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
+
+        parameters = {
+            "model": model,
+            "messages": messages,
+            "tools": [],
+        }
+
+        # Add `reasoning` parameter if exists
+        if 'reasoning' in kwargs:
+            parameters['reasoning_effort'] = kwargs.pop('reasoning', {}).get('effort', 'low')
+
+        # Add web search parameter if exists
+        if additional_parameters.get("web_search", False):
+            parameters['search_parameters'] = {"mode": "auto"}
+
+        return parameters
 
     def request_llm(self, model: str, 
                     the_conversation: Conversation, 
@@ -126,41 +163,35 @@ class GrokAdapter(AdapterBase):
                             `the_conversation.messages`.
         """
         if functions is None:
-            
-            # Create arguments for chat creation
-            chat_arguments = {
-                "model": model,
-            }
-            # Add web search parameter if exists
-            if additional_parameters.get("web_search", False):
-                chat_arguments['search_parameters'] = SearchParameters(mode="auto")
+            parameters = self._create_parameters_for_calling_llm(
+                            model, 
+                            the_conversation, 
+                            additional_parameters,
+                            **kwargs
+                        )
 
-            # Create chat with the arguments
-            chat = self.client.chat.create(**chat_arguments)
-
-            chat, kwargs = self.convert_conversation_history_to_adapter_format(chat, the_conversation, model, **kwargs)
-
-            response = chat.sample()
+            response = requests.post(self.completions_url, headers=self.headers, json=parameters)
+            response = response.json()
         else:
             response = self.request_llm_with_functions(
-                model=model,
-                the_conversation=the_conversation,
-                functions=functions,
-                tool_output_callback=tool_output_callback,
-                **kwargs,
+                            model=model,
+                            the_conversation=the_conversation,
+                            functions=functions,
+                            tool_output_callback=tool_output_callback,
+                            **kwargs,
             )
         
         usage = {"model": model,
-                "completion_tokens": response.usage.completion_tokens,
-                "prompt_tokens": response.usage.prompt_tokens}
+                "completion_tokens": response['usage']['completion_tokens'],
+                "prompt_tokens": response['usage']['total_tokens']}
         
         thinking_responses = []
-        if response.reasoning_content:
-            thinking_responses.append(ThinkingResponse(content=response.reasoning_content, id=response.id))
+        if 'reasoning_content' in response['choices'][0]['message']:
+            thinking_responses.append(ThinkingResponse(content=response['choices'][0]['message']['reasoning_content'], id=response['id']))
         
         message = Message(
             role="assistant", 
-            content=response.content, 
+            content=response['choices'][0]['message']['content'], 
             thinking_responses=thinking_responses,
             usage=usage
         )
@@ -172,14 +203,14 @@ class GrokAdapter(AdapterBase):
         raise NotImplementedError("OpenRoute does not support voice to text")
 
     def generate_image(self, prompt: str, n: int=1, **kwargs) -> List[ImageFile]:
-        response = self.client.image.sample_batch(
+        response = self.client.images.generate(
                 model="grok-2-image",
                 prompt=prompt,
                 n=n,
-                image_format="base64",
+                response_format="b64_json",
             )
 
-        output_images = [ImageFile.from_bytes(file_bytes=image_data.image, file_name="image.png") for image_data in response]
+        output_images = [ImageFile.from_base64(base64_str=image_data.b64_json, file_name="image.png") for image_data in response.data]
 
         return output_images
 
@@ -221,86 +252,87 @@ class GrokAdapter(AdapterBase):
             parameters[param_name] = param_info
 
         # Create the tool dictionary
-        tool_item = tool(
-            name = func.__name__,
-            description = func.__doc__ or '',
-            parameters={
-                "type": "object",
-                "properties": parameters,
-                "required": required_params,
+        tool = {
+            'function': {
+                'name': func.__name__,
+                'description': func.__doc__ or '',
+                'parameters': {
+                    'type': 'object',
+                    'properties': parameters,
+                    'required': required_params,
+                    "additionalProperties": False
+                },
             },
-        )
-
-        return tool_item
+            'type': 'function',
+        }
+        return tool
 
     def _convert_function_to_tool(self, func: BaseTool | Callable) -> Dict:
-        
         # Convert the function to a tool for OpenAI
         if isinstance(func, BaseTool):
             # Handle the case where func is a BaseTool
-            tool = func.to_params(provider='grok')
+            tool = {
+                'function': func.to_params(provider='openai'),
+                'type': 'function',
+            }
         
         elif callable(func):
             tool = self._convert_func_to_tool(func)
-        
         else:
             raise TypeError("func must be either a BaseTool or a function")
-        
         return tool
 
-    def request_llm_with_functions(self, 
-                                    model: str, 
-                                    the_conversation: Conversation, 
-                                    functions: List[BaseTool | Callable], 
-                                    tool_output_callback: Callable=None,
-                                    additional_parameters: Dict={},
-                                    **kwargs):
-        tool_definitions = [self._convert_function_to_tool(each_function) for each_function in functions]
-
-        # Create arguments for chat creation
-        chat_arguments = {
-            "model": model,
-            "tools": tool_definitions,
-            "tool_choice": "auto",
-        }
-        # Add web search parameter if exists
-        if additional_parameters.get("web_search", False):
-            chat_arguments['search_parameters'] = SearchParameters(mode="auto")
-
-        # Create chat with the arguments
-        chat = self.client.chat.create(**chat_arguments)
-
-        chat, kwargs = self.convert_conversation_history_to_adapter_format(chat, the_conversation, model, **kwargs)
+    def request_llm_with_functions(self, model: str, 
+                                   the_conversation: Conversation, 
+                                   functions: List[BaseTool | Callable], 
+                                   tool_output_callback: Callable=None,
+                                   additional_parameters: Dict={},
+                                   **kwargs):
+        tools = [self._convert_function_to_tool(each_function) for each_function in functions]
+        parameters = self._create_parameters_for_calling_llm(
+                            model, 
+                            the_conversation, 
+                            additional_parameters,
+                            **kwargs
+                        )
         
-        response = chat.sample()
+        parameters['tools'] += tools
+        
+        response = requests.post(self.completions_url, headers=self.headers, json=parameters)
+        response = response.json()
 
         usage = {"model": model,
-                "completion_tokens": response.usage.completion_tokens,
-                "prompt_tokens": response.usage.prompt_tokens}
+                "completion_tokens": response['usage']['completion_tokens'],
+                "prompt_tokens": response['usage']['total_tokens']}
         
+        assistant_message = response['choices'][0]['message']
+
         # Save tool_calls parameter from the openai answer for the history
-        if getattr(response, 'tool_calls', None):
-            function_call_records = [FunctionCall.from_grok(each_tool_call) for each_tool_call in response.tool_calls]
+        if assistant_message.get('tool_calls', None) is not None:
+            function_call_records = [FunctionCall.from_grok(each_tool_call) for each_tool_call in assistant_message['tool_calls']]
         else: 
-            return response # If there are no tool calls, return the response directly
+            function_call_records = []
+
+        # If there are no tool calls, we can return the response
+        if assistant_message.get('tool_calls', None) is None:
+            return response
 
         function_response_records = []
-        for each_tools_call in function_call_records:
+        for each_tools_call in assistant_message.get('tool_calls', []):
 
-            tool_call_id = each_tools_call.id
-            tool_function_name = each_tools_call.name
-            tool_arguments = json.loads(each_tools_call.arguments)
+            tool_call_id = each_tools_call['id']
+            tool_function_name = each_tools_call['function']['name']
+            tool_arguments = json.loads(each_tools_call['function']['arguments'])
 
             # Find the requested function
-            function_index = next((i for i, tool in enumerate(tool_definitions) if tool.function.name == tool_function_name), -1)
+            function_index = next((i for i, tool in enumerate(tools) if tool['function']['name'] == tool_function_name), -1)
             if function_index == -1:
-                raise ValueError(f"Function {each_tools_call.name} not found in tools")
+                raise ValueError(f"Function {each_tools_call.function.name} not found in tools")
             function = functions[function_index]
 
             # Get all function parameters
             function_parameters = []
-            parameters_from_tool_definition = json.loads(tool_definitions[function_index].function.parameters)
-            for key, value in parameters_from_tool_definition["properties"].items():
+            for key, value in tools[function_index]['function'].get('parameters', {}).get('properties', {}).items():
                 function_parameters.append(tool_arguments[key])
 
             # Call the function
@@ -318,12 +350,12 @@ class GrokAdapter(AdapterBase):
                                     )
 
         thinking_responses = []
-        if response.reasoning_content:
-            thinking_responses.append(ThinkingResponse(content=response.reasoning_content, id=response.id))
+        if 'reasoning_content' in response['choices'][0]['message']:
+            thinking_responses.append(ThinkingResponse(content=response['choices'][0]['message']['reasoning_content'], id=response['id']))
         
         message = Message(
             role="assistant", 
-            content=response.content,
+            content=response['choices'][0]['message']['content'], 
             thinking_responses=thinking_responses,
             function_calls=function_call_records,
             function_responses=function_response_records,

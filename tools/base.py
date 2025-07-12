@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import ClassVar, Literal, Dict, Any
 from pydantic import BaseModel, Field
 import subprocess
+from xai_sdk.chat import tool
 
 class BaseTool(ABC):
     """Abstract base class for tools."""
@@ -56,7 +57,7 @@ class BaseTool(ABC):
         return data
 
     @classmethod
-    def to_params(cls, provider: Literal["anthropic", "openai", "google"]) -> Dict:
+    def to_params(cls, provider: Literal["anthropic", "openai", "google", "grok"]) -> Dict:
         input_model = cls.InputModel
         if not issubclass(input_model, BaseModel):
             raise ValueError("InputModel must be a Pydantic BaseModel")
@@ -79,6 +80,12 @@ class BaseTool(ABC):
                 'description': cls.__doc__,
                 'input_schema': cls.clean_schema(schema)
             }
+        elif provider == 'grok':
+            return tool(
+                name = cls.__name__,
+                description = cls.__doc__,
+                parameters=cls.clean_schema(schema),
+            )
         else:
             raise NotImplementedError
         
