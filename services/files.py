@@ -220,5 +220,5 @@ class AudioFile(MediaFile):
 
 class VideoFile(MediaFile):
     
-    def __init__(self, name: str=""):
-        super().__init__(name=name)
+    def __init__(self, file_bytes: bytes, name: str):
+        super().__init__(file_bytes, name=name)

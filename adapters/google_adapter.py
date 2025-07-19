@@ -5,6 +5,7 @@ import time
 import uuid
 from io import BytesIO
 from typing import Callable, Dict, List, Tuple
+from xmlrpc import client
 
 from google import genai
 from google.genai import types
@@ -28,7 +29,7 @@ class GoogleAdapter(AdapterBase):
     GEMINI_ROLE_MAPPING = {'user': 'user', 'assistant': 'model'}
     REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000}
     IMAGEN_DEFAULT_MODEL = 'imagen-4.0-generate-preview-06-06'
-    VEO_MODEL = 'veo-2.0-generate-001'
+    VEO_MODEL = 'veo-3.0-generate-preview'
 
     def __init__(self, logging_level=logging.INFO):
         super().__init__(logging_level)
@@ -276,42 +277,56 @@ class GoogleAdapter(AdapterBase):
             for i, img in enumerate(response.generated_images)
         ]
 
-    def generate_video(self, prompt: str, aspect_ratio: str = "16:9", person_generation: str = "ALLOW_ADULT",
-                       image: ImageFile = None, number_of_videos: int = 1, negative_prompt: str = None,
-                       duration_seconds: int = 5) -> List[VideoFile]:
+    def generate_video(self, 
+                       prompt: str, 
+                       #n: int = 1, # Number of videos to generate, for Veo 3 is 1 only
+                       #aspect_ratio: str = "16:9", # for Veo 2 only, for Veo 3 16:9 only
+                       #person_generation: str = "ALLOW_ADULT", # for Veo 2 only, for Veo 3 allow_all only (not configurable)
+                       #image: ImageFile = None, # not available for Veo 3
+                       #number_of_videos: int = 1, 
+                       negative_prompt: str = None,
+                       #duration_seconds: int = 8 # For Veo 3 8 seconds only
+                    ) -> List[VideoFile]:
         """Generates videos using the Veo model."""
-        params = {"model": self.VEO_MODEL, "prompt": prompt}
-        if image:
+        params = {
+            "model": self.VEO_MODEL, 
+            "prompt": prompt
+        }
+        """if image:
             params["image"] = types.Image(image_bytes=image.file_bytes, mime_type=f"image/{image.extension}")
-            person_generation = "DONT_ALLOW"  # Required for image-to-video
+            person_generation = "DONT_ALLOW"  # Required for image-to-video"""
         if negative_prompt:
             params["negative_prompt"] = negative_prompt
 
-        config = types.GenerateVideosConfig(
-            person_generation=person_generation,
-            aspect_ratio=aspect_ratio,
+        """config = types.GenerateVideosConfig(
+            # person_generation=person_generation,
+            # aspect_ratio=aspect_ratio,
             number_of_videos=number_of_videos,
             duration_seconds=duration_seconds
         )
-        params["config"] = config
+        params["config"] = config"""
 
         operation = self.client.models.generate_videos(**params)
-        self.logger.info(f"Polling for video generation operation: {operation.operation.name}")
 
         while not operation.done:
             time.sleep(20)  # Polling interval
             operation = self.client.operations.get(operation)
 
-        self.logger.info("Video generation complete.")
+        #for n, generated_video in enumerate(operation.response.generated_videos):
+        #    self.client.files.download(file=generated_video.video)
+        #    generated_video.video.save(f"video{n}.mp4")
+        
+        #return
+
         video_files = []
         for i, generated_video in enumerate(operation.response.generated_videos):
-            with BytesIO() as buffer:
-                generated_video.video.save(buffer)
-                buffer.seek(0)
-                video_files.append(VideoFile.from_bytes(
-                    file_bytes=buffer.read(),
-                    file_name=f"generated_video_{i}.mp4"
-                ))
+            self.client.files.download(file=generated_video.video)
+            buffer = BytesIO(generated_video.video.video_bytes)
+            buffer.seek(0)
+            video_files.append(VideoFile.from_bytes(
+                file_bytes=buffer.read(),
+                file_name=f"generated_video_{i}.mp4"
+            ))
         return video_files
 
     def get_models(self) -> List[str]:

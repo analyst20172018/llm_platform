@@ -503,6 +503,34 @@ class APIHandler:
         else: 
             raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'google' as providers. ")
         
+    def generate_video(self, prompt: str, provider: str='google', **kwargs):
+        """
+        Generates an video based on the given prompt using the specified provider.
+
+        Args:
+            prompt (str): A textual description of the desired image content.
+            provider (str, optional): The image generation provider to use. 
+                Supported value is 'google'.
+            n (int, optional): The number of videos to generate. Defaults to 1.
+            **kwargs: Additional parameters specific to the chosen provider.
+
+        Keyword Arguments:
+            For the Google adapter:
+                - negative_prompt (str, optional): A description of what to omit in the generated video.
+
+        Returns:
+            list or str: The generated image(s) URL(s) or list of images, depending on the provider.
+
+        Raises:
+            ValueError: If the specified provider is not supported.
+        """
+        if provider.lower() == 'google':
+            adapter = self._lazy_initialization_of_adapter("GoogleAdapter")
+            videos = adapter.generate_video(prompt, **kwargs)
+            return videos
+        else: 
+            raise ValueError(f"Provider {provider} is not supported. I understand only 'google' as provider.")
+        
     def edit_image(self, prompt: str, provider: str='openai', images=List[ImageFile], n=1, **kwargs):
         if provider.lower() == 'openai':
             adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
