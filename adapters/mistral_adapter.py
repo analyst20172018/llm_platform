@@ -26,20 +26,19 @@ class MistralAdapter(AdapterBase):
         # Add history of messages
         for message in the_conversation.messages:
 
-            history_message = {"role": message.role, "content": message.content}
+            history_message = {
+                "role": message.role, 
+                "content": [{
+                        "type": "text",
+                        "text": message.content
+                    }]
+            }
 
             # If there is an attribute tool_calls in message, then add it to history. 
             if message.function_calls:
                 history_message["tool_calls"] = [each_call.to_openai() for each_call in message.function_calls]
 
             if not message.files is None:
-                # Ensure that history_message["content"] is a list, not a string
-                if not isinstance(history_message["content"], list):
-                    history_message["content"] = [{
-                        "type": "text",
-                        "text": history_message["content"]
-                    }]
-
                 for each_file in message.files:
                     
                     # Images
@@ -53,7 +52,10 @@ class MistralAdapter(AdapterBase):
                     
                     # Audio
                     if isinstance(each_file, AudioFile):
-                        logging.warning("Audio files are not supported by Mistral API and it is skipped")
+                        audio_content = {"type": "input_audio", 
+                                         "input_audio": each_file.base64
+                        }
+                        history_message["content"].append(audio_content)
                     
                     # Text documents
                     elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile)):
@@ -322,8 +324,28 @@ class MistralAdapter(AdapterBase):
 
         return final_response
     
-    def voice_to_text(self, audio_file):
-        raise NotImplementedError("Mistral does not support voice to text")
+    def voice_to_text(self, audio_file: AudioFile) -> str:
+
+        chat_response = self.client.chat.complete(
+            model="voxtral-small-latest",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": audio_file.base64,
+                    },
+                    {
+                        "type": "text",
+                        "text": "Transcribe the audio to text."
+                    },
+                ]
+            }],
+        )
+
+        # Print the content of the response
+        print(chat_response.choices[0].message.content)
+        
 
     def generate_image(self, prompt: str, size: str, quality:str, n=1):
         raise NotImplementedError("Not implemented yet")

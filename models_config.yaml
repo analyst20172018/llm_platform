@@ -347,3 +347,18 @@ models:
       - image
       - text
     visible: false
+
+  - name: voxtral-small-latest
+    display_name: Voxtral Small
+    adapter: MistralAdapter
+    pricing:
+      input: 0.1 # USD/1M tokens
+      output: 0.3 # USD/1M tokens
+    max_tokens: 131_000
+    context_window: 131_000
+    inputs:
+      - audio
+      - text
+    outputs:
+      - text
+    visible: false
