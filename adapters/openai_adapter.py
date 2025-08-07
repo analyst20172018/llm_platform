@@ -190,6 +190,9 @@ class OpenAIAdapter(AdapterBase):
             kwargs.pop("max_tokens", None)
             kwargs.pop("temperature", None)
 
+        if 'gpt-5' in model:
+            kwargs.pop("temperature", None)
+
         # Rename 'max_tokens' to OpenAI's expected 'max_output_tokens'
         if "max_tokens" in kwargs:
             kwargs["max_output_tokens"] = kwargs.pop("max_tokens")

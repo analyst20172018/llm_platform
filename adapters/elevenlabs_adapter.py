@@ -52,33 +52,38 @@ class ElenenlabsAdapter:
         return transcription
 
     def voice_to_text(self, audio_file: BinaryIO, language: str="eng", diarized: bool=True):
-        transcription = self._transcribe(
-                audio_file=audio_file,
-                language=language, # Language of the audio file, according to ISO 639. If set to None, the model will detect the language automatically.
-            )
+        try:
+            transcription = self._transcribe(
+                    audio_file=audio_file,
+                    language=language, # Language of the audio file, according to ISO 639. If set to None, the model will detect the language automatically.
+                )
+            
+            if not diarized:
+                return transcription.text
         
-        if not diarized:
-            return transcription.text
-    
-        # Get words and speakers
-        output_text = ""
-        current_speaker = None
-        current_text = ""
-        for word in transcription.words:
-            if current_speaker != word.speaker_id:
-                if current_text != "":
-                    if output_text != "":
-                        output_text += "\n"
-                    output_text += f"{current_speaker}: {current_text}"
-                
-                current_speaker = word.speaker_id
-                current_text = ""
+            # Get words and speakers
+            output_text = ""
+            current_speaker = None
+            current_text = ""
+            for word in transcription.words:
+                if current_speaker != word.speaker_id:
+                    if current_text != "":
+                        if output_text != "":
+                            output_text += "\n"
+                        output_text += f"{current_speaker}: {current_text}"
+                    
+                    current_speaker = word.speaker_id
+                    current_text = ""
 
-            current_text += word.text
+                current_text += word.text
 
-        if current_text != "":
-            if output_text != "":
-                output_text += "\n"
-            output_text += f"{current_speaker}: {current_text}"
-        
-        return output_text
+            if current_text != "":
+                if output_text != "":
+                    output_text += "\n"
+                output_text += f"{current_speaker}: {current_text}"
+            
+            return output_text
+            
+        except Exception as e:
+            print(f"Error in voice_to_text: {str(e)}")
+            return None

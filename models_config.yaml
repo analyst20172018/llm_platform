@@ -1,6 +1,6 @@
 models:
   - name: claude-sonnet-4-20250514
-    display_name: Claude 4 Sonnet 👍
+    display_name: Claude Sonnet 4 👍
     adapter: AnthropicAdapter
     pricing:
       input: 3 # USD/1M tokens
@@ -17,8 +17,8 @@ models:
     web_search: 1
     reasoning_effort: 1
   
-  - name: claude-opus-4-20250514
-    display_name: Claude 4 Opus 💰
+  - name: claude-opus-4-1-20250805
+    display_name: Claude Opus 4.1 💰
     adapter: AnthropicAdapter
     pricing:
       input: 15 # USD/1M tokens
@@ -70,8 +70,25 @@ models:
     web_search: 1
 
 
+  - name: gpt-5
+    display_name: GPT-5 👍
+    adapter: OpenAIAdapter
+    pricing:
+      input: 1.25 # USD/1M tokens
+      output: 10 # USD/1M tokens
+    max_tokens: 128_000
+    context_window: 400_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    reasoning_effort: 1
+    function_calling: 1
+    web_search: 1
+
   - name: gpt-4.1
-    display_name: GPT-4.1 👍
+    display_name: GPT-4.1
     adapter: OpenAIAdapter
     pricing:
       input: 2 # USD/1M tokens
@@ -86,9 +103,10 @@ models:
       - image
     function_calling: 1
     web_search: 1
+    visible: false
 
   - name: o3
-    display_name: o3 👍
+    display_name: o3
     adapter: OpenAIAdapter
     pricing:
       input: 2 # USD/1M tokens
@@ -122,20 +140,56 @@ models:
       - image
     visible: true
 
-  - name: o4-mini
-    display_name: o4-mini
+  - name: gpt-5-chat-latest
+    display_name: GPT-5 Chat
     adapter: OpenAIAdapter
     pricing:
-      input: 1.10 # USD/1M tokens
-      output: 4.40 # USD/1M tokens
-    max_tokens: 100_000
-    context_window: 200_000
+      input: 1.25 # USD/1M tokens
+      output: 10 # USD/1M tokens
+    max_tokens: 128_000
+    context_window: 400_000
     inputs:
       - text
       - image
+    outputs:
+      - text
+    visible: false
+
+  - name: gpt-5-mini
+    display_name: GPT-5 mini
+    adapter: OpenAIAdapter
+    pricing:
+      input: 0.25 # USD/1M tokens
+      output: 2 # USD/1M tokens
+    max_tokens: 128_000
+    context_window: 400_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
     reasoning_effort: 1
     function_calling: 1
-  
+    web_search: 1
+
+  - name: gpt-5-nano
+    display_name: GPT-5 nano
+    adapter: OpenAIAdapter
+    pricing:
+      input: 0.05 # USD/1M tokens
+      output: 0.4 # USD/1M tokens
+    max_tokens: 128_000
+    context_window: 400_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    reasoning_effort: 1
+    function_calling: 1
+    web_search: 1
+    visible: false
+
   - name: gpt-4.5-preview
     display_name: GPT-4.5 💰
     adapter: OpenAIAdapter
@@ -152,24 +206,6 @@ models:
       - image
     function_calling: 1
     web_search: 1
-
-  - name: gpt-4.1-mini
-    display_name: GPT-4.1 mini
-    adapter: OpenAIAdapter
-    pricing:
-      input: 0.4 # USD/1M tokens
-      output: 1.6 # USD/1M tokens
-    max_tokens: 32_768
-    context_window: 1_047_576
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-      - image
-    function_calling: 1
-    web_search: 1
-    visible: false
 
   - name: gpt-4o-audio-preview-2025-06-03
     display_name: GPT-4o Audio
@@ -307,6 +343,7 @@ models:
     inputs:
       - text
   
+
   - name: grok-4
     display_name: Grok 4
     adapter: GrokAdapter
@@ -321,7 +358,6 @@ models:
       - text
     function_calling: 1
     web_search: 1
-
 
   - name: mistral-large-latest
     display_name: Mistral Large
