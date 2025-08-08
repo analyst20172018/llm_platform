@@ -36,7 +36,9 @@ AUDIO_INPUT_TYPE = "input_audio"
 FILE_INPUT_TYPE = "input_file"
 SUMMARY_TEXT_TYPE = "summary_text"
 FUNCTION_CALL_TYPE = "function_call"
+MESSAGE_CALL_TYPE = "message"
 IMAGE_GENERATION_CALL_TYPE = "image_generation_call"
+REASONING_CALL_TYPE = "reasoning"
 
 # Constants for transcription models
 WHISPER_1 = "whisper-1"
@@ -127,10 +129,16 @@ class OpenAIAdapter(AdapterBase):
         """
         history = []
         for message in the_conversation.messages:
-            # Add any function calls that preceded the main content
-            if message.function_calls:
-                history.extend(fc.to_openai() for fc in message.function_calls)
 
+            # Add any reasoning responses
+            if message.thinking_responses:
+                history.extend(tr.to_openai() for tr in message.thinking_responses)
+
+            # Add any function calls
+            if message.function_calls:
+                history.extend(fc.to_openai() for fc in message.function_calls)  
+
+            # Add text content        
             content_items = []
             # Add text content if it exists
             if message.content:
@@ -244,30 +252,40 @@ class OpenAIAdapter(AdapterBase):
 
         outputs = getattr(response, "output", [])
 
-        text_parts = [
-            content.text
-            for output in outputs
-            for content in (getattr(output, "content", []) or [])
-            if getattr(content, "type", "") == TEXT_OUTPUT_TYPE
-        ]
-        answer_text = "\n".join(text_parts)
+        answer_text = ""
+        files_from_response = []
+        thinking_responses = []
 
-        thinking_responses = [
-            ThinkingResponse(content=summary.text, id=response.id)
-            for output in outputs
-            for summary in (getattr(output, "summary", []) or [])
-            if getattr(summary, "type", "") == SUMMARY_TEXT_TYPE
-        ]
+        for output in outputs:
+            output_type = getattr(output, "type", "")
 
-        image_b64_data = [
-            output.result
-            for output in outputs
-            if getattr(output, "type", "") == IMAGE_GENERATION_CALL_TYPE
-        ]
-        files_from_response = [
-            ImageFile.from_base64(base64_str=b64, file_name=f"image_{i}.png")
-            for i, b64 in enumerate(image_b64_data)
-        ]
+            # Extract text from message outputs
+            if output_type == MESSAGE_CALL_TYPE:
+                text_parts = [
+                    content.text
+                    for content in (getattr(output, "content", []) or [])
+                    if getattr(content, "type", "") == TEXT_OUTPUT_TYPE
+                ]
+                answer_text += "\n".join(text_parts)
+
+            # Extract image output from message outputs
+            if output_type == IMAGE_GENERATION_CALL_TYPE:
+                image_b64_data = output.result
+                files_from_response.append(
+                    ImageFile.from_base64(base64_str=b64, file_name=f"image_{i}.png")
+                    for i, b64 in enumerate(image_b64_data)
+                )
+
+            # Extract reasoning output from message outputs
+            if output_type == REASONING_CALL_TYPE:
+                summary_text = ""
+                for summary in (getattr(output, "summary", []) or []):
+                    if getattr(summary, "type", "") == SUMMARY_TEXT_TYPE:
+                        summary_text += "\n" + summary.text
+
+                thinking_responses.append(
+                    ThinkingResponse(content=summary_text, id=output.id)
+                )
 
         return answer_text, thinking_responses, files_from_response, usage
 

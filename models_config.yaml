@@ -105,23 +105,6 @@ models:
     web_search: 1
     visible: false
 
-  - name: o3
-    display_name: o3
-    adapter: OpenAIAdapter
-    pricing:
-      input: 2 # USD/1M tokens
-      output: 8 # USD/1M tokens
-    max_tokens: 100_000
-    context_window: 200_000
-    inputs:
-      - image
-      - text
-    outputs:
-      - text
-      - image
-    reasoning_effort: 1
-    function_calling: 1
-      
   - name: o3-pro
     display_name: o3-pro 💰
     adapter: OpenAIAdapter
@@ -189,23 +172,6 @@ models:
     function_calling: 1
     web_search: 1
     visible: false
-
-  - name: gpt-4.5-preview
-    display_name: GPT-4.5 💰
-    adapter: OpenAIAdapter
-    pricing:
-      input: 75 # USD/1M tokens
-      output: 150 # USD/1M tokens
-    max_tokens: 16_384
-    context_window: 128_000
-    inputs:
-      - image
-      - text
-    outputs:
-      - text
-      - image
-    function_calling: 1
-    web_search: 1
 
   - name: gpt-4o-audio-preview-2025-06-03
     display_name: GPT-4o Audio

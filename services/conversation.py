@@ -182,6 +182,15 @@ class ThinkingResponse:
         self.content = content
         self.id = id
 
+    def to_openai(self) -> Dict:
+        return {"id": self.id, 
+                "summary": [{
+                    "type": "summary_text",
+                    "text": self.content
+                }], 
+                "type": "reasoning",
+            }
+
     def to_anthropic(self) -> Dict:
         return {
                 "type": "thinking",
