@@ -30,7 +30,7 @@ from .adapter_base import AdapterBase
 
 # Model-specific beta flags for experimental features
 BETA_FLAGS = {
-    "claude-3-7-sonnet-20250219": ["output-128k-2025-02-19"],
+    "claude-sonnet-4-20250514": ["context-1m-2025-08-07"],
 }
 
 # Reasoning effort to 'thinking' token budget mapping

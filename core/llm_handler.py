@@ -4,7 +4,7 @@ from llm_platform.adapters.openai_old_adapter import OpenAIOldAdapter
 from llm_platform.adapters.anthropic_adapter import AnthropicAdapter
 from llm_platform.adapters.openrouter_adapter import OpenRouterAdapter
 from llm_platform.adapters.speechmatics_adapter import SpeechmaticsAdapter
-from llm_platform.adapters.google_adapter import GoogleAdapter
+from llm_platform.adapters.google_adapter import GoogleAdapter, ImagenModel
 from llm_platform.adapters.grok_adapter import GrokAdapter
 from llm_platform.adapters.deepseek_adapter import DeepSeekAdapter
 from llm_platform.adapters.elevenlabs_adapter import ElenenlabsAdapter
@@ -329,7 +329,10 @@ class APIHandler:
             **kwargs
                 Low‑level provider specific parameters:
                     max_tokens: int
-                    reasoning: Dict = {"effort": "medium"}, # or "low" or "high"
+                    reasoning: Dict = {"effort": "medium"}, # or "low" or "high" or "minimal"
+                    text: Dict ={
+                        "verbosity": "low" # high, medium, or low for gpt-5
+                    }
                 All keys are passed unchanged to the adapter.
 
             Returns
@@ -471,6 +474,7 @@ class APIHandler:
                 - moderation (str, optional): Supported values are 'low', 'auto'
 
             For the Google adapter:
+                - model (str, optional): The model to use for image generation. List of possible models is in `ImagenModel` in `google_adapter.py`
                 - negative_prompt (str, optional): A description of what to omit in the generated image.
                 - number_of_images (int, optional): The number of images to generate, from 1 to 4. Defaults to 4.
                 - aspect_ratio (str, optional): Supported values are '1:1', '3:4', '4:3', '9:16', and '16:9'. Defaults to '1:1'.
@@ -481,6 +485,7 @@ class APIHandler:
                 - person_generation (str, optional): Supported values are:
                     - 'dont_allow': Block generation of images of people.
                     - 'allow_adult': Allow generation of adult images but block children.
+                - image_size (str, optional): Supported values are '1K' and '2K'. Defaults to '2K'.
 
         Returns:
             list or str: The generated image(s) URL(s) or list of images, depending on the provider.
@@ -494,7 +499,8 @@ class APIHandler:
             return image_url
         elif provider.lower() in ['google_standard', 'google_ultra']:
             adapter = self._lazy_initialization_of_adapter("GoogleAdapter")
-            images = adapter.generate_image(prompt, n, **kwargs)
+            model_name = ImagenModel[provider.lower()].value
+            images = adapter.generate_image(prompt, n, model=model_name, **kwargs)
             return images
         elif provider.lower() == 'grok':
             adapter = self._lazy_initialization_of_adapter("GrokAdapter")

@@ -5,6 +5,7 @@ import time
 import uuid
 from io import BytesIO
 from typing import Callable, Dict, List, Tuple
+from enum import Enum
 from xmlrpc import client
 
 from google import genai
@@ -20,6 +21,13 @@ from llm_platform.services.files import (AudioFile, ExcelDocumentFile,
                                          TextDocumentFile, VideoFile)
 from llm_platform.tools.base import BaseTool
 
+class ImagenModel(Enum):
+    google_standard = "imagen-4.0-generate-001"
+    google_ultra = "imagen-4.0-ultra-generate-001"
+
+class ImagenImageSize(Enum):
+    _1K = "1K"
+    _2K = "2K"
 
 class GoogleAdapter(AdapterBase):
     """
@@ -28,7 +36,6 @@ class GoogleAdapter(AdapterBase):
     # Class-level constants for configuration and mapping
     GEMINI_ROLE_MAPPING = {'user': 'user', 'assistant': 'model'}
     REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000, 'low': 4_000}
-    IMAGEN_DEFAULT_MODEL = 'imagen-4.0-generate-preview-06-06'
     VEO_MODEL = 'veo-3.0-generate-preview'
 
     def __init__(self, logging_level=logging.INFO):
@@ -250,11 +257,16 @@ class GoogleAdapter(AdapterBase):
 
     def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
         """Generates images using the Imagen model."""
-        model_name = kwargs.pop('model', self.IMAGEN_DEFAULT_MODEL)
+        model_name = kwargs.pop('model', ImagenModel.google_ultra.value)
         response = self.client.models.generate_images(
             model=model_name,
             prompt=prompt,
-            config=types.GenerateImagesConfig(number_of_images=n, **kwargs),
+            #config=types.GenerateImagesConfig(
+            config=dict(
+                number_of_images=n, 
+                image_size=kwargs.pop('image_size', ImagenImageSize._2K.value),  
+                **kwargs
+            ),
         )
         return [
             ImageFile.from_bytes(

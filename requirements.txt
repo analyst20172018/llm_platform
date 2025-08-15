@@ -1,11 +1,13 @@
-anthropic
-elevenlabs
 protobuf
+anthropic
+openai
+openai-agents
 google-genai # 	New library (Recommended). Old library was ´google-generativeai´
 mistralai
 xai_sdk
+elevenlabs
+speechmatics-python
 lxml
-openai
 pandas
 pillow
 praw
@@ -16,5 +18,4 @@ python-dotenv
 PyYAML
 requests
 rich
-speechmatics-python
 tiktoken

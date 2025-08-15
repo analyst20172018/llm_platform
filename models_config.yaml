@@ -1,6 +1,6 @@
 models:
   - name: claude-sonnet-4-20250514
-    display_name: Claude Sonnet 4 👍
+    display_name: Claude Sonnet 4
     adapter: AnthropicAdapter
     pricing:
       input: 3 # USD/1M tokens
@@ -34,39 +34,6 @@ models:
     citations_enabled: 1
     function_calling: 1
     reasoning_effort: 1
-    web_search: 1
-
-  - name: claude-3-7-sonnet-20250219
-    display_name: Claude 3.7 Sonnet
-    adapter: AnthropicAdapter
-    pricing:
-      input: 3 # USD/1M tokens
-      output: 15 # USD/1M tokens
-    max_tokens: 128_000
-    context_window: 200_000
-    inputs:
-      - image
-      - text
-    outputs:
-      - text
-    citations_enabled: 1
-    function_calling: 1
-    reasoning_effort: 1
-    web_search: 1
-    visible: false
-      
-  - name: claude-3-5-haiku-latest
-    display_name: Claude 3.5 Haiku
-    adapter: AnthropicAdapter
-    pricing:
-      input: 0.8 # USD/1M tokens
-      output: 4 # USD/1M tokens
-    max_tokens: 8192
-    context_window: 200000
-    inputs:
-      - text
-    citations_enabled: 1
-    function_calling: 1
     web_search: 1
 
 
@@ -234,28 +201,6 @@ models:
     url_context: 1
     visible: true
 
-  - name: gemini-2.5-flash-lite-preview-06-17
-    display_name: Gemini 2.5 Flash Lite
-    adapter: GoogleAdapter
-    pricing:
-      input: 0.1 # USD/1M tokens
-      output: 0.4 # USD/1M tokens
-    max_tokens: 65_536
-    context_window: 1_048_576
-    inputs:
-      - text
-      - image
-      - audio
-      - video
-    outputs:
-      - text
-    function_calling: 1
-    web_search: 1
-    code_execution: 1
-    reasoning_effort: 1
-    url_context: 1
-    visible: false
-
 
   - name: deepseek-chat
     display_name: DeepSeek-V3 Chat
@@ -284,17 +229,6 @@ models:
       - text
       - image
     outputs:
-      - text
-
-  - name: deepseek/deepseek-chat-v3-0324:free
-    display_name: DeepSeek-V3.1 Chat (free)
-    adapter: OpenRouterAdapter
-    pricing:
-      input: 0 # USD/1M tokens
-      output: 0 # USD/1M tokens
-    max_tokens: 128_000
-    context_window: 128_000
-    inputs:
       - text
 
 
