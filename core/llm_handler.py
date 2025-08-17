@@ -4,7 +4,7 @@ from llm_platform.adapters.openai_old_adapter import OpenAIOldAdapter
 from llm_platform.adapters.anthropic_adapter import AnthropicAdapter
 from llm_platform.adapters.openrouter_adapter import OpenRouterAdapter
 from llm_platform.adapters.speechmatics_adapter import SpeechmaticsAdapter
-from llm_platform.adapters.google_adapter import GoogleAdapter, ImagenModel
+from llm_platform.adapters.google_adapter import GoogleAdapter
 from llm_platform.adapters.grok_adapter import GrokAdapter
 from llm_platform.adapters.deepseek_adapter import DeepSeekAdapter
 from llm_platform.adapters.elevenlabs_adapter import ElenenlabsAdapter
@@ -474,7 +474,6 @@ class APIHandler:
                 - moderation (str, optional): Supported values are 'low', 'auto'
 
             For the Google adapter:
-                - model (str, optional): The model to use for image generation. List of possible models is in `ImagenModel` in `google_adapter.py`
                 - negative_prompt (str, optional): A description of what to omit in the generated image.
                 - number_of_images (int, optional): The number of images to generate, from 1 to 4. Defaults to 4.
                 - aspect_ratio (str, optional): Supported values are '1:1', '3:4', '4:3', '9:16', and '16:9'. Defaults to '1:1'.
@@ -485,7 +484,8 @@ class APIHandler:
                 - person_generation (str, optional): Supported values are:
                     - 'dont_allow': Block generation of images of people.
                     - 'allow_adult': Allow generation of adult images but block children.
-                - image_size (str, optional): Supported values are '1K' and '2K'. Defaults to '2K'.
+                - quality (str, optional): Supported values are 'low', 'medium', 'high', 'auto'.
+                    Converts by adapter into proper `model` and `image_size`.
 
         Returns:
             list or str: The generated image(s) URL(s) or list of images, depending on the provider.
@@ -497,10 +497,9 @@ class APIHandler:
             adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
             image_url = adapter.generate_image(prompt, n, **kwargs)
             return image_url
-        elif provider.lower() in ['google_standard', 'google_ultra']:
+        elif provider.lower() == 'google':
             adapter = self._lazy_initialization_of_adapter("GoogleAdapter")
-            model_name = ImagenModel[provider.lower()].value
-            images = adapter.generate_image(prompt, n, model=model_name, **kwargs)
+            images = adapter.generate_image(prompt, n, **kwargs)
             return images
         elif provider.lower() == 'grok':
             adapter = self._lazy_initialization_of_adapter("GrokAdapter")
@@ -538,12 +537,31 @@ class APIHandler:
             raise ValueError(f"Provider {provider} is not supported. I understand only 'google' as provider.")
         
     def edit_image(self, prompt: str, provider: str='openai', images=List[ImageFile], n=1, **kwargs):
+        """
+        Edits an image based on the given prompt using the specified provider. 
+        Now works only with OpenAI.
+
+        Args:
+            prompt (str): A textual description of the desired image content.
+            provider (str, optional): The image generation provider to use. 
+                Supported values is 'openai'.
+            n (int, optional): The number of images to generate. Defaults to 1.
+            **kwargs: Additional parameters specific to the chosen provider.
+
+        Keyword Arguments:
+            For the OpenAI adapter:
+                - size (str, optional): Supported values are '1024x1024', '1024x1536', '1536x1024', 'auto'.
+                - quality (str, optional): Supported values are 'low', 'medium', 'high', 'auto'.
+                - moderation (str, optional): Supported values are 'low', 'auto'
+                - input_fidelity (str, optional): Supported values are 'low', 'high'. The default value is `low`.
+                     Input fidelity, which allows you to better preserve details from the input images in the output.
+        """
         if provider.lower() == 'openai':
             adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
             image_url = adapter.edit_image(prompt, images, n, **kwargs)
             return image_url
         else: 
-            raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'google' as providers. ")
+            raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' as providers. ")
 
     def get_models(self, adapter_name: str) -> List[str]:
 

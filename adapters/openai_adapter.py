@@ -642,7 +642,7 @@ class OpenAIAdapter(AdapterBase):
             prompt=prompt,
             image=[image.bytes_io for image in images],
             n=n,
-            size=kwargs.get("size", "1024x1536"),
+            size=kwargs.pop("size", "1024x1536"),
             **kwargs,
         )
         return [

@@ -22,8 +22,8 @@ from llm_platform.services.files import (AudioFile, ExcelDocumentFile,
 from llm_platform.tools.base import BaseTool
 
 class ImagenModel(Enum):
-    google_standard = "imagen-4.0-generate-001"
-    google_ultra = "imagen-4.0-ultra-generate-001"
+    STANDARD = "imagen-4.0-generate-001"
+    ULTRA = "imagen-4.0-ultra-generate-001"
 
 class ImagenImageSize(Enum):
     _1K = "1K"
@@ -257,14 +257,29 @@ class GoogleAdapter(AdapterBase):
 
     def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
         """Generates images using the Imagen model."""
-        model_name = kwargs.pop('model', ImagenModel.google_ultra.value)
+
+        # Define the model and image size based on quality
+        quality = kwargs.pop('quality', 'high')
+        if quality == 'high':
+            model_name = ImagenModel.ULTRA.value
+            image_size = ImagenImageSize._2K.value
+        elif quality == 'medium':
+            model_name = ImagenModel.STANDARD.value
+            image_size = ImagenImageSize._2K.value
+        elif quality == 'low':
+            model_name = ImagenModel.STANDARD.value
+            image_size = ImagenImageSize._1K.value
+        else:
+            model_name = ImagenModel.ULTRA.value
+            image_size = ImagenImageSize._2K.value
+
         response = self.client.models.generate_images(
             model=model_name,
             prompt=prompt,
             #config=types.GenerateImagesConfig(
             config=dict(
                 number_of_images=n, 
-                image_size=kwargs.pop('image_size', ImagenImageSize._2K.value),  
+                image_size=image_size,
                 **kwargs
             ),
         )
