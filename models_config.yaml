@@ -203,13 +203,13 @@ models:
 
 
   - name: deepseek-chat
-    display_name: DeepSeek-V3 Chat
+    display_name: DeepSeek-V3.1 (Non-thinking Mode)
     adapter: DeepSeekAdapter
     pricing:
-      input: 0.27 # USD/1M tokens
-      output: 1.10 # USD/1M tokens
+      input: 0.56 # USD/1M tokens
+      output: 1.68 # USD/1M tokens
     max_tokens: 8_000
-    context_window: 64_000
+    context_window: 128_000
     inputs:
       - text
       - image
@@ -218,13 +218,13 @@ models:
     visible: true
 
   - name: deepseek-reasoner
-    display_name: DeepSeek-R1 Reasoner
+    display_name: DeepSeek-V3.1 (Thinking Mode)
     adapter: DeepSeekAdapter
     pricing:
-      input: 0.55 # USD/1M tokens
-      output: 2.19 # USD/1M tokens
-    max_tokens: 8_000
-    context_window: 64_000
+      input: 0.56 # USD/1M tokens
+      output: 1.68 # USD/1M tokens
+    max_tokens: 64_000
+    context_window: 128_000
     inputs:
       - text
       - image
@@ -242,7 +242,7 @@ models:
     context_window: 1_000_000
     inputs:
       - text
-  
+
 
   - name: grok-4
     display_name: Grok 4
