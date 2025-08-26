@@ -153,23 +153,26 @@ class GoogleAdapter(AdapterBase):
         """Parses a Gemini API response candidate into a Message object."""
         text_content, thoughts, files, function_calls = "", [], [], []
 
-        for part in response_candidate.content.parts:
-            if fc := part.function_call:
-                function_calls.append(FunctionCall(
-                    id=str(uuid.uuid4()),
-                    name=fc.name,
-                    arguments=json.dumps(dict(fc.args))
-                ))
-            elif part.text:
-                if part.thought:
-                    thoughts.append(ThinkingResponse(content=part.text, id=None))
-                else:
-                    text_content += part.text
-            elif part.inline_data and part.inline_data.mime_type == "image/png":
-                files.append(ImageFile.from_bytes(
-                    file_bytes=part.inline_data.data,
-                    file_name=f"image_{len(files)}.png"
-                ))
+        if not response_candidate.content or not response_candidate.content:
+            text_content = f"ERROR. No content. Finish reason: {response_candidate.finish_reason}"
+        else:
+            for part in response_candidate.content.parts:
+                if fc := part.function_call:
+                    function_calls.append(FunctionCall(
+                        id=str(uuid.uuid4()),
+                        name=fc.name,
+                        arguments=json.dumps(dict(fc.args))
+                    ))
+                elif part.text:
+                    if part.thought:
+                        thoughts.append(ThinkingResponse(content=part.text, id=None))
+                    else:
+                        text_content += part.text
+                elif part.inline_data and part.inline_data.mime_type == "image/png":
+                    files.append(ImageFile.from_bytes(
+                        file_bytes=part.inline_data.data,
+                        file_name=f"image_{len(files)}.png"
+                    ))
 
         usage = {
             "model": model_name,

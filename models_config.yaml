@@ -212,8 +212,6 @@ models:
     inputs:
       - text
       - image
-      - audio
-      - video
     outputs:
       - text
       - image
