@@ -127,13 +127,14 @@ class GoogleAdapter(AdapterBase):
         if the_conversation.system_prompt:
             config_params["system_instruction"] = the_conversation.system_prompt
 
-        reasoning_effort = kwargs.pop('reasoning', {}).get('effort', 'minimal')
-        # If reasoning effort is not set, then we will define the dynamic thinking (-1)
-        thinking_budget = self.REASONING_EFFORT_MAP.get(reasoning_effort, -1)
-        config_params["thinking_config"] = types.ThinkingConfig(
-            thinking_budget=thinking_budget, 
-            include_thoughts=True
-        )
+        if reasoning_effort_parameter := kwargs.pop('reasoning', {}):
+            reasoning_effort = reasoning_effort_parameter.get('effort', 'minimal')
+            # If reasoning effort is not set, then we will define the dynamic thinking (-1)
+            thinking_budget = self.REASONING_EFFORT_MAP.get(reasoning_effort, -1)
+            config_params["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=thinking_budget, 
+                include_thoughts=True
+            )
 
         if "response_modalities" in additional_parameters:
             config_params["response_modalities"] = additional_parameters["response_modalities"]

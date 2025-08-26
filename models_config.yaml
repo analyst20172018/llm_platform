@@ -201,6 +201,26 @@ models:
     url_context: 1
     visible: true
 
+  - name: gemini-2.5-flash-image-preview
+    display_name: Gemini 2.5 Flash Image
+    adapter: GoogleAdapter
+    pricing:
+      input: 0.3 # USD/1M tokens
+      output: 2.50 # USD/1M tokens
+    max_tokens: 8_192
+    context_window: 32_000
+    inputs:
+      - text
+      - image
+      - audio
+      - video
+    outputs:
+      - text
+      - image
+    web_search: 1
+    url_context: 1
+    visible: true
+
 
   - name: deepseek-chat
     display_name: DeepSeek-V3.1 (Non-thinking Mode)
