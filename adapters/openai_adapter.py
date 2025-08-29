@@ -441,6 +441,7 @@ class OpenAIAdapter(AdapterBase):
             parameters = self._create_parameters_for_calling_llm(
                 model, the_conversation, additional_parameters, use_previous_response_id=True, **kwargs
             )
+
             response = self.client.responses.create(**parameters)
 
         answer_text, thinking_responses, files_from_response, usage = self._parse_response(response)

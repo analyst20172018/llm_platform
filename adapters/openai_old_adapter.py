@@ -112,6 +112,7 @@ class OpenAIOldAdapter(AdapterBase):
             "messages": history,
             "temperature": temperature,
             "audio": {"voice": "alloy", "format": "wav"},
+            "modalities": ["text", "audio"],
         }
         chat_completion_parameters.update(kwargs)
 
@@ -138,7 +139,13 @@ class OpenAIOldAdapter(AdapterBase):
                 additional_parameters=additional_parameters,
                 **kwargs
             )
+
+            from pprint import pprint
+            pprint(chat_completion_parameters)
+
             response = self.client.chat.completions.create(**chat_completion_parameters)
+
+            pprint(response)
 
         else:
             response = self.request_llm_with_functions(
