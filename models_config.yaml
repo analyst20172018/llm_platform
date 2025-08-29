@@ -140,8 +140,8 @@ models:
     web_search: 1
     visible: false
 
-  - name: gpt-4o-audio-preview-2025-06-03
-    display_name: GPT-4o Audio
+  - name: gpt-audio
+    display_name: GPT Audio
     adapter: OpenAIOldAdapter
     pricing:
       input: 2.5 # USD/1M tokens
