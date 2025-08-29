@@ -140,12 +140,7 @@ class OpenAIOldAdapter(AdapterBase):
                 **kwargs
             )
 
-            from pprint import pprint
-            pprint(chat_completion_parameters)
-
             response = self.client.chat.completions.create(**chat_completion_parameters)
-
-            pprint(response)
 
         else:
             response = self.request_llm_with_functions(
