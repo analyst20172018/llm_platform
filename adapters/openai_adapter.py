@@ -522,7 +522,7 @@ class OpenAIAdapter(AdapterBase):
         """Handles the synchronous, recursive logic for tool-use conversations."""
         tools = [self._convert_function_to_tool(f) for f in functions]
         parameters = self._create_parameters_for_calling_llm(
-            model, the_conversation, additional_parameters, use_previous_response_id=False, **kwargs
+            model, the_conversation, additional_parameters, use_previous_response_id=True, **kwargs
         )
         parameters["tools"].extend(tools)
 
