@@ -172,7 +172,7 @@ class FunctionResponse:
         return output
 
     def __str__(self):
-        return f"Id: {self.id}; Function: {self.name}, Response: {json.dumps(self.response)}"
+        return f"Id: {self.id}; Call id: {self.call_id}; Function: {self.name}, Response: {json.dumps(self.response)}"
 
 class ThinkingResponse:
     def __init__(self, 

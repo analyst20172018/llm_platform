@@ -112,7 +112,7 @@ class OpenAIAdapter(AdapterBase):
         return None
 
     def convert_conversation_history_to_adapter_format(
-        self, the_conversation: Conversation, model: str, **kwargs
+        self, conversation_messages: List[Message], **kwargs
     ) -> Tuple[List[Dict], Dict]:
         """
         Converts the platform's Conversation object into the list format
@@ -128,7 +128,7 @@ class OpenAIAdapter(AdapterBase):
             A tuple containing the list of messages for the API and the passed-in kwargs.
         """
         history = []
-        for message in the_conversation.messages:
+        for message in conversation_messages:
 
             # Add any reasoning responses
             if message.thinking_responses:
@@ -146,6 +146,13 @@ class OpenAIAdapter(AdapterBase):
                     {
                         "type": TEXT_INPUT_TYPE if message.role == "user" else TEXT_OUTPUT_TYPE,
                         "text": message.content,
+                    }
+                )
+            else:
+                content_items.append(
+                    {
+                        "type": TEXT_INPUT_TYPE if message.role == "user" else TEXT_OUTPUT_TYPE,
+                        "text": "",
                     }
                 )
 
@@ -211,7 +218,7 @@ class OpenAIAdapter(AdapterBase):
         if "image" in additional_parameters.get("response_modalities", []):
             tools.append({"type": "image_generation", "quality": "high", "size": "1536x1024"})
 
-        messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
+        messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation.messages, **kwargs)
 
         parameters = {
             "model": model,
@@ -228,8 +235,12 @@ class OpenAIAdapter(AdapterBase):
         if use_previous_response_id and (prev_id := the_conversation.previous_response_id_for_openai):
             parameters["previous_response_id"] = prev_id
             # When using a previous ID, only the latest user message is needed
-            user_messages = [msg for msg in messages if msg.get("role") == "user"]
-            parameters["input"] = [user_messages[-1]] if user_messages else None
+            last_user_message = next(
+                (msg for msg in reversed(the_conversation.messages) if msg.role == "user"), None
+            )
+            if last_user_message:
+                messages, kwargs = self.convert_conversation_history_to_adapter_format([last_user_message], **kwargs)
+                parameters["input"] = messages
 
         return parameters
 
@@ -314,7 +325,7 @@ class OpenAIAdapter(AdapterBase):
             role="assistant",
             id=response_id,
             usage=usage,
-            content=assistant_message_text,
+            content=assistant_message_text or "",
             function_calls=function_calls,
             thinking_responses=thinking_responses,
             files=files_from_response,
@@ -323,7 +334,7 @@ class OpenAIAdapter(AdapterBase):
 
         # 2. User's message containing the function execution results
         user_response_message = Message(
-            role="user", content=None, function_responses=function_responses
+            role="user", content="", function_responses=function_responses
         )
         the_conversation.messages.append(user_response_message)
 
@@ -562,7 +573,7 @@ class OpenAIAdapter(AdapterBase):
         """Handles the asynchronous, recursive logic for tool-use conversations."""
         tools = [self._convert_function_to_tool(f) for f in functions]
         parameters = self._create_parameters_for_calling_llm(
-            model, the_conversation, additional_parameters, use_previous_response_id=False, **kwargs
+            model, the_conversation, additional_parameters, use_previous_response_id=True, **kwargs
         )
         parameters["tools"].extend(tools)
 
