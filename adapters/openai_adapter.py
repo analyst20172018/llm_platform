@@ -141,18 +141,11 @@ class OpenAIAdapter(AdapterBase):
             # Add text content        
             content_items = []
             # Add text content if it exists
-            if message.content:
+            if message.content and message.content.strip() != "":
                 content_items.append(
                     {
                         "type": TEXT_INPUT_TYPE if message.role == "user" else TEXT_OUTPUT_TYPE,
                         "text": message.content,
-                    }
-                )
-            else:
-                content_items.append(
-                    {
-                        "type": TEXT_INPUT_TYPE if message.role == "user" else TEXT_OUTPUT_TYPE,
-                        "text": "",
                     }
                 )
 

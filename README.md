@@ -1,308 +1,252 @@
 # LLM Platform
 
-A unified Python library for interacting with various LLM providers through a consistent interface.
+> A provider-agnostic Python toolkit for orchestrating multimodal, tool-aware LLM workflows behind a single interface.
+
+## Table of Contents
+- [Overview](#overview)
+- [Feature Highlights](#feature-highlights)
+- [Architecture](#architecture)
+- [Repository Layout](#repository-layout)
+- [Getting Started](#getting-started)
+- [Quickstart](#quickstart)
+- [Core Concepts](#core-concepts)
+- [Working with Files](#working-with-files)
+- [Function and Tool Calling](#function-and-tool-calling)
+- [Speech and Audio](#speech-and-audio)
+- [Image Generation](#image-generation)
+- [Model Configuration](#model-configuration)
+- [Extending the Platform](#extending-the-platform)
+- [Development Workflow](#development-workflow)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Overview
+LLM Platform streamlines application development across large language model providers. It wraps the quirks of each vendor SDK (OpenAI, Anthropic, Google Gemini, DeepSeek, Grok, OpenRouter, Speechmatics, ElevenLabs, Mistral, and more) behind a single Python surface. The platform keeps conversation state, negotiates function calls, normalises multimodal payloads, and exposes thoughtful defaults with escape hatches when direct SDK access is required.
 
-LLM Platform is a Python library that provides a unified API for interacting with multiple LLM providers, including OpenAI, Anthropic, Google, DeepSeek, Grok, OpenRouter, and more. The platform abstracts away the differences between LLM providers, allowing developers to focus on application logic while maintaining the flexibility to switch between models as needed.
+Use it to:
+- Prototype and ship LLM-backed product features without committing to a single provider.
+- Mix text, structured data, images, audio, and tool execution inside one conversation loop.
+- Maintain observability over model usage, token consumption, and tool outputs.
+- Onboard new providers quickly by implementing a thin adapter.
 
-The library is very flexible. For example, you can start calling OpenAI API with uploaded files and use functions. Then in the middle of the conversation you may switch the model and continue calling functions of Gemini.
+## Feature Highlights
+- **Unified API handler** – One entry point (`APIHandler`) for synchronous and asynchronous requests across vendors.
+- **Stateful conversations** – Built-in conversation objects persist history, usage metrics, and tool exchange metadata.
+- **Function/tool calling** – Invoke Python callables or custom `BaseTool` implementations from any provider that supports tool use.
+- **Multimodal requests** – Attach text, PDFs, spreadsheets, images, audio, or video in a single prompt.
+- **Voice workflows** – Convert speech to text via OpenAI or Speechmatics and reuse the transcripts immediately.
+- **Image generation** – Produce images with OpenAI or Google using the same interface.
+- **Model catalog** – YAML-driven registry describes pricing, capabilities, and adapter routing for every model.
+- **Provider extensibility** – Drop in new adapters without touching the core request flow.
 
-## Features
+## Architecture
+At runtime the platform composes a façade (`core.APIHandler`) with provider-specific adapters and shared services:
 
-- **Unified API Interface**: Interact with any supported LLM through the same API
-- **Multi-modal Support**: Process images, PDFs, Excel files, and text documents
-- **Function/Tool Calling**: Enable LLMs to execute code and tools
-- **Voice-to-Text Conversion**: Transcribe audio using OpenAI or Speechmatics
-- **Image Generation**: Create images from text using OpenAI or Google
-- **Conversation Management**: Track conversation history and token usage
-- **Asynchronous Support**: Make asynchronous requests to LLM providers
+```
++--------------+        +-----------------+        +-------------------+
+| Client Code  | -----> | core.APIHandler | -----> | adapters.*        |
++--------------+        +-----------------+        |  (provider SDKs)  |
+        |                        |                 +-------------------+
+        |                        v                         |
+        |                services.conversation             v
+        |                        |                 External Provider APIs
+        v                        v
+ services.files         helpers.model_config
+        |
+        v
+      tools
+```
 
-## Installation
+- **core/** – Request orchestration, conversation bookkeeping, token counting, synchronous/async entry points.
+- **adapters/** – Provider shims translating between platform message formats and vendor SDKs.
+- **services/** – Conversation models plus file ingestion layers that unify text, document, and media handling.
+- **helpers/** – Model catalog loader and helper utilities.
+- **tools/** – `BaseTool` abstractions and off-the-shelf automations callable from any conversation.
 
+## Repository Layout
+```
+llm_platform/
+├── core/                 # API handler and request orchestration
+├── adapters/             # Provider integrations (OpenAI, Anthropic, Google, ...)
+├── services/             # Conversation state, message & file primitives
+├── tools/                # Built-in automation helpers and schemas
+├── helpers/              # ModelConfig and shared helpers
+├── docs/                 # Deep dives on subsystems
+├── documentation/        # Blueprint and architecture reference material
+├── models_config.yaml    # Canonical model registry
+├── requirements.txt      # Runtime dependencies
+└── README.md             # You are here
+```
+
+## Getting Started
+### Prerequisites
+- Python 3.10+
+- Virtual environment recommended (`python -m venv .venv && source .venv/bin/activate`)
+- Provider credentials for the services you intend to call
+
+### Installation
 ```bash
 git clone https://github.com/analyst20172018/llm_platform
+cd llm_platform
 pip install -r requirements.txt
 ```
 
-## Environment Setup
-
-1. Create a `.env` file in your project root with API keys for the providers you plan to use:
-
+### Environment Variables
+Populate a `.env` file (or export variables in your shell) with the provider credentials you plan to use:
 ```
-OPENAI_API_KEY=your_openai_api_key
-ANTHROPIC_API_KEY=your_anthropic_api_key
-GOOGLE_API_KEY=your_google_api_key
-DEEPSEEK_API_KEY=your_deepseek_api_key
-GROK_API_KEY=your_grok_api_key
-OPENROUTER_API_KEY=your_openrouter_api_key
-SPEECHMATICS_API_KEY=your_speechmatics_api_key
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+GOOGLE_API_KEY=...
+DEEPSEEK_API_KEY=...
+GROK_API_KEY=...
+OPENROUTER_API_KEY=...
+SPEECHMATICS_API_KEY=...
+ELEVENLABS_API_KEY=...
+MISTRAL_API_KEY=...
 ```
+Only the keys for providers you call are required at runtime.
 
-## Basic Usage
-
-### Initializing the API Handler
-
+## Quickstart
 ```python
 from llm_platform.core.llm_handler import APIHandler
 
-# Initialize with a system prompt
 handler = APIHandler(system_prompt="You are a helpful assistant.")
+
+result = handler.request(
+    model="gpt-4o",
+    prompt="Summarise the key takeaways from the latest quarterly report in three bullet points.",
+    temperature=0.2,
+)
+
+print(result.content)
 ```
 
-### Making a Simple Text Request
-
+### Switching models mid-conversation
 ```python
-# Make a request to a specific model
-response = handler.request(
+handler.request(
     model="claude-3-5-sonnet-latest",
-    prompt="What is the capital of France?",
-    temperature=0
+    prompt="Great. Now draft a follow-up email in a confident tone.",
 )
 
-print(response)
-```
-
-### Using Different Models
-
-```python
-# OpenAI model
-openai_response = handler.request(
-    model="gpt-4o", 
-    prompt="Explain quantum computing in simple terms",
-    temperature=0
-)
-
-# Google model
-google_response = handler.request(
-    model="gemini-2.0-pro", 
-    prompt="What are the main challenges in AI safety?",
-    temperature=0
-)
-
-# Anthropic model
-anthropic_response = handler.request(
-    model="claude-3-opus-latest", 
-    prompt="Write a short story about a robot learning to paint",
-    temperature=0.7
+handler.request(
+    model="gemini-2.0-pro",
+    prompt="Translate that email into Spanish and cite your sources if you used any.",
+    additional_parameters={"citations": True}
 )
 ```
+Conversation history is preserved and normalised automatically, even as providers change.
 
-### Working with Images
+## Core Concepts
+- **`APIHandler`** – Central façade. Handles request routing, adapter initialisation, logging, and token accounting. Supports sync (`request`) and async (`request_async`) flows.
+- **`Conversation`** – Stores message history, usage statistics, and tool exchanges. Automatically updated after each request.
+- **`Message`** – Represents user or assistant turns (text, tool calls, structured metadata) within a conversation.
+- **`BaseFile` & subclasses** – Canonical file wrappers (`TextDocumentFile`, `PDFDocumentFile`, `ExcelDocumentFile`, `ImageFile`, `AudioFile`, `VideoFile`) used to send multimodal inputs.
+- **`BaseTool`** – Pydantic-backed abstraction for function calling across providers. Return values propagate back into the conversation.
+- **`ModelConfig`** – Loads `models_config.yaml` to expose provider metadata, default parameters, pricing hints, and adapter routing.
 
+## Working with Files
+Attach files using the high-level constructors in `llm_platform.services.files`:
 ```python
-from llm_platform.services.conversation import ImageFile
+from pathlib import Path
+from llm_platform.services.files import PDFDocumentFile, ImageFile
 
-# Request with image
-response = handler.request(
+report = PDFDocumentFile.from_path(Path("reports/q4.pdf"))
+diagram = ImageFile.from_path(Path("assets/architecture.png"))
+
+reply = handler.request(
     model="gpt-4o",
-    prompt="What is in this image?",
-    files=[ImageFile.from_path("/path/to/image.jpg")]
+    prompt="Summarise the PDF and describe the architecture diagram.",
+    files=[report, diagram],
 )
 
-print(response)
+print(reply.content)
+for attachment in reply.files:
+    print(f"Attachment returned: {attachment.name} ({attachment.extension})")
 ```
+Files are automatically converted to the provider-specific payload format (base64, binary uploads, etc.) by the active adapter.
 
-### Generating Images
-
-```python
-# Generate an image with OpenAI
-openai_image = handler.generate_image(
-    prompt="A cyberpunk cityscape with neon lights",
-    provider="openai",
-    n=1,
-    size="1024x1024",
-    quality="standard"
-)
-
-# Generate an image with Google
-google_image = handler.generate_image(
-    prompt="A serene mountain landscape at sunset",
-    provider="google",
-    n=1,
-    aspect_ratio="16:9"
-)
-```
-
-### Function/Tool Calling
-
-```python
-from llm_platform.tools.powershell import RunPowerShellCommand
-
-# Define a callback function to handle tool outputs
-def tool_callback(tool_name, tool_args, tool_response):
-    print(f"Tool {tool_name} called with {tool_args}")
-    print(f"Tool response: {tool_response}")
-
-# Make a request with function calling
-response = handler.request(
-    model="gpt-4o", 
-    prompt="Get the specs of my computer",
-    functions=[RunPowerShellCommand()],
-    temperature=0,
-    tool_output_callback=tool_callback
-)
-
-print(response)
-```
-
-### Voice to Text Conversion
-
-```python
-# Convert audio file to text using OpenAI
-transcript = handler.voice_file_to_text(
-    audio_file_name="/path/to/audio.mp3",
-    provider="openai",
-    language="en"
-)
-
-print(transcript)
-
-# Convert audio file to text using Speechmatics
-transcript = handler.voice_file_to_text(
-    audio_file_name="/path/to/audio.mp3",
-    provider="speechmatics",
-    language="en"
-)
-
-print(transcript)
-```
-
-## Core Components
-
-### APIHandler
-
-The central class that manages interactions with LLM providers:
-
-```python
-class APIHandler:
-    def __init__(self, system_prompt="You are a helpful assistant", logging_level=logging.INFO):
-        # Initialize the API handler
-        
-    def request(self, model, prompt, functions=None, files=[], temperature=0, 
-                tool_output_callback=None, additional_parameters={}, **kwargs):
-        # Make a synchronous request to the LLM
-        
-    async def request_async(self, model, prompt, functions=None, files=[], 
-                           temperature=0, tool_output_callback=None, 
-                           additional_parameters={}, **kwargs):
-        # Make an asynchronous request to the LLM
-        
-    def voice_to_text(self, audio_file, audio_format, provider='openai', **kwargs):
-        # Convert audio to text
-        
-    def generate_image(self, prompt, provider='openai', n=1, **kwargs):
-        # Generate an image
-        
-    def get_models(self, adapter_name):
-        # Get available models for a specific adapter
-```
-
-#### Additional parameters
-
-**Response modalities**
-`{"response_modalities": ['text', 'image', 'audio']}`
-used for some models in Gemini and OpenAI
-
-**Citation**
-`{"citations": True}`
-Used for the citation feature for Anthropic
-
-**Grounding (web search)**
-`{"grounding": True}`
-used for some models in Gemini and OpenAI
-
-**Reasoning**
-`{"reasoning": 'low'}` or 'medium' or 'high'
-used for some models in Anthropic and OpenAI
-
-- for OpenAI it will be directly transferred to the model
-- for Anthropic it will be translated to the `budget_tokens` for thinking:
-    - reasoning_effort 'low' -> thinking is not used at all
-    - reasoning_effort 'medium' -> thinking budget is 8000
-    - reasoning_effort 'high' -> thinking budget is 32000
-
-### Conversation Management
-
-```python
-from llm_platform.services.conversation import Conversation, Message
-
-# Create a conversation
-conversation = Conversation(system_prompt="You are a helpful assistant")
-
-# Add a user message
-message = Message(role="user", content="Hello, how are you?")
-conversation.messages.append(message)
-
-# Get conversation usage statistics
-total_usage = conversation.usage_total
-last_usage = conversation.usage_last
-```
-
-### File Handling
-
-```python
-from llm_platform.services.files import TextDocumentFile, PDFDocumentFile, ImageFile, AudioFile
-
-# Create file objects
-text_file = TextDocumentFile.from_path("/path/to/text.txt")
-pdf_file = PDFDocumentFile.from_path("/path/to/document.pdf")
-image_file = ImageFile.from_path("/path/to/image.jpg")
-audio_file = AudioFile.from_path("/path/to/audio.mp3")
-
-# Make a request with files
-response = handler.request(
-    model="gpt-4o",
-    prompt="Summarize this document and describe the image",
-    files=[pdf_file, image_file],
-    temperature=0
-)
-```
-
-### Creating Custom Tools
-
+## Function and Tool Calling
 ```python
 from llm_platform.tools.base import BaseTool
 from pydantic import BaseModel, Field
 
-class MyCustomTool(BaseTool):
-    """
-    A custom tool that performs a specific function.
-    """
-    
+class WeatherTool(BaseTool):
     class InputModel(BaseModel):
-        param1: str = Field(description="First parameter", required=True)
-        param2: int = Field(description="Second parameter", required=False)
-        
-    def __call__(self, param1, param2=0):
-        # Implement the tool's functionality
-        result = f"Processed {param1} with parameter {param2}"
-        return {"result": result}
+        city: str = Field(description="City name")
+        units: str = Field(description="Measurement system", default="metric")
 
-# Use the custom tool
+    def __call__(self, city: str, units: str = "metric") -> dict:
+        forecast = fetch_forecast(city, units)  # your implementation
+        return {"forecast": forecast}
+
 response = handler.request(
     model="claude-3-5-sonnet-latest",
-    prompt="Use my custom tool with 'test' as the first parameter",
-    functions=[MyCustomTool()],
-    temperature=0
+    prompt="Check the weather in Berlin and let me know if I need an umbrella.",
+    functions=[WeatherTool()],
 )
 ```
+Adapters translate tool schemas and invocations for each provider (OpenAI tool calls, Anthropic tool use, Gemini function calling, etc.). Tool outputs are appended to the conversation and optionally streamed through `tool_output_callback`.
 
-## Supported Providers
+## Speech and Audio
+```python
+with open("customer_call.mp3", "rb") as audio:
+    transcript = handler.voice_to_text(audio, audio_format="mp3", provider="speechmatics")
 
-- **OpenAI**: GPT models (GPT-4o, etc.) and "o1" models
-- **Anthropic**: Claude models (Claude 3 series)
-- **Google**: Gemini models (Gemini 2.0 Pro, Flash, etc.)
-- **DeepSeek**: DeepSeek models (DeepSeek Chat, DeepSeek Reasoner)
-- **Grok**: Grok models (Grok 2)
-- **OpenRouter**: Various models via OpenRouter (e.g., Llama models)
-- **Speechmatics**: Speech-to-text services
-- **ElevenLabs**: Text-to-speech services
+follow_up = handler.request(
+    model="gpt-4o",
+    prompt=f"Summarise this call and flag any action items: {transcript}",
+)
+```
+Use `voice_file_to_text(path)` for convenience when working with local files. Speech-to-text currently supports OpenAI and Speechmatics providers.
 
-## License
+## Image Generation
+```python
+image_urls = handler.generate_image(
+    prompt="A cyberpunk cityscape with neon reflections after rain",
+    provider="openai",
+    n=1,
+    size="1024x1024",
+)
+```
+Switch `provider="google"` to target Gemini image generation. Returned assets mirror the provider’s native format (URL, base64, or binary).
 
-[License information to be added]
+## Model Configuration
+`models_config.yaml` contains the canonical registry of supported models. Each entry defines:
+- Adapter name (routes to an adapter inside `adapters/`).
+- Modalities and features (tool calling, vision, audio, web search, reasoning budget, etc.).
+- Pricing and metadata useful for observability dashboards.
+
+Override or extend the catalog by editing the YAML file or supplying environment-specific overlays. `ModelConfig` exposes helper methods to query models, resolve adapters, and fetch defaults.
+
+## Extending the Platform
+### Adding a New Provider
+1. Create `adapters/<provider>_adapter.py` by subclassing `AdapterBase`.
+2. Implement the required interface (`request`, `request_async`, optional helpers for images/voice).
+3. Add your models to `models_config.yaml` with `adapter_name` pointing to the new adapter.
+4. Document required environment variables in the README and `.env`.
+
+### Adding Tools
+- Derive from `BaseTool` and provide a Pydantic `InputModel`.
+- Implement `__call__` or `__async_call__` to perform the action.
+- Register the tool by passing instances into `APIHandler.request()` / `request_async()`.
+
+### Custom Conversation Storage
+`services.conversation.Conversation` stores messages in memory by default. To persist history elsewhere, subclass it and inject your implementation into `APIHandler` or wrap the handler with your own repository layer.
+
+## Development Workflow
+- Clone the repository and install dependencies inside a virtual environment.
+- Run your preferred formatter/linters (the project targets idiomatic Python with type hints).
+- Add or update tests (pytest is recommended; test suite layout forthcoming).
+- Before committing, ensure `models_config.yaml` and any documentation reflect new adapters, tools, or configuration switches.
+
+## Documentation
+- `documentation/blueprint.md` – System roadmap and architectural reference.
+- `docs/` – Deeper dives into subsystems (adapters, tools, governance, etc.).
+- `AGENTS.md` – Guidance on conversational agent behaviours and templates.
 
 ## Contributing
+Issues and pull requests are welcome. Please open a discussion for significant design changes to align on adapter interfaces, configuration format, and dependency impacts before implementing.
 
-[Contribution guidelines to be added]
+## License
+License information forthcoming.
