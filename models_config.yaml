@@ -90,6 +90,22 @@ models:
       - image
     visible: true
 
+  - name: gpt-5-codex
+    display_name: GPT-5 Codex
+    adapter: OpenAIAdapter
+    pricing:
+      input: 1.25 # USD/1M tokens
+      output: 10 # USD/1M tokens
+    max_tokens: 128_000
+    context_window: 400_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    reasoning_effort: 1
+    visible: true
+
   - name: gpt-5-chat-latest
     display_name: GPT-5 Chat
     adapter: OpenAIAdapter
@@ -157,7 +173,7 @@ models:
     function_calling: 1
     visible: false
 
-  - name: gpt-audio
+  - name: gpt-audio-2025-08-28
     display_name: GPT Audio
     adapter: OpenAIOldAdapter
     pricing:
@@ -234,6 +250,27 @@ models:
       - image
     web_search: 1
     url_context: 1
+    visible: true
+
+  - name: gemini-2.5-flash-native-audio-preview-09-2025
+    display_name: Gemini 2.5 Flash Native Audio Preview
+    adapter: GoogleAdapter
+    pricing:
+      input: 0.3 # USD/1M tokens
+      output: 2.50 # USD/1M tokens
+    max_tokens: 8_000
+    context_window: 128_000
+    inputs:
+      - text
+      - audio
+      - video
+    outputs:
+      - text
+      - audio      
+    function_calling: 1
+    web_search: 1
+    code_execution: 1
+    reasoning_effort: 1
     visible: true
 
 
