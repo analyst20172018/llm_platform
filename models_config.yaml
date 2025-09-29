@@ -1,12 +1,12 @@
 models:
-  - name: claude-sonnet-4-20250514
-    display_name: Claude Sonnet 4
+  - name: claude-sonnet-4-5
+    display_name: Claude Sonnet 4.5
     adapter: AnthropicAdapter
     pricing:
       input: 3 # USD/1M tokens
       output: 15 # USD/1M tokens
     max_tokens: 64_000
-    context_window: 200_000
+    context_window: 1_000_000
     inputs:
       - image
       - text
@@ -17,7 +17,7 @@ models:
     web_search: 1
     reasoning_effort: 1
   
-  - name: claude-opus-4-1-20250805
+  - name: claude-opus-4-1
     display_name: Claude Opus 4.1 💰
     adapter: AnthropicAdapter
     pricing:
@@ -212,8 +212,8 @@ models:
     url_context: 1
     visible: true
 
-  - name: gemini-2.5-flash
-    display_name: Gemini 2.5 Flash
+  - name: gemini-2.5-flash-preview-09-2025
+    display_name: Gemini 2.5 Flash Preview
     adapter: GoogleAdapter
     pricing:
       input: 0.3 # USD/1M tokens
