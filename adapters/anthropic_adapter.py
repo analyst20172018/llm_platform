@@ -488,11 +488,16 @@ class AnthropicAdapter(AdapterBase):
         """Adjusts max_tokens to prevent exceeding the model's context window."""
         request_tokens = self.count_tokens(model, messages, tools)
         specific_model_object = self.model_config[model]
-        if specific_model_object:
-            context_window = specific_model_object.context_window or 200000
-        else:
-            # The model was not found in the config, so use the default.
-            context_window = 200000
+        context_window = specific_model_object.context_window
+
+        if max_tokens is None:
+            max_tokens = specific_model_object.max_tokens
+        elif max_tokens > specific_model_object.max_tokens:
+            logging.warning(
+                f"Requested max_tokens ({max_tokens}) exceeds model's max_tokens ({specific_model_object.max_tokens}). "
+                f"Correcting to {specific_model_object.max_tokens}."
+            )
+            max_tokens = specific_model_object.max_tokens
 
         if request_tokens + max_tokens >= context_window:
             new_max_tokens = context_window - request_tokens - RESPONSE_TOKEN_BUFFER
