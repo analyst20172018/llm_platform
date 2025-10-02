@@ -13,7 +13,7 @@ from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
 from llm_platform.tools.base import BaseTool
 from llm_platform.helpers.model_config import ModelConfig
-import logging
+from loguru import logger
 import tiktoken
 import os
 from typing import List, Dict, Tuple, BinaryIO, Any, Callable, Union
@@ -28,12 +28,11 @@ class APIHandler:
         adapters (Dict[str, Any]): A dictionary to store initialized adapters.
         model_config (ModelConfig): Configuration for the language models.
         the_conversation (Conversation): The conversation context.
-        logging_level (int): The logging level for the handler.
         history (List): Legacy attribute for storing history.
         current_costs (Any): Legacy attribute for storing current costs.
     Methods:
-        __init__(system_prompt: str = "You are a helpful assistant", logging_level=logging.INFO):
-            Initializes the APIHandler with a system prompt and logging level.
+        __init__(system_prompt: str = "You are a helpful assistant"):
+            Initializes the APIHandler with a system prompt.
         _lazy_initialization_of_adapter(adapter_name: str) -> Any:
             Lazily initializes and returns the specified adapter.
         get_adapter(model_name: str) -> Any:
@@ -56,7 +55,7 @@ class APIHandler:
             Retrieves the available models for the specified adapter.
     """
     
-    def __init__(self, system_prompt: str = "You are a helpful assistant", logging_level=logging.INFO):
+    def __init__(self, system_prompt: str = "You are a helpful assistant"):
         """
         Initialize the APIHandler.
 
@@ -66,10 +65,6 @@ class APIHandler:
         self.adapters: Dict[str, Any] = {}
         self.model_config = ModelConfig()
         self.the_conversation = Conversation(system_prompt = system_prompt)
-
-        # Configure logging
-        self.logging_level = logging_level
-        logging.basicConfig(level=self.logging_level, format='%(asctime)s - %(levelname)s - %(message)s')
 
         # Legacy:
         self.history = []
@@ -105,7 +100,7 @@ class APIHandler:
             if adapter_class is None:
                 raise ValueError(f"Adapter {adapter_name} is not supported")
 
-            self.adapters[adapter_name] = adapter_class(logging_level=self.logging_level)
+            self.adapters[adapter_name] = adapter_class()
 
         return self.adapters[adapter_name]
     
@@ -355,7 +350,7 @@ class APIHandler:
             * The conversation history grows with every invocation.  Call
             ``handler.the_conversation.clear()`` to reset the context.
         """
-        logging.info(f"Calling API with model {model}")
+        logger.info(f"Calling API with model {model}")
         adapter = self.get_adapter(model)
 
         # Fetch max_tokens from the model config
@@ -373,7 +368,7 @@ class APIHandler:
 
             return response
         except Exception as e:
-            logging.error(f"Error in API call: {e}")
+            logger.error(f"Error in API call: {e}")
             message = Message(role="assistant", content=f"Error in API call: {e}", usage=None, files=[])
             self.the_conversation.messages.append(message)
             return message
@@ -385,7 +380,7 @@ class APIHandler:
                         tool_output_callback: Callable=None,
                         additional_parameters: Dict={},
                         **kwargs) -> str:
-        logging.info(f"Calling API asynchronously with model {model}")
+        logger.info(f"Calling API asynchronously with model {model}")
         adapter = self.get_adapter(model)
 
         # Fetch max_tokens from the model config

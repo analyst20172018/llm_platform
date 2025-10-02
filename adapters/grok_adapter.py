@@ -5,7 +5,6 @@ from xai_sdk.proto import chat_pb2
 from xai_sdk.search import SearchParameters
 import os
 from typing import List, Tuple, Callable, Dict
-import logging
 from llm_platform.tools.base import BaseTool
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse, ThinkingResponse
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
@@ -19,8 +18,8 @@ class GrokAdapter(AdapterBase):
         "assistant": chat_pb2.MessageRole.ROLE_ASSISTANT,
     }
 
-    def __init__(self, logging_level=logging.INFO):
-        super().__init__(logging_level)   
+    def __init__(self):
+        super().__init__()   
         self.client = Client(api_key = os.getenv("XAI_API_KEY"))
 
     def convert_conversation_history_to_adapter_format(self,

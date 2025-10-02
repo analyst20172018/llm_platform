@@ -6,13 +6,12 @@ from typing import List, Tuple, Callable, Dict
 from llm_platform.tools.base import BaseTool
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
-import logging
 import inspect
 
 class OpenAIOldAdapter(AdapterBase):
     
-    def __init__(self, logging_level=logging.INFO):
-        super().__init__(logging_level)   
+    def __init__(self):
+        super().__init__()   
         self.client = OpenAI()
         
 

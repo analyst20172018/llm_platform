@@ -2,7 +2,7 @@ from .adapter_base import AdapterBase
 from mistralai import Mistral
 import os
 from typing import List, Tuple, Callable, Dict
-import logging
+from loguru import logger
 from llm_platform.tools.base import BaseTool
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
@@ -11,8 +11,8 @@ import inspect
 
 class MistralAdapter(AdapterBase):
     
-    def __init__(self, logging_level=logging.INFO):
-        super().__init__(logging_level)   
+    def __init__(self):
+        super().__init__()   
         self.client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
 
     def convert_conversation_history_to_adapter_format(self, 
@@ -98,11 +98,11 @@ class MistralAdapter(AdapterBase):
                     
                     # Audio
                     if isinstance(each_file, AudioFile):
-                        logging.warning("Audio files are not supported")
+                        logger.warning("Audio files are not supported")
                     
                     # Text documents
                     elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
-                        logging.warning("Text files are not supported")
+                        logger.warning("Text files are not supported")
 
                     # PDF documents
                     elif isinstance(each_file, PDFDocumentFile):
@@ -129,7 +129,7 @@ class MistralAdapter(AdapterBase):
                     **kwargs) -> Message:
 
         if additional_parameters:
-            logging.warning("Additional parameters is not supported by Mistral API")
+            logger.warning("Additional parameters is not supported by Mistral API")
 
         kwargs['temperature'] = temperature
 

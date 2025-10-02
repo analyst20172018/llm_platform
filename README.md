@@ -138,7 +138,7 @@ handler.request(
 Conversation history is preserved and normalised automatically, even as providers change.
 
 ## Core Concepts
-- **`APIHandler`** – Central façade. Handles request routing, adapter initialisation, logging, and token accounting. Supports sync (`request`) and async (`request_async`) flows.
+- **`APIHandler`** – Central façade. Handles request routing, adapter initialisation, and token accounting. Supports sync (`request`) and async (`request_async`) flows.
 - **`Conversation`** – Stores message history, usage statistics, and tool exchanges. Automatically updated after each request.
 - **`Message`** – Represents user or assistant turns (text, tool calls, structured metadata) within a conversation.
 - **`BaseFile` & subclasses** – Canonical file wrappers (`TextDocumentFile`, `PDFDocumentFile`, `ExcelDocumentFile`, `ImageFile`, `AudioFile`, `VideoFile`) used to send multimodal inputs.

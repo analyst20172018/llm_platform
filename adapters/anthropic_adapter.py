@@ -1,7 +1,7 @@
 import asyncio
 import inspect
 import json
-import logging
+from loguru import logger
 import os
 from typing import Callable, Dict, List, Tuple
 
@@ -131,7 +131,7 @@ class ClaudeStreamProcessor:
             try:
                 parameters = json.loads(self._current_tool_json) if self._current_tool_json else {}
             except json.JSONDecodeError:
-                logging.warning(f"Failed to decode JSON for tool '{self._current_tool_name}'. Using empty parameters.")
+                logger.warning(f"Failed to decode JSON for tool '{self._current_tool_name}'. Using empty parameters.")
                 parameters = {}
 
             self.tool_uses.append({
@@ -160,8 +160,8 @@ class ClaudeStreamProcessor:
 class AnthropicAdapter(AdapterBase):
     """Adapter for interacting with the Anthropic Claude API."""
 
-    def __init__(self, logging_level=logging.INFO):
-        super().__init__(logging_level)
+    def __init__(self):
+        super().__init__()
         self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         self.model_config = ModelConfig()
 
@@ -320,7 +320,7 @@ class AnthropicAdapter(AdapterBase):
                 # Find the function to execute by its name.
                 function_to_call = next(f for f in functions if f.name == tool_call["name"])
             except StopIteration:
-                logging.error(f"Function '{tool_call['name']}' not found in provided tools.")
+                logger.error(f"Function '{tool_call['name']}' not found in provided tools.")
                 continue
 
             # Execute the function with keyword arguments for robustness.
@@ -481,7 +481,7 @@ class AnthropicAdapter(AdapterBase):
             response = self.client.messages.count_tokens(model=model, messages=messages, tools=tools)
             return response.input_tokens
         except Exception as e:
-            logging.warning(f"Could not count tokens for model {model}: {e}")
+            logger.warning(f"Could not count tokens for model {model}: {e}")
             return 0
 
     def correct_max_tokens(self, model: str, messages: List[Dict], max_tokens: int, tools: List[Dict] = []) -> int:
@@ -493,7 +493,7 @@ class AnthropicAdapter(AdapterBase):
         if max_tokens is None:
             max_tokens = specific_model_object.max_tokens
         elif max_tokens > specific_model_object.max_tokens:
-            logging.warning(
+            logger.warning(
                 f"Requested max_tokens ({max_tokens}) exceeds model's max_tokens ({specific_model_object.max_tokens}). "
                 f"Correcting to {specific_model_object.max_tokens}."
             )
@@ -503,7 +503,7 @@ class AnthropicAdapter(AdapterBase):
             new_max_tokens = context_window - request_tokens - RESPONSE_TOKEN_BUFFER
             if new_max_tokens < 0:
                 new_max_tokens = 0 # Cannot have negative tokens
-            logging.warning(
+            logger.warning(
                 f"Request tokens ({request_tokens}) + max_tokens ({max_tokens}) exceeds context window "
                 f"({context_window}). Correcting max_tokens to {new_max_tokens}."
             )

@@ -11,7 +11,6 @@ image generation, and audio transcription.
 import asyncio
 import inspect
 import json
-import logging
 from typing import Callable, Dict, List, Tuple, Union
 
 from openai import AsyncOpenAI, OpenAI
@@ -56,14 +55,11 @@ class OpenAIAdapter(AdapterBase):
     the OpenAI API. It supports both synchronous and asynchronous requests.
     """
 
-    def __init__(self, logging_level: int = logging.INFO):
+    def __init__(self):
         """
         Initializes the OpenAIAdapter with synchronous and asynchronous clients.
-
-        Args:
-            logging_level: The logging level to use for the adapter's logger.
         """
-        super().__init__(logging_level)
+        super().__init__()
         self.client = OpenAI()
         self.async_client = AsyncOpenAI()
         self.model_config = ModelConfig()

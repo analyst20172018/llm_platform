@@ -4,12 +4,12 @@ import os
 from typing import List, Tuple, Callable, Dict
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
-import logging
+from loguru import logger
 
 class OpenRouterAdapter(AdapterBase):
     
-    def __init__(self, logging_level=logging.INFO):
-        super().__init__(logging_level)   
+    def __init__(self):
+        super().__init__()   
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=os.getenv("OPENROUTER_API_KEY"),
@@ -109,12 +109,12 @@ class OpenRouterAdapter(AdapterBase):
                     **kwargs) -> Message:
 
         if additional_parameters:
-            logging.warning("Additional parameters is not supported by OpenRouter API")
+            logger.warning("Additional parameters is not supported by OpenRouter API")
 
         # Remove 'max_tokens' from kwargs if it exists
         max_tokens = kwargs.pop('max_tokens', None)
         if max_tokens:
-            logging.warning("Max tokens parameter is removed.")
+            logger.warning("Max tokens parameter is removed.")
 
         history, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
         response = self.client.chat.completions.create(

@@ -4,12 +4,12 @@ import os
 from typing import List, Tuple, Callable, Dict
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
-import logging
+from loguru import logger
 
 class DeepSeekAdapter(AdapterBase):
     
-    def __init__(self, logging_level=logging.INFO):
-        super().__init__(logging_level)   
+    def __init__(self):
+        super().__init__()
         self.client = OpenAI(
             base_url="https://api.deepseek.com",
             api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -37,11 +37,6 @@ class DeepSeekAdapter(AdapterBase):
                     
                     # Images
                     if isinstance(each_file, ImageFile):
-
-                        # Check if the model supports images
-                        if model == 'o1-mini':
-                            logging.warning("The model 'o1-mini' does not support images yet. Image is ignored.")
-                            continue
 
                         # Ensure that history_message["content"] is a list, not a string
                         if not isinstance(history_message["content"], list):
@@ -114,12 +109,12 @@ class DeepSeekAdapter(AdapterBase):
                     **kwargs) -> Message:
         
         if additional_parameters:
-            logging.warning("Additional parameters is not supported by DeepSeek API")
+            logger.warning("Additional parameters is not supported by DeepSeek API")
 
         # Remove 'max_tokens' from kwargs if it exists
         max_tokens = kwargs.pop('max_tokens', None)
         if max_tokens:
-            logging.warning("Max tokens parameter is removed.")
+            logger.warning("Max tokens parameter is removed.")
 
         if model != 'deepseek-reasoner':
             # Add temperature to kwargs, note that the model deepseek-reasoner does not support temperature
@@ -141,7 +136,7 @@ class DeepSeekAdapter(AdapterBase):
             message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
             the_conversation.messages.append(message)
         except Exception as e:
-            logging.error(f"Error in request_llm: {e}")
+            logger.error(f"Error in request_llm: {e}")
             message = Message(role="assistant", content=f"Error: {e}", usage={})
             the_conversation.messages.append(message)
             return message

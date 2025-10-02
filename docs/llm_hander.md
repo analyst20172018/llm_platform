@@ -9,12 +9,11 @@ The `APIHandler` class is the central component of the LLM Platform that manages
 ### Constructor
 
 ```python
-def __init__(self, system_prompt: str = "You are a helpful assistant", logging_level=logging.INFO)
+def __init__(self, system_prompt: str = "You are a helpful assistant")
 ```
 
 **Parameters:**
 - `system_prompt (str)`: Initial system prompt for the conversation (default: "You are a helpful assistant")
-- `logging_level`: Logging level for the handler (default: logging.INFO)
 
 ### Key Attributes
 

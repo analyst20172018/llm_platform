@@ -2,12 +2,11 @@ from dotenv import load_dotenv
 from elevenlabs.client import ElevenLabs
 import os
 from typing import List, Tuple, Dict, BinaryIO, Callable
-import logging
 
 load_dotenv()
 
 class ElenenlabsAdapter:
-    def __init__(self, logging_level=logging.INFO):
+    def __init__(self):
         self.client = ElevenLabs(
             api_key=os.getenv("ELEVEN_API_KEY")
         )

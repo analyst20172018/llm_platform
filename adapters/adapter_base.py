@@ -1,15 +1,13 @@
 from abc import ABC, abstractmethod
 from dotenv import load_dotenv
 from typing import List, Tuple, Callable, Dict
-import logging
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.tools.base import BaseTool
 
 class AdapterBase(ABC):
-    def __init__(self, logging_level=logging.INFO):
+    def __init__(self):
         load_dotenv()
         self.latest_usage = None
-        logging.basicConfig(level=logging_level, format='%(asctime)s - %(levelname)s - %(message)s')
 
     @abstractmethod
     def convert_conversation_history_to_adapter_format(self, the_conversation: Conversation):

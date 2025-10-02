@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 import time
 import uuid
@@ -7,6 +6,7 @@ from io import BytesIO
 from typing import Callable, Dict, List, Tuple
 from enum import Enum
 from xmlrpc import client
+from loguru import logger
 
 from google import genai
 from google.genai import types
@@ -38,8 +38,8 @@ class GoogleAdapter(AdapterBase):
     REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000, 'low': 4_000}
     VEO_MODEL = 'veo-3.0-generate-preview'
 
-    def __init__(self, logging_level=logging.INFO):
-        super().__init__(logging_level)
+    def __init__(self):
+        super().__init__()
         api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
         if not api_key:
             raise ValueError("GOOGLE_GEMINI_API_KEY environment variable not set.")

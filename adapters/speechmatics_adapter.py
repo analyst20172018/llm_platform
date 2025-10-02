@@ -4,12 +4,11 @@ from speechmatics.models import ConnectionSettings
 from speechmatics.batch_client import BatchClient
 from typing import List, Tuple, Dict, BinaryIO, Callable, Union, Tuple, Optional
 from llm_platform.services.conversation import Conversation, Message
-import logging
 
 class SpeechmaticsAdapter(AdapterBase):
     
-    def __init__(self, logging_level=logging.INFO):
-        super().__init__(logging_level)  
+    def __init__(self):
+        super().__init__()  
         self.api_key = os.getenv("SPEECHMATICS_API_KEY")
 
     def convert_conversation_history_to_adapter_format(self, the_conversation: Conversation):
