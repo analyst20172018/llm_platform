@@ -15,7 +15,11 @@ models:
     citations_enabled: 1
     function_calling: 1
     web_search: 1
-    reasoning_effort: 1
+    reasoning_effort:
+      - none
+      - low
+      - medium
+      - high
   
   - name: claude-opus-4-1
     display_name: Claude Opus 4.1 💰
@@ -33,7 +37,11 @@ models:
     function_calling: 1
     citations_enabled: 1
     function_calling: 1
-    reasoning_effort: 1
+    reasoning_effort:
+      - none
+      - low
+      - medium
+      - high
     web_search: 1
 
 
@@ -50,7 +58,14 @@ models:
       - image
     outputs:
       - text
-    reasoning_effort: 1
+    reasoning_effort:
+      - low
+      - medium
+      - high
+    verbosity:
+      - low
+      - medium
+      - high
     function_calling: 1
     web_search: 1
 
@@ -80,7 +95,10 @@ models:
       output: 80 # USD/1M tokens
     max_tokens: 100_000
     context_window: 200_000
-    reasoning_effort: 1
+    reasoning_effort:
+      - low
+      - medium
+      - high
     function_calling: 1
     inputs:
       - image
@@ -103,7 +121,14 @@ models:
       - image
     outputs:
       - text
-    reasoning_effort: 1
+    reasoning_effort:
+      - low
+      - medium
+      - high
+    verbosity:
+      - low
+      - medium
+      - high
     visible: true
 
   - name: gpt-5-chat-latest
@@ -134,7 +159,14 @@ models:
       - image
     outputs:
       - text
-    reasoning_effort: 1
+    reasoning_effort:
+      - low
+      - medium
+      - high
+    verbosity:
+      - low
+      - medium
+      - high
     function_calling: 1
     web_search: 1
 
@@ -151,7 +183,14 @@ models:
       - image
     outputs:
       - text
-    reasoning_effort: 1
+    reasoning_effort:
+      - low
+      - medium
+      - high
+    verbosity:
+      - low
+      - medium
+      - high
     function_calling: 1
     web_search: 1
     visible: false
@@ -208,7 +247,12 @@ models:
     function_calling: 1
     web_search: 1
     code_execution: 1
-    reasoning_effort: 1
+    reasoning_effort:
+      - none
+      - dynamic
+      - low
+      - medium
+      - high
     url_context: 1
     visible: true
 
@@ -230,7 +274,12 @@ models:
     function_calling: 1
     web_search: 1
     code_execution: 1
-    reasoning_effort: 1
+    reasoning_effort:
+      - none
+      - dynamic
+      - low
+      - medium
+      - high
     url_context: 1
     visible: true
 
@@ -270,7 +319,12 @@ models:
     function_calling: 1
     web_search: 1
     code_execution: 1
-    reasoning_effort: 1
+    reasoning_effort:
+      - none
+      - dynamic
+      - low
+      - medium
+      - high
     visible: true
 
   - name: gemini-robotics-er-1.5-preview
@@ -287,7 +341,12 @@ models:
     outputs:
       - text
     function_calling: 1
-    reasoning_effort: 1
+    reasoning_effort:
+      - none
+      - dynamic
+      - low
+      - medium
+      - high
     visible: false
 
 

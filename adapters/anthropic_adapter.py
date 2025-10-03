@@ -351,7 +351,7 @@ class AnthropicAdapter(AdapterBase):
         temp = temperature
 
         if 'reasoning' in request_kwargs:
-            reasoning_effort = request_kwargs.pop('reasoning', {}).get('effort', 'minimal')
+            reasoning_effort = request_kwargs.pop('reasoning', {}).get('effort', 'none')
             if budget_tokens := REASONING_BUDGETS.get(reasoning_effort):
                 request_kwargs['thinking'] = {"type": "enabled", "budget_tokens": budget_tokens}
                 temp = 1  # Anthropic recommends temp=1 for best results with thinking

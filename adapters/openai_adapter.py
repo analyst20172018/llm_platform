@@ -12,6 +12,7 @@ import asyncio
 import inspect
 import json
 from typing import Callable, Dict, List, Tuple, Union
+from loguru import logger
 
 from openai import AsyncOpenAI, OpenAI
 

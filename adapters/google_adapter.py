@@ -35,7 +35,7 @@ class GoogleAdapter(AdapterBase):
     """
     # Class-level constants for configuration and mapping
     GEMINI_ROLE_MAPPING = {'user': 'user', 'assistant': 'model'}
-    REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000, 'low': 4_000}
+    REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000, 'low': 4_000, 'dynamic': -1}
     VEO_MODEL = 'veo-3.0-generate-preview'
 
     def __init__(self):
@@ -128,9 +128,9 @@ class GoogleAdapter(AdapterBase):
             config_params["system_instruction"] = the_conversation.system_prompt
 
         if reasoning_effort_parameter := kwargs.pop('reasoning', {}):
-            reasoning_effort = reasoning_effort_parameter.get('effort', 'minimal')
-            # If reasoning effort is not set, then we will define the dynamic thinking (-1)
-            thinking_budget = self.REASONING_EFFORT_MAP.get(reasoning_effort, -1)
+            reasoning_effort = reasoning_effort_parameter.get('effort', 'none')
+            # If reasoning effort is not set, then disable thinking, by setting the parameter to 0
+            thinking_budget = self.REASONING_EFFORT_MAP.get(reasoning_effort, 0)
             config_params["thinking_config"] = types.ThinkingConfig(
                 thinking_budget=thinking_budget, 
                 include_thoughts=True
