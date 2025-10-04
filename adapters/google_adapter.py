@@ -148,14 +148,23 @@ class GoogleAdapter(AdapterBase):
 
         return types.GenerateContentConfig(**config_params)
 
-    def _parse_gemini_response(self, response_candidate: types.Candidate, model_name: str,
+    def _parse_gemini_response(self, response: types.HttpResponse, model_name: str,
                                usage_metadata: types.UsageMetadata) -> Message:
         """Parses a Gemini API response candidate into a Message object."""
         text_content, thoughts, files, function_calls = "", [], [], []
 
-        if not response_candidate.content or not response_candidate.content:
-            text_content = f"ERROR. No content. Finish reason: {response_candidate.finish_reason}"
+        usage_metadata=response.usage_metadata
+
+        if not response.candidates or len(response.candidates) == 0:
+            # Get the block reason from prompt_feedback=GenerateContentResponsePromptFeedback(block_reason=...)
+            if prompt_feedback := getattr(response, 'prompt_feedback', None):
+                block_reason = getattr(prompt_feedback, 'block_reason', '')
+            else:
+                block_reason = ''
+            text_content = f"ERROR. No candidates in response. {block_reason}"
+
         else:
+            response_candidate = response.candidates[0]
             for part in response_candidate.content.parts:
                 if fc := part.function_call:
                     function_calls.append(FunctionCall(
@@ -211,13 +220,13 @@ class GoogleAdapter(AdapterBase):
 
         while True:
             history = self.convert_conversation_history_to_adapter_format(the_conversation)
+
             response = self.client.models.generate_content(
                 contents=history, model=model, config=generation_config
             )
 
-            candidate = response.candidates[0]
             assistant_message = self._parse_gemini_response(
-                response_candidate=candidate, model_name=model, usage_metadata=response.usage_metadata
+                response=response, model_name=model, usage_metadata=response.usage_metadata
             )
             the_conversation.messages.append(assistant_message)
 

@@ -1,6 +1,6 @@
 models:
   - name: claude-sonnet-4-5
-    display_name: Claude Sonnet 4.5
+    display_name: Claude Sonnet 4.5 👍
     adapter: AnthropicAdapter
     pricing:
       input: 3 # USD/1M tokens
@@ -349,9 +349,42 @@ models:
       - high
     visible: false
 
+  
+  - name: grok-4
+    display_name: Grok 4
+    adapter: GrokAdapter
+    pricing:
+      input: 3 # USD/1M tokens
+      output: 15 # USD/1M tokens
+    max_tokens: 64_000
+    context_window: 256_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    function_calling: 1
+    web_search: 1
+
+  - name: grok-4-fast-non-reasoning
+    display_name: Grok 4 Fast (Non-Reasoning)
+    adapter: GrokAdapter
+    pricing:
+      input: 0.2 # USD/1M tokens
+      output: 0.5 # USD/1M tokens
+    max_tokens: 64_000
+    context_window: 2_000_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    function_calling: 1
+    web_search: 1
+    visible: false
 
   - name: deepseek-chat
-    display_name: DeepSeek-V3.1 (Non-thinking Mode)
+    display_name: DeepSeek Chat
     adapter: DeepSeekAdapter
     pricing:
       input: 0.56 # USD/1M tokens
@@ -366,7 +399,7 @@ models:
     visible: true
 
   - name: deepseek-reasoner
-    display_name: DeepSeek-V3.1 (Thinking Mode)
+    display_name: DeepSeek Reasoner
     adapter: DeepSeekAdapter
     pricing:
       input: 0.56 # USD/1M tokens
@@ -390,22 +423,7 @@ models:
     context_window: 1_000_000
     inputs:
       - text
-
-
-  - name: grok-4
-    display_name: Grok 4
-    adapter: GrokAdapter
-    pricing:
-      input: 3 # USD/1M tokens
-      output: 15 # USD/1M tokens
-    max_tokens: 64_000
-    context_window: 256_000
-    inputs:
-      - text
-    outputs:
-      - text
-    function_calling: 1
-    web_search: 1
+  
 
   - name: mistral-large-latest
     display_name: Mistral Large
