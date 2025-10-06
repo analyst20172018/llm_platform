@@ -59,7 +59,7 @@ class GoogleAdapter(AdapterBase):
             if file.size < 20_000_000 and file.number_of_pages < 3_600:
                 return types.Part.from_bytes(data=file.bytes, mime_type="application/pdf")
             else:
-                self.logger.warning(f"PDF '{file.name}' exceeds size/page limits; sending as text.")
+                self.logger.info(f"PDF '{file.name}' exceeds size/page limits; sending as text.")
                 text = f'<document name="{file.name}">{file.text}</document>'
                 return types.Part.from_text(text=text)
         raise TypeError(f"Unsupported file type for Gemini: {type(file).__name__}")
@@ -143,6 +143,8 @@ class GoogleAdapter(AdapterBase):
             config_params["tools"].append(types.Tool(google_search=types.GoogleSearchRetrieval()))
         if additional_parameters.get("url_context"):
             config_params["tools"].append(types.Tool(url_context=types.UrlContext()))
+        if additional_parameters.get("code_execution"):
+            config_params["tools"].append(types.Tool(code_execution=types.ToolCodeExecution))
 
         config_params.update(kwargs)
 

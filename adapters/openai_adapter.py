@@ -205,6 +205,11 @@ class OpenAIAdapter(AdapterBase):
         tools = []
         if additional_parameters.get("web_search"):
             tools.append({"type": "web_search_preview"})
+        if additional_parameters.get("code_execution"):
+            tools.append({
+                "type": "code_interpreter",
+                "container": {"type": "auto"}
+            })
         if "image" in additional_parameters.get("response_modalities", []):
             tools.append({"type": "image_generation", "quality": "high", "size": "1536x1024"})
 

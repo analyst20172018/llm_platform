@@ -68,6 +68,7 @@ models:
       - high
     function_calling: 1
     web_search: 1
+    code_execution: 1
 
   - name: gpt-4.1
     display_name: GPT-4.1
@@ -85,6 +86,7 @@ models:
       - image
     function_calling: 1
     web_search: 1
+    code_execution: 1
     visible: false
 
   - name: o3-pro
@@ -100,6 +102,7 @@ models:
       - medium
       - high
     function_calling: 1
+    code_execution: 1
     inputs:
       - image
       - text
@@ -129,22 +132,10 @@ models:
       - low
       - medium
       - high
+    code_execution: 1
+    function_calling: 1
+    web_search: 1
     visible: true
-
-  - name: gpt-5-chat-latest
-    display_name: GPT-5 Chat
-    adapter: OpenAIAdapter
-    pricing:
-      input: 1.25 # USD/1M tokens
-      output: 10 # USD/1M tokens
-    max_tokens: 128_000
-    context_window: 400_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    visible: false
 
   - name: gpt-5-mini
     display_name: GPT-5 mini
@@ -168,6 +159,7 @@ models:
       - medium
       - high
     function_calling: 1
+    code_execution: 1
     web_search: 1
 
   - name: gpt-5-nano
@@ -193,6 +185,7 @@ models:
       - high
     function_calling: 1
     web_search: 1
+    code_execution: 1
     visible: false
 
   - name: gpt-4o-audio-preview
@@ -248,7 +241,6 @@ models:
     web_search: 1
     code_execution: 1
     reasoning_effort:
-      - none
       - dynamic
       - low
       - medium
