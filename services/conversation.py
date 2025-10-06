@@ -211,6 +211,7 @@ class Message:
                  function_calls: List[FunctionCall]=[],
                  function_responses: List[FunctionResponse]=[],
                  id=None,
+                 additional_responses: List[str]=[],
                  ):
         
         assert role in ["user", "assistant", "function"] #the only possible roles
@@ -223,6 +224,7 @@ class Message:
         self.function_calls = function_calls
         self.function_responses = function_responses
         self.id = id
+        self.additional_responses = additional_responses
 
     @property
     def text(self):
@@ -232,7 +234,8 @@ class Message:
         return f"{self.role}: {self.content};" + \
                 "\n".join([str(thinking_response) for thinking_response in self.thinking_responses]) + "\n" + \
                 "\n".join([str(function_call) for function_call in self.function_calls]) + "\n\n" + \
-                "\n".join([str(function_response) for function_response in self.function_responses])
+                "\n".join([str(function_response) for function_response in self.function_responses]) + \
+                "\n".join([str(additional_response) for additional_response in self.additional_responses])
 
 class Conversation:
     def __init__(self, 

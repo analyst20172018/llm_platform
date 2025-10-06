@@ -153,7 +153,7 @@ class GoogleAdapter(AdapterBase):
     def _parse_gemini_response(self, response: types.HttpResponse, model_name: str,
                                usage_metadata: types.UsageMetadata) -> Message:
         """Parses a Gemini API response candidate into a Message object."""
-        text_content, thoughts, files, function_calls = "", [], [], []
+        text_content, thoughts, files, function_calls, additional_responses = "", [], [], [], []
 
         usage_metadata=response.usage_metadata
 
@@ -184,6 +184,10 @@ class GoogleAdapter(AdapterBase):
                         file_bytes=part.inline_data.data,
                         file_name=f"image_{len(files)}.png"
                     ))
+                elif part.executable_code:
+                    additional_responses.append("# Executable code \n" + part.executable_code.code)
+                elif part.code_execution_result:
+                    additional_responses.append("# Code execution result \n" + part.code_execution_result.output)
 
         usage = {
             "model": model_name,
@@ -198,7 +202,8 @@ class GoogleAdapter(AdapterBase):
             thinking_responses=thoughts,
             files=files,
             function_calls=function_calls,
-            usage=usage
+            usage=usage,
+            additional_responses=additional_responses,
         )
 
     def request_llm(self, model: str, the_conversation: Conversation, functions: List[BaseTool] = None,

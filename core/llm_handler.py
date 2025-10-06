@@ -173,6 +173,8 @@ class APIHandler:
                 * ``web_search`` : bool  
                 When *True* the model may call an integrated web‑search /
                 retrieval tool (OpenAI, Gemini).
+                * ``code_execution`` : bool  
+                When *True* the model may call an integrated code_execution tool (OpenAI, Gemini).
                 * ``citations`` : bool  
                 Ask Anthropic models to return source citations for attached
                 documents.

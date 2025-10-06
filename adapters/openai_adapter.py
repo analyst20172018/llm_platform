@@ -247,8 +247,10 @@ class OpenAIAdapter(AdapterBase):
             response: The response object from the OpenAI client.
 
         Returns:
-            A tuple containing the answer text, a list of thinking responses,
-            a list of generated media files, and a usage dictionary.
+            * the answer text, 
+            * a list of thinking responses,
+            * a list of generated media files, and 
+            * a usage dictionary.
         """
         usage = {
             "model": getattr(response, "model", "Unknown model"),
