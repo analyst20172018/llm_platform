@@ -13,6 +13,7 @@ import inspect
 import json
 from typing import Callable, Dict, List, Tuple, Union
 from loguru import logger
+import time
 
 from openai import AsyncOpenAI, OpenAI
 
@@ -237,6 +238,10 @@ class OpenAIAdapter(AdapterBase):
                 messages, kwargs = self.convert_conversation_history_to_adapter_format([last_user_message], **kwargs)
                 parameters["input"] = messages
 
+        # Use background mode for long-running tasks if supported
+        if model_object and model_object["background_mode"]:
+            parameters["background"] = True
+
         return parameters
 
     def _parse_response(self, response) -> Tuple[str, List[ThinkingResponse], List[MediaFile], Dict]:
@@ -452,6 +457,12 @@ class OpenAIAdapter(AdapterBase):
 
             response = self.client.responses.create(**parameters)
 
+            if parameters.get("background"):
+                logger.info(f"Background task initiated")
+                while response.status in {"queued", "in_progress"}:
+                    time.sleep(10)  # Poll every 10 seconds
+                    response = self.client.responses.retrieve(response.id)
+
         answer_text, thinking_responses, files_from_response, usage = self._parse_response(response)
 
         message = Message(
@@ -536,6 +547,12 @@ class OpenAIAdapter(AdapterBase):
 
         # 1. Get response from the model
         response = self.client.responses.create(**parameters)
+        if parameters.get("background"):
+            logger.info(f"Background task initiated. Response ID: {response.id}")
+            while response.status in {"queued", "in_progress"}:
+                time.sleep(10)  # Poll every 10 seconds
+                response = self.client.responses.retrieve(response.id)
+
         text, thinking, files, usage = self._parse_response(response)
         function_calls = self._get_function_calls_from_response(response)
 
@@ -658,6 +675,44 @@ class OpenAIAdapter(AdapterBase):
             ImageFile.from_base64(base64_str=img.b64_json, file_name=f"edited_image_{i}.png")
             for i, img in enumerate(response.data)
         ]
+
+    async def generate_video(self, prompt: str, model: str, seconds: str = '12', size: str = "1280x720", **kwargs) -> List[VideoFile]:
+        """
+        Generates a short video clip by invoking OpenAI's video API, polls until completion,
+        downloads the binary stream, and wraps the result in a VideoFile.
+
+        Args:
+            prompt: Natural-language description of the video to create.
+            model: OpenAI video model identifier to execute the request.
+            seconds: Desired duration of the generated clip in seconds.
+            size: Output resolution expressed as WIDTHxHEIGHT.
+                - sora-2 supports 
+                    * Portrait: 720x1280 Landscape: 1280x720
+                - sora-2-pro supports 
+                    * Portrait: 720x1280 Landscape: 1280x720
+                    * Portrait: 1024x1792 Landscape: 1792x1024
+            **kwargs: Additional parameters forwarded to the video creation call.
+
+        Returns:
+            A list containing the generated VideoFile object once the job completes.
+        """
+        
+        video = await self.async_client.videos.create_and_poll(
+            model=model,
+            prompt=prompt,
+            seconds=seconds,
+            size=size,
+            **kwargs,
+        )
+
+        if video.status == "completed":
+            logger.info("Video successfully completed: ", video)
+        else:
+            logger.error("Video creation failed. Status: ", video.status)
+
+        content = await self.async_client.videos.download_content(video.id, variant="video")
+        await content.write_to_file("video.mp4")
+        return [VideoFile.from_bytes_io(content, file_name="generated_video.mp4")]
 
     def voice_to_text(
         self, audio_file, response_format: str = "text", language: str = "en", model: str = GPT4O_TRANSCRIBE

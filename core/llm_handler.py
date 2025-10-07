@@ -505,7 +505,7 @@ class APIHandler:
         else: 
             raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'google' as providers. ")
         
-    def generate_video(self, prompt: str, provider: str='google', **kwargs):
+    async def generate_video(self, prompt: str, provider: str='google', **kwargs):
         """
         Generates an video based on the given prompt using the specified provider.
 
@@ -529,6 +529,10 @@ class APIHandler:
         if provider.lower() == 'google':
             adapter = self._lazy_initialization_of_adapter("GoogleAdapter")
             videos = adapter.generate_video(prompt, **kwargs)
+            return videos
+        elif provider.lower() == 'openai':
+            adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
+            videos = await adapter.generate_video(prompt, **kwargs)
             return videos
         else: 
             raise ValueError(f"Provider {provider} is not supported. I understand only 'google' as provider.")
