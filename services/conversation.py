@@ -199,7 +199,7 @@ class ThinkingResponse:
             }
 
     def __str__(self):
-        return self.content
+        return f"Id: {self.id}; Thinking: {self.content}"
 
 class Message:
     def __init__(self, 

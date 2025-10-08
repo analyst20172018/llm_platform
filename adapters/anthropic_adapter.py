@@ -120,7 +120,8 @@ class ClaudeStreamProcessor:
         delta_type = getattr(delta, 'type', None)
         if delta_type == 'thinking_delta':
             self._current_thinking_text += getattr(delta, 'thinking', '')
-            self._current_block_signature = getattr(delta, 'signature', self._current_block_signature)
+        elif delta_type == 'signature_delta':
+            self._current_block_signature = getattr(delta, 'signature', None)
         elif delta_type == 'text_delta':
             self.response_text += getattr(delta, 'text', '')
         elif delta_type == 'input_json_delta':
