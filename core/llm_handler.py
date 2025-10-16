@@ -164,30 +164,18 @@ class APIHandler:
                 ``callback(tool_name: str, args: list, result: Any) -> None``  
                 Invoked after every successful tool execution.
             additional_parameters : dict, optional
-                Provider‑agnostic high‑level switches.  Currently understood keys
-                (silently ignored by adapters that do not support them):
-
-                * ``response_modalities`` : list[str]  
-                e.g. ``["text", "image", "audio"]`` – request multimodal output
-                from OpenAI or Gemini.
-                * ``web_search`` : bool  
-                When *True* the model may call an integrated web‑search /
-                retrieval tool (OpenAI, Gemini).
-                * ``code_execution`` : bool  
-                When *True* the model may call an integrated code_execution tool (OpenAI, Gemini).
-                * ``citations`` : bool  
-                Ask Anthropic models to return source citations for attached
-                documents.
-
+                Provider‑agnostic high‑level switches.  Currently understood keys (silently ignored by adapters that do not support them):
+                * ``response_modalities`` : list[str]  e.g. ``["text", "image", "audio"]`` – request multimodal output from OpenAI or Gemini.
+                * ``web_search`` : bool When *True* the model may call an integrated web‑search/retrieval tool (OpenAI, Gemini).
+                * ``code_execution`` : bool  When *True* the model may call an integrated code_execution tool (OpenAI, Gemini).
+                * ``citations`` : bool  Ask Anthropic models to return source citations for attached documents.
+                * ``structured_output``: BaseModel - Pydantic model class: the adapter will attempt to parse the model’s response into an instance of that class.
             **kwargs
                 Provider‑specific low‑level parameters that are forwarded unchanged
                 to the adapter.  Common examples:
-
                 * ``max_tokens`` : int – hard limit for the assistant’s answer.  
-                * ``reasoning`` : dict – OpenAI / Anthropic chain‑of‑thought
-                budget, e.g. ``{"effort": "high"}``.
-                * ``audio`` / ``modalities`` – legacy keys for GPT‑4o‑audio
-                endpoints.  
+                * ``reasoning`` : dict – OpenAI / Anthropic chain‑of‑thought budget, e.g. ``{"effort": "high"}``.
+                * ``audio`` / ``modalities`` – legacy keys for GPT‑4o‑audio endpoints.  
                 * Any other keyword accepted by the vendor’s SDK.
 
             Returns
@@ -316,11 +304,13 @@ class APIHandler:
                 ``callback(tool_name: str, args: list, result: Any)`` executed after
                 every tool call.
             additional_parameters : dict, optional
-                High‑level, provider‑agnostic feature switches.  Recognised keys:
+                Provider‑agnostic high‑level switches.  Currently understood keys (silently ignored by adapters that do not support them):
 
-                * ``response_modalities`` : list[str] – e.g. ``["text", "image"]``  
-                * ``web_search``           : bool  
-                * ``citations``           : bool  
+                * ``response_modalities`` : list[str]  e.g. ``["text", "image", "audio"]`` – request multimodal output from OpenAI or Gemini.
+                * ``web_search`` : bool When *True* the model may call an integrated web‑search/retrieval tool (OpenAI, Gemini).
+                * ``code_execution`` : bool  When *True* the model may call an integrated code_execution tool (OpenAI, Gemini).
+                * ``citations`` : bool  Ask Anthropic models to return source citations for attached documents.
+                * ``structured_output``: BaseModel - Pydantic model class: the adapter will attempt to parse the model’s response into an instance of that class.
 
                 Adapters that do not support a key ignore it silently.
             **kwargs
@@ -358,6 +348,13 @@ class APIHandler:
         # Fetch max_tokens from the model config
         if not "max_tokens" in kwargs:
             kwargs["max_tokens"] = self.model_config[model].max_tokens
+
+        # Compare parameters with the model config and warn if something is off
+        parameters_to_check = ["structured_output", "web_search", "code_execution"]
+        for parameter in parameters_to_check:
+            if parameter in additional_parameters and not getattr(self.model_config[model], parameter, False):
+                logger.warning(f"Model {model} does not support {parameter}. Ignoring the {parameter} parameter.")
+                additional_parameters.pop(parameter)
 
         try:
             response = adapter.request_llm(model=model, 

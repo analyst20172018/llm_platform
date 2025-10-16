@@ -242,6 +242,10 @@ class OpenAIAdapter(AdapterBase):
         if model_object and model_object["background_mode"]:
             parameters["background"] = True
 
+        # Structured output
+        if structured_output_class := additional_parameters.get("structured_output", None):
+            parameters["text_format"] = structured_output_class
+
         return parameters
 
     def _parse_response(self, response) -> Tuple[str, List[ThinkingResponse], List[MediaFile], Dict]:
@@ -455,7 +459,10 @@ class OpenAIAdapter(AdapterBase):
                 model, the_conversation, additional_parameters, use_previous_response_id=True, **kwargs
             )
 
-            response = self.client.responses.create(**parameters)
+            if "text_format" in parameters:
+                response = self.client.responses.parse(**parameters)
+            else:
+                response = self.client.responses.create(**parameters)
 
             if parameters.get("background"):
                 logger.info(f"Background task initiated")
@@ -546,7 +553,11 @@ class OpenAIAdapter(AdapterBase):
         parameters["tools"].extend(tools)
 
         # 1. Get response from the model
-        response = self.client.responses.create(**parameters)
+        if "text_format" in parameters:
+            response = self.client.responses.parse(**parameters)
+        else:
+            response = self.client.responses.create(**parameters)
+
         if parameters.get("background"):
             logger.info(f"Background task initiated. Response ID: {response.id}")
             while response.status in {"queued", "in_progress"}:
@@ -711,8 +722,8 @@ class OpenAIAdapter(AdapterBase):
             logger.error("Video creation failed. Status: ", video.status)
 
         content = await self.async_client.videos.download_content(video.id, variant="video")
-        await content.write_to_file("video.mp4")
-        return [VideoFile.from_bytes_io(content, file_name="generated_video.mp4")]
+        #await content.write_to_file("video.mp4")
+        return [VideoFile.from_bytes(content, file_name="generated_video.mp4")]
 
     def voice_to_text(
         self, audio_file, response_format: str = "text", language: str = "en", model: str = GPT4O_TRANSCRIBE

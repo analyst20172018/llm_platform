@@ -36,7 +36,7 @@ class GoogleAdapter(AdapterBase):
     # Class-level constants for configuration and mapping
     GEMINI_ROLE_MAPPING = {'user': 'user', 'assistant': 'model'}
     REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000, 'low': 4_000, 'dynamic': -1}
-    VEO_MODEL = 'veo-3.0-generate-preview'
+    VEO_MODEL = 'veo-3.1-generate-preview'
 
     def __init__(self):
         super().__init__()
@@ -59,7 +59,7 @@ class GoogleAdapter(AdapterBase):
             if file.size < 20_000_000 and file.number_of_pages < 3_600:
                 return types.Part.from_bytes(data=file.bytes, mime_type="application/pdf")
             else:
-                self.logger.info(f"PDF '{file.name}' exceeds size/page limits; sending as text.")
+                logger.info(f"PDF '{file.name}' exceeds size/page limits; sending as text.")
                 text = f'<document name="{file.name}">{file.text}</document>'
                 return types.Part.from_text(text=text)
         raise TypeError(f"Unsupported file type for Gemini: {type(file).__name__}")
@@ -88,7 +88,7 @@ class GoogleAdapter(AdapterBase):
                     try:
                         parts.append(self._convert_file_to_part(file))
                     except TypeError as e:
-                        self.logger.warning(e)
+                        logger.warning(e)
 
             if message.function_calls:
                 for fc in message.function_calls:
@@ -145,6 +145,11 @@ class GoogleAdapter(AdapterBase):
             config_params["tools"].append(types.Tool(url_context=types.UrlContext()))
         if additional_parameters.get("code_execution"):
             config_params["tools"].append(types.Tool(code_execution=types.ToolCodeExecution))
+
+        # Structured output
+        if structured_output_class := additional_parameters.get("structured_output", None):
+            config_params["response_mime_type"] = "application/json"
+            config_params["response_schema"] = structured_output_class
 
         config_params.update(kwargs)
 
@@ -252,7 +257,7 @@ class GoogleAdapter(AdapterBase):
                     result = function_to_call(**args)
                 except Exception as e:
                     result = {"error": f"Execution failed: {e}"}
-                    self.logger.error(f"Error executing function '{fc.name}': {e}")
+                    logger.error(f"Error executing function '{fc.name}': {e}")
 
                 function_responses.append(FunctionResponse(name=fc.name, response=result, id=fc.id))
                 if tool_output_callback:
@@ -328,44 +333,70 @@ class GoogleAdapter(AdapterBase):
 
     def generate_video(self, 
                        prompt: str, 
-                       #n: int = 1, # Number of videos to generate, for Veo 3 is 1 only
-                       #aspect_ratio: str = "16:9", # for Veo 2 only, for Veo 3 16:9 only
-                       #person_generation: str = "ALLOW_ADULT", # for Veo 2 only, for Veo 3 allow_all only (not configurable)
-                       #image: ImageFile = None, # not available for Veo 3
-                       #number_of_videos: int = 1, 
+                       model: str = VEO_MODEL,
+                       aspect_ratio: str = "16:9",                  # "16:9" (default, 720p & 1080p), "9:16"(720p & 1080p)
+                       person_generation: str = "allow_all",        # Text-to-video & Extension: "allow_all" only; Image-to-video, Interpolation, & Reference images: "allow_adult" only
+                       resolution: str = "1080p",                   # "720p" (default), "1080p" (only supports 8s duration and 16:9) 
+                       duration_seconds: int = 8,                   # "4", "6", "8". Must be "8" when using extension or interpolation (supports both 16:9 and 9:16), and when using referenceImages (only supports 16:9)
                        negative_prompt: str = None,
-                       #duration_seconds: int = 8 # For Veo 3 8 seconds only
+                       image: ImageFile = None,                     # An initial image to animate.
+                       number_of_videos: int = 1,                   # Number of videos to generate. Default is 1, max is 4.
+                       #generate_audio: bool = True,                 # Whether to generate audio with the video. Default is True. NOT SUPPORTED
+                       seed: int = None,                            # Random seed for generation. Default is None (random).
+                       lastFrame: ImageFile = None,                 # The final image for an interpolation video to transition. Must be used in combination with the image parameter.
+                       video: VideoFile = None,                     # Video to be used for video extension (only support resolution: 720p, up to 20 times)
+                       reference_images: List[ImageFile] = None,    # Up to three images to be used as style and content references.
                     ) -> List[VideoFile]:
         """Generates videos using the Veo model."""
         params = {
-            "model": self.VEO_MODEL, 
-            "prompt": prompt
+            "model": model, 
+            "prompt": prompt,
         }
-        """if image:
+        if image:
             params["image"] = types.Image(image_bytes=image.file_bytes, mime_type=f"image/{image.extension}")
-            person_generation = "DONT_ALLOW"  # Required for image-to-video"""
-        if negative_prompt:
-            params["negative_prompt"] = negative_prompt
+            if person_generation != "allow_adult":
+                logger.warning("When using 'image' parameter, 'person_generation' must be set to 'allow_adult'. Overriding.")
+                person_generation = "allow_adult"
 
-        """config = types.GenerateVideosConfig(
-            # person_generation=person_generation,
-            # aspect_ratio=aspect_ratio,
+        if video:
+            params["video"] = types.Video(video_bytes=video.file_bytes, mime_type=f"video/{video.extension}")
+            if duration_seconds != 8:
+                logger.warning("When using 'video' parameter, 'duration_seconds' must be set to 8. Overriding.")
+                duration_seconds = 8
+            if resolution != "720p":
+                logger.warning("When using 'video' parameter, 'resolution' must be set to '720p'. Overriding.")
+                resolution = "720p"
+
+        config = types.GenerateVideosConfig(
             number_of_videos=number_of_videos,
-            duration_seconds=duration_seconds
+            aspect_ratio=aspect_ratio,
+            duration_seconds=duration_seconds,
+            resolution=resolution,
+            person_generation=person_generation,
+            #generate_audio=generate_audio,
         )
-        params["config"] = config"""
+        if negative_prompt:
+            config.negative_prompt = negative_prompt
+        if seed:
+            config.seed = seed
+        if reference_images:
+            if len(reference_images) > 3:
+                raise ValueError("A maximum of 3 reference images can be provided.")
+            config.reference_images = [
+                types.Image(image_bytes=img.file_bytes, mime_type=f"image/{img.extension}")
+                for img in reference_images
+            ]
+        if lastFrame:
+            if not image:
+                raise ValueError("The 'lastFrame' parameter requires the 'image' parameter to be set.")
+            config.last_frame = types.Image(image_bytes=lastFrame.file_bytes, mime_type=f"image/{lastFrame.extension}")
+        params["config"] = config
 
         operation = self.client.models.generate_videos(**params)
 
         while not operation.done:
             time.sleep(20)  # Polling interval
             operation = self.client.operations.get(operation)
-
-        #for n, generated_video in enumerate(operation.response.generated_videos):
-        #    self.client.files.download(file=generated_video.video)
-        #    generated_video.video.save(f"video{n}.mp4")
-        
-        #return
 
         video_files = []
         for i, generated_video in enumerate(operation.response.generated_videos):
