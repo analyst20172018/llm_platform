@@ -10,6 +10,7 @@ from llm_platform.services.conversation import Conversation, Message, FunctionCa
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
 import json
 import inspect
+from loguru import logger
 
 class GrokAdapter(AdapterBase):
     

@@ -352,7 +352,7 @@ class APIHandler:
         # Compare parameters with the model config and warn if something is off
         parameters_to_check = ["structured_output", "web_search", "code_execution"]
         for parameter in parameters_to_check:
-            if parameter in additional_parameters and not getattr(self.model_config[model], parameter, False):
+            if parameter in additional_parameters and self.model_config[model][parameter] is None:
                 logger.warning(f"Model {model} does not support {parameter}. Ignoring the {parameter} parameter.")
                 additional_parameters.pop(parameter)
 
