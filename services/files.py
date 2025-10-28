@@ -30,6 +30,7 @@ class BaseFile(ABC):
         output.name = self.name
         return output
 
+
 class DocumentFile(BaseFile):
     def __init__(self, name: str=""):
         super().__init__(name=name)
@@ -39,6 +40,10 @@ class DocumentFile(BaseFile):
         file_name = os.path.basename(filename)
         with open(filename, "rb") as document_file:
             return cls(document_file.read(), file_name)
+        
+    @classmethod
+    def from_bytes(cls, bytes: BinaryIO, name: str="") -> 'DocumentFile':
+        return cls(bytes, name)
 
 class TextDocumentFile(DocumentFile):
     def __init__(self, text: str, name: str=""):
@@ -124,6 +129,7 @@ class ExcelDocumentFile(DocumentFile):
     @property
     def base64(self) -> str:
         return base64.b64encode(self.bytes).decode('utf-8')
+
 
 class MediaFile(BaseFile):
     

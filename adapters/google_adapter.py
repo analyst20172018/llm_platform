@@ -359,7 +359,7 @@ class GoogleAdapter(AdapterBase):
                 person_generation = "allow_adult"
 
         if video:
-            params["video"] = types.Video(video_bytes=video.file_bytes, mime_type=f"video/{video.extension}")
+            params["source"] = types.Video(video_bytes=video.file_bytes, mime_type=f"video/{video.extension}") # Use `source` instead of `video`
             if duration_seconds != 8:
                 logger.warning("When using 'video' parameter, 'duration_seconds' must be set to 8. Overriding.")
                 duration_seconds = 8
