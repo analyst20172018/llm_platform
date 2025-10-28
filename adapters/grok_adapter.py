@@ -7,7 +7,10 @@ import os
 from typing import List, Tuple, Callable, Dict
 from llm_platform.tools.base import BaseTool
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse, ThinkingResponse
-from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
+from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
+                                         TextDocumentFile, PDFDocumentFile,
+                                         ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
+                                         MediaFile, ImageFile, VideoFile)
 import json
 import inspect
 from loguru import logger
@@ -70,7 +73,7 @@ class GrokAdapter(AdapterBase):
                         raise NotImplementedError("Grok does not support audio files")
 
                     # Text documents
-                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile)):
+                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
                         
                         # Add the text document to the history as a text in XML tags
                         document_content_as_text = f"""<document name="{each_file.name}">{each_file.text}</document>"""

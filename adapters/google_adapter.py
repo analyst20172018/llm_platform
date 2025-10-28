@@ -16,9 +16,10 @@ from .adapter_base import AdapterBase
 from llm_platform.services.conversation import (Conversation, FunctionCall,
                                                 FunctionResponse, Message,
                                                 ThinkingResponse)
-from llm_platform.services.files import (AudioFile, ExcelDocumentFile,
-                                         ImageFile, MediaFile, PDFDocumentFile,
-                                         TextDocumentFile, VideoFile)
+from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
+                                         TextDocumentFile, PDFDocumentFile,
+                                         ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
+                                         MediaFile, ImageFile, VideoFile)
 from llm_platform.tools.base import BaseTool
 
 class ImagenModel(Enum):
@@ -51,7 +52,7 @@ class GoogleAdapter(AdapterBase):
             return types.Part.from_bytes(data=file.file_bytes, mime_type=f"image/{file.extension}")
         if isinstance(file, AudioFile):
             return types.Part.from_bytes(data=file.file_bytes, mime_type="audio/mp3")
-        if isinstance(file, (TextDocumentFile, ExcelDocumentFile)):
+        if isinstance(file, (TextDocumentFile, ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
             text = f'<document name="{file.name}">{file.text}</document>'
             return types.Part.from_text(text=text)
         if isinstance(file, PDFDocumentFile):

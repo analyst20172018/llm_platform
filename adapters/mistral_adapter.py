@@ -5,7 +5,10 @@ from typing import List, Tuple, Callable, Dict
 from loguru import logger
 from llm_platform.tools.base import BaseTool
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
-from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
+from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
+                                         TextDocumentFile, PDFDocumentFile,
+                                         ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
+                                         MediaFile, ImageFile, VideoFile)
 import json
 import inspect
 
@@ -58,7 +61,7 @@ class MistralAdapter(AdapterBase):
                         history_message["content"].append(audio_content)
                     
                     # Text documents
-                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile)):
+                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
 
                         # Add the text document to the history as a text in XML tags
                         new_text_content = {

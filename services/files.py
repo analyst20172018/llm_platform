@@ -9,6 +9,9 @@ from pydub import AudioSegment
 from PyPDF2 import PdfReader
 import pandas as pd
 import requests
+from loguru import logger
+import zipfile
+import xml.etree.ElementTree as ET
 
 
 class BaseFile(ABC):
@@ -35,15 +38,20 @@ class DocumentFile(BaseFile):
     def __init__(self, name: str=""):
         super().__init__(name=name)
 
-    @classmethod
-    def from_file(cls, filename: str) -> 'DocumentFile':
-        file_name = os.path.basename(filename)
-        with open(filename, "rb") as document_file:
-            return cls(document_file.read(), file_name)
-        
-    @classmethod
-    def from_bytes(cls, bytes: BinaryIO, name: str="") -> 'DocumentFile':
-        return cls(bytes, name)
+    @property
+    def size(self) -> int:
+        if hasattr(self, 'bytes'):
+            return len(self.bytes)
+        elif hasattr(self, 'text'):
+            return len(self.text)
+        return 0
+    
+    @property
+    def base64(self) -> str:
+        if hasattr(self, 'bytes'):
+            return base64.b64encode(self.bytes).decode('utf-8')
+        logger.warning("Base64 encoding not available for this document type.")
+        return ""
 
 class TextDocumentFile(DocumentFile):
     def __init__(self, text: str, name: str=""):
@@ -53,10 +61,7 @@ class TextDocumentFile(DocumentFile):
     @classmethod
     def from_string(cls, text: str, name: str="") -> 'TextDocumentFile':
         return cls(text, name)
-    
-    @property
-    def size(self) -> int:
-        return len(self.text)
+
 
 class PDFDocumentFile(DocumentFile):
     def __init__(self, bytes: BinaryIO, name: str=""):
@@ -66,10 +71,6 @@ class PDFDocumentFile(DocumentFile):
     @classmethod
     def from_bytes(cls, bytes: BinaryIO, name: str="") -> 'PDFDocumentFile':
         return cls(bytes, name)
-
-    @property
-    def size(self) -> int:
-        return len(self.bytes)
 
     @property
     def text(self) -> str:
@@ -82,10 +83,6 @@ class PDFDocumentFile(DocumentFile):
             return text
         except Exception as e:
             return ""
-
-    @property
-    def base64(self) -> str:
-        return base64.b64encode(self.bytes).decode('utf-8')
     
     @property
     def number_of_pages(self) -> int:
@@ -106,10 +103,6 @@ class ExcelDocumentFile(DocumentFile):
         return cls(bytes, name)
 
     @property
-    def size(self) -> int:
-        return len(self.bytes)
-
-    @property
     def text(self) -> str:
         # Read Excel file from bytes using pandas
         excel_file = io.BytesIO(self.bytes)
@@ -126,10 +119,68 @@ class ExcelDocumentFile(DocumentFile):
         text = "\n".join(text_parts)
         return text
 
-    @property
-    def base64(self) -> str:
-        return base64.b64encode(self.bytes).decode('utf-8')
+class WordDocumentFile(DocumentFile):
+    def __init__(self, bytes: BinaryIO, name: str=""):
+        super().__init__(name=name)
+        self.bytes = bytes
 
+    @classmethod
+    def from_bytes(cls, bytes: BinaryIO, name: str="") -> 'WordDocumentFile':
+        return cls(bytes, name)
+    
+    @property
+    def text(self) -> str:
+        try:
+            doc_stream = io.BytesIO(self.bytes)
+            with zipfile.ZipFile(doc_stream) as document:
+                xml_bytes = document.read("word/document.xml")
+            root = ET.fromstring(xml_bytes)
+            namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            paragraphs: List[str] = []
+            for paragraph in root.iter(f"{namespace}p"):
+                texts = [node.text for node in paragraph.iter(f"{namespace}t") if node.text]
+                if texts:
+                    paragraphs.append("".join(texts))
+            return "\n".join(paragraphs)
+        except Exception:
+            logger.exception("Failed to extract text from Word document.")
+            return ""
+
+class PowerPointDocumentFile(DocumentFile):
+    def __init__(self, bytes: BinaryIO, name: str=""):
+        super().__init__(name=name)
+        self.bytes = bytes
+
+    @classmethod
+    def from_bytes(cls, bytes: BinaryIO, name: str="") -> 'PowerPointDocumentFile':
+        return cls(bytes, name)
+
+    @property
+    def text(self) -> str:
+        try:
+            ppt_stream = io.BytesIO(self.bytes)
+            with zipfile.ZipFile(ppt_stream) as presentation:
+                slide_entries = []
+                for name in presentation.namelist():
+                    if name.startswith("ppt/slides/slide") and name.endswith(".xml"):
+                        try:
+                            index = int(name.rsplit("slide", 1)[1].split(".xml")[0])
+                        except (IndexError, ValueError):
+                            index = 0
+                        slide_entries.append((index, name))
+                slide_entries.sort(key=lambda entry: entry[0])
+                namespace = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+                slides_text: List[str] = []
+                for _, slide_name in slide_entries:
+                    xml_bytes = presentation.read(slide_name)
+                    root = ET.fromstring(xml_bytes)
+                    texts = [node.text for node in root.iter(f"{namespace}t") if node.text]
+                    if texts:
+                        slides_text.append(" ".join(texts))
+                return "\n\n".join(slides_text)
+        except Exception:
+            logger.exception("Failed to extract text from PowerPoint document.")
+            return ""
 
 class MediaFile(BaseFile):
     

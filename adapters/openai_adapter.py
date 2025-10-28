@@ -22,9 +22,9 @@ from llm_platform.services.conversation import (Conversation, FunctionCall,
                                                 FunctionResponse, Message,
                                                 ThinkingResponse)
 from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
-                                         ExcelDocumentFile, ImageFile,
-                                         MediaFile, PDFDocumentFile,
-                                         TextDocumentFile, VideoFile)
+                                         TextDocumentFile, PDFDocumentFile,
+                                         ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
+                                         MediaFile, ImageFile, VideoFile)
 from llm_platform.tools.base import BaseTool
 
 from .adapter_base import AdapterBase
@@ -100,7 +100,7 @@ class OpenAIAdapter(AdapterBase):
                 "type": TEXT_INPUT_TYPE,
                 "text": f'<document name="{file.name}">{file.text}</document>',
             }
-        if isinstance(file, (TextDocumentFile, ExcelDocumentFile)):
+        if isinstance(file, (TextDocumentFile, ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
             return {
                 "type": TEXT_INPUT_TYPE,
                 "text": f'<document name="{file.name}">{file.text}</document>',

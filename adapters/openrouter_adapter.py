@@ -3,7 +3,10 @@ from openai import OpenAI
 import os
 from typing import List, Tuple, Callable, Dict
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
-from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
+from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
+                                         TextDocumentFile, PDFDocumentFile,
+                                         ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
+                                         MediaFile, ImageFile, VideoFile)
 from loguru import logger
 
 class OpenRouterAdapter(AdapterBase):
@@ -72,7 +75,7 @@ class OpenRouterAdapter(AdapterBase):
                         history_message["content"].append(audio_content)
                     
                     # Text documents
-                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile)):
+                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile, PDFDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
                         
                         # Ensure that history_message["content"] is a list, not a string
                         if not isinstance(history_message["content"], list):
