@@ -11,6 +11,14 @@ class BaseTool(ABC):
     def __call__(self, **kwargs) -> Any:
         """Executes the tool with the given arguments."""
         raise NotImplementedError
+    
+    @property
+    def __name__(self):
+        return self.__class__.__name__
+    
+    @property
+    def name(self):
+        return self.__class__.__name__
 
     @classmethod
     def _convert_type_names(cls, type_name: str) -> str:

@@ -182,6 +182,7 @@ class PowerPointDocumentFile(DocumentFile):
             logger.exception("Failed to extract text from PowerPoint document.")
             return ""
 
+
 class MediaFile(BaseFile):
     
     def __init__(self, file_bytes: bytes, name: str):
