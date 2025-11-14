@@ -90,6 +90,7 @@ models:
       - low
       - medium
       - high
+    temperature: 0 # It means, that the parameter `temperature` is not available for this model.
     function_calling: 1
     web_search: 1
     code_execution: 1
