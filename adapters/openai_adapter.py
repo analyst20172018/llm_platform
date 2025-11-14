@@ -192,7 +192,8 @@ class OpenAIAdapter(AdapterBase):
 
         # For reasoning-focused models, certain parameters are not needed
         model_object = self.model_config[model]
-        if "temperature" in model_object and model_object["temperature"] == 0:
+        temperature = model_object["temperature"]
+        if temperature == 0:
             kwargs.pop("temperature", None)
 
         # Rename 'max_tokens' to OpenAI's expected 'max_output_tokens'
