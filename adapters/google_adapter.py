@@ -49,7 +49,10 @@ class GoogleAdapter(AdapterBase):
     def _convert_file_to_part(self, file: MediaFile) -> types.Part:
         """Converts a MediaFile object to a Gemini API Part."""
         if isinstance(file, ImageFile):
-            return types.Part.from_bytes(data=file.file_bytes, mime_type=f"image/{file.extension}")
+            return types.Part.from_bytes(
+                    data=file.file_bytes, 
+                    mime_type=f"image/{file.extension}"
+            )
         if isinstance(file, AudioFile):
             return types.Part.from_bytes(data=file.file_bytes, mime_type="audio/mp3")
         if isinstance(file, (TextDocumentFile, ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
@@ -95,7 +98,10 @@ class GoogleAdapter(AdapterBase):
                 for fc in message.function_calls:
                     struct_args = struct_pb2.Struct()
                     struct_args.update(json.loads(fc.arguments))
-                    parts.append(types.Part.from_function_call(name=fc.name, args=struct_args))
+                    part = types.Part.from_function_call(name=fc.name, args=struct_args)
+                    if fc.id:
+                        part.thought_signature = fc.id
+                    parts.append(part)
 
             if parts:
                 history.append(types.Content(role=role, parts=parts))
@@ -120,14 +126,24 @@ class GoogleAdapter(AdapterBase):
             kwargs['max_output_tokens'] = the_conversation.model_config.get_max_tokens(model)
 
         config_params = {
-            "temperature": temperature,
             "tools": tools,
             "safety_settings": self.safety_settings,
         }
 
+        # Handle temperature settings (For Gemini 3 it is always 1)
+        model_object = self.model_config[model]
+        temperature = model_object["temperature"]
+        if temperature == 0:
+            pass
+        elif temperature == 1:
+            config_params["temperature"] = 1
+        else:
+            config_params["temperature"] = temperature
+
         if the_conversation.system_prompt:
             config_params["system_instruction"] = the_conversation.system_prompt
 
+        # Reasoning effort / Thinking config
         if reasoning_effort_parameter := kwargs.pop('reasoning', {}):
             reasoning_effort = reasoning_effort_parameter.get('effort', 'none')
             # If reasoning effort is not set, then disable thinking, by setting the parameter to 0
@@ -141,7 +157,7 @@ class GoogleAdapter(AdapterBase):
             config_params["response_modalities"] = additional_parameters["response_modalities"]
 
         if additional_parameters.get("web_search"):
-            config_params["tools"].append(types.Tool(google_search=types.GoogleSearchRetrieval()))
+            config_params["tools"].append(types.Tool(google_search=types.GoogleSearch()))
         if additional_parameters.get("url_context"):
             config_params["tools"].append(types.Tool(url_context=types.UrlContext()))
         if additional_parameters.get("code_execution"):
@@ -175,8 +191,15 @@ class GoogleAdapter(AdapterBase):
             response_candidate = response.candidates[0]
             for part in response_candidate.content.parts:
                 if fc := part.function_call:
+
+                    # There is a new thought_signature field in Part since Gemini 3
+                    if part.thought_signature:
+                        thought_signature = part.thought_signature
+                    else:
+                        thought_signature = None
+
                     function_calls.append(FunctionCall(
-                        id=str(uuid.uuid4()),
+                        id=thought_signature,
                         name=fc.name,
                         arguments=json.dumps(dict(fc.args))
                     ))

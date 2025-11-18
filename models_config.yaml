@@ -183,6 +183,7 @@ models:
       - low
       - medium
       - high
+    temperature: 0
     function_calling: 1
     code_execution: 1
     structured_output: true
@@ -288,8 +289,36 @@ models:
     visible: false
 
 
+  - name: gemini-3-pro-preview
+    display_name: Gemini 3 Pro 👍
+    adapter: GoogleAdapter
+    pricing:
+      input: 4 # USD/1M tokens
+      output: 18 # USD/1M tokens
+    max_tokens: 65_536
+    context_window: 1_048_576
+    inputs:
+      - text
+      - image
+      - audio
+      - video
+    outputs:
+      - text
+    function_calling: 1
+    web_search: 1
+    code_execution: 1
+    reasoning_effort:
+      - dynamic
+      - low
+      - medium
+      - high
+    temperature: 1
+    url_context: 1
+    structured_output: true
+    visible: true
+
   - name: gemini-2.5-pro
-    display_name: Gemini 2.5 Pro 👍
+    display_name: Gemini 2.5 Pro
     adapter: GoogleAdapter
     pricing:
       input: 2.5 # USD/1M tokens

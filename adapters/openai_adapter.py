@@ -17,7 +17,6 @@ import time
 
 from openai import AsyncOpenAI, OpenAI
 
-from llm_platform.helpers.model_config import ModelConfig
 from llm_platform.services.conversation import (Conversation, FunctionCall,
                                                 FunctionResponse, Message,
                                                 ThinkingResponse)
@@ -64,7 +63,6 @@ class OpenAIAdapter(AdapterBase):
         super().__init__()
         self.client = OpenAI()
         self.async_client = AsyncOpenAI()
-        self.model_config = ModelConfig()
 
     def _convert_file_to_content(self, file: BaseFile) -> Dict | None:
         """

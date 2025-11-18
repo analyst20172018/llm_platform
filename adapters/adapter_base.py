@@ -3,11 +3,13 @@ from dotenv import load_dotenv
 from typing import List, Tuple, Callable, Dict
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.tools.base import BaseTool
+from llm_platform.helpers.model_config import ModelConfig
 
 class AdapterBase(ABC):
     def __init__(self):
         load_dotenv()
         self.latest_usage = None
+        self.model_config = ModelConfig()
 
     @abstractmethod
     def convert_conversation_history_to_adapter_format(self, the_conversation: Conversation):
