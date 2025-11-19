@@ -308,9 +308,7 @@ models:
     web_search: 1
     code_execution: 1
     reasoning_effort:
-      - dynamic
       - low
-      - medium
       - high
     temperature: 1
     url_context: 1
@@ -341,7 +339,7 @@ models:
       - high
     url_context: 1
     structured_output: true
-    visible: true
+    visible: false
 
   - name: gemini-2.5-flash-preview-09-2025
     display_name: Gemini 2.5 Flash Preview

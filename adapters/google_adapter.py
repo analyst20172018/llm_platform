@@ -146,12 +146,19 @@ class GoogleAdapter(AdapterBase):
         # Reasoning effort / Thinking config
         if reasoning_effort_parameter := kwargs.pop('reasoning', {}):
             reasoning_effort = reasoning_effort_parameter.get('effort', 'none')
-            # If reasoning effort is not set, then disable thinking, by setting the parameter to 0
-            thinking_budget = self.REASONING_EFFORT_MAP.get(reasoning_effort, 0)
-            config_params["thinking_config"] = types.ThinkingConfig(
-                thinking_budget=thinking_budget, 
-                include_thoughts=True
-            )
+            if 'gemini-3' in model:
+                # Gemini 3 introduces new parameter - Thinking level
+                config_params["thinking_config"] = types.ThinkingConfig(
+                    thinking_level=reasoning_effort,
+                    include_thoughts=True
+                )
+            else:
+                # If reasoning effort is not set, then disable thinking, by setting the parameter to 0
+                thinking_budget = self.REASONING_EFFORT_MAP.get(reasoning_effort, 0)
+                config_params["thinking_config"] = types.ThinkingConfig(
+                    thinking_budget=thinking_budget, 
+                    include_thoughts=True
+                )
 
         if "response_modalities" in additional_parameters:
             config_params["response_modalities"] = additional_parameters["response_modalities"]
