@@ -369,12 +369,12 @@ models:
     structured_output: true
     visible: true
 
-  - name: gemini-2.5-flash-image
-    display_name: Gemini 2.5 Flash Image
+  - name: gemini-3-pro-image-preview
+    display_name: Gemini 3 Pro Image
     adapter: GoogleAdapter
     pricing:
-      input: 0.3 # USD/1M tokens
-      output: 2.50 # USD/1M tokens
+      input: 2 # USD/1M tokens
+      output: 12 # USD/1M tokens
     max_tokens: 32_768
     context_window: 32_768
     inputs:

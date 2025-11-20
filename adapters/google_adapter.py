@@ -46,27 +46,35 @@ class GoogleAdapter(AdapterBase):
             raise ValueError("GOOGLE_GEMINI_API_KEY environment variable not set.")
         self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
 
-    def _convert_file_to_part(self, file: MediaFile) -> types.Part:
+    def _convert_file_to_part(self, file: MediaFile, id=None) -> types.Part:
         """Converts a MediaFile object to a Gemini API Part."""
+        part = None
         if isinstance(file, ImageFile):
-            return types.Part.from_bytes(
+            part = types.Part.from_bytes(
                     data=file.file_bytes, 
                     mime_type=f"image/{file.extension}"
             )
-        if isinstance(file, AudioFile):
-            return types.Part.from_bytes(data=file.file_bytes, mime_type="audio/mp3")
-        if isinstance(file, (TextDocumentFile, ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
+        elif isinstance(file, AudioFile):
+            part = types.Part.from_bytes(data=file.file_bytes, mime_type="audio/mp3")
+        elif isinstance(file, (TextDocumentFile, ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
             text = f'<document name="{file.name}">{file.text}</document>'
-            return types.Part.from_text(text=text)
-        if isinstance(file, PDFDocumentFile):
+            part = types.Part.from_text(text=text)
+        elif isinstance(file, PDFDocumentFile):
             # Gemini has limits on direct PDF processing
             if file.size < 20_000_000 and file.number_of_pages < 3_600:
-                return types.Part.from_bytes(data=file.bytes, mime_type="application/pdf")
+                part = types.Part.from_bytes(data=file.bytes, mime_type="application/pdf")
             else:
                 logger.info(f"PDF '{file.name}' exceeds size/page limits; sending as text.")
                 text = f'<document name="{file.name}">{file.text}</document>'
-                return types.Part.from_text(text=text)
-        raise TypeError(f"Unsupported file type for Gemini: {type(file).__name__}")
+                part = types.Part.from_text(text=text)
+        else: 
+            logger.critical(f"Unsupported file type for Gemini: {type(file).__name__}")
+            raise TypeError(f"Unsupported file type for Gemini: {type(file).__name__}")
+        
+        if id:
+            part.thought_signature = id
+
+        return part
 
     def convert_conversation_history_to_adapter_format(self, conversation: Conversation) -> List[types.Content]:
         """
@@ -85,12 +93,15 @@ class GoogleAdapter(AdapterBase):
 
             parts = []
             if message.content:
-                parts.append(types.Part.from_text(text=message.content))
+                part = types.Part.from_text(text=message.content)
+                if message.id:
+                    part.thought_signature = message.id
+                parts.append(part)
 
             if message.files:
                 for file in message.files:
                     try:
-                        parts.append(self._convert_file_to_part(file))
+                        parts.append(self._convert_file_to_part(file, id=message.id))
                     except TypeError as e:
                         logger.warning(e)
 
@@ -197,14 +208,14 @@ class GoogleAdapter(AdapterBase):
         else:
             response_candidate = response.candidates[0]
             for part in response_candidate.content.parts:
+                
+                # There is a new thought_signature field in Part since Gemini 3
+                if part.thought_signature:
+                    thought_signature = part.thought_signature
+                else:
+                    thought_signature = None
+
                 if fc := part.function_call:
-
-                    # There is a new thought_signature field in Part since Gemini 3
-                    if part.thought_signature:
-                        thought_signature = part.thought_signature
-                    else:
-                        thought_signature = None
-
                     function_calls.append(FunctionCall(
                         id=thought_signature,
                         name=fc.name,
@@ -215,10 +226,14 @@ class GoogleAdapter(AdapterBase):
                         thoughts.append(ThinkingResponse(content=part.text, id=None))
                     else:
                         text_content += part.text
-                elif part.inline_data and part.inline_data.mime_type == "image/png":
+                elif part.inline_data and "image" in part.inline_data.mime_type:
+                    
+                    mime_type = part.inline_data.mime_type  # e.g. "image/png"
+                    file_type = mime_type.split("/")[-1]
+                    
                     files.append(ImageFile.from_bytes(
                         file_bytes=part.inline_data.data,
-                        file_name=f"image_{len(files)}.png"
+                        file_name=f"image_{len(files)}.{file_type}"
                     ))
                 elif part.executable_code:
                     additional_responses.append("# Executable code \n" + part.executable_code.code)
@@ -233,6 +248,7 @@ class GoogleAdapter(AdapterBase):
         }
 
         return Message(
+            id=thought_signature,
             role="assistant",
             content=text_content.strip(),
             thinking_responses=thoughts,
