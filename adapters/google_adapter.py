@@ -173,6 +173,13 @@ class GoogleAdapter(AdapterBase):
 
         if "response_modalities" in additional_parameters:
             config_params["response_modalities"] = additional_parameters["response_modalities"]
+            if "image" in config_params["response_modalities"]:
+                if (aspect_ratio := additional_parameters.get("aspect_ratio")) and \
+                   (resolution := additional_parameters.get("resolution")):
+                    config_params["image_config"] = types.ImageConfig(
+                        aspect_ratio=aspect_ratio,
+                        image_size=resolution
+                    )
 
         if additional_parameters.get("web_search"):
             config_params["tools"].append(types.Tool(google_search=types.GoogleSearch()))

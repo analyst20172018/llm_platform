@@ -97,26 +97,6 @@ models:
     structured_output: true
     visible: true
 
-  - name: gpt-4.1
-    display_name: GPT-4.1
-    adapter: OpenAIAdapter
-    pricing:
-      input: 2 # USD/1M tokens
-      output: 8 # USD/1M tokens
-    max_tokens: 32_768
-    context_window: 1_047_576
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-      - image
-    function_calling: 1
-    web_search: 1
-    code_execution: 1
-    structured_output: true
-    visible: false
-
   - name: gpt-5-pro
     display_name: GPT-5 pro 💰💰
     adapter: OpenAIAdapter
@@ -238,23 +218,6 @@ models:
     structured_output: true
     visible: false
 
-  - name: gpt-4o-audio-preview
-    display_name: GPT 4o Audio
-    adapter: OpenAIOldAdapter
-    pricing:
-      input: 2.5 # USD/1M tokens
-      output: 10 # USD/1M tokens
-    max_tokens: 16_384
-    context_window: 128_000
-    inputs:
-      - text
-      - audio
-    outputs:
-      - text
-      - audio
-    function_calling: 1
-    visible: false
-
   - name: gpt-audio-mini
     display_name: GPT Audio Mini
     adapter: OpenAIOldAdapter
@@ -315,31 +278,38 @@ models:
     structured_output: true
     visible: true
 
-  - name: gemini-2.5-pro
-    display_name: Gemini 2.5 Pro
+  - name: gemini-3-pro-image-preview
+    display_name: Gemini 3 Pro Image 🍌
     adapter: GoogleAdapter
     pricing:
-      input: 2.5 # USD/1M tokens
-      output: 15 # USD/1M tokens
-    max_tokens: 65_536
-    context_window: 1_048_576
+      input: 2 # USD/1M tokens
+      output: 12 # USD/1M tokens
+    max_tokens: 32_768
+    context_window: 32_768
     inputs:
       - text
       - image
-      - audio
     outputs:
       - text
-    function_calling: 1
-    web_search: 1
-    code_execution: 1
-    reasoning_effort:
-      - dynamic
-      - low
-      - medium
-      - high
+      - image
+    aspect_ratio:
+      - 1:1
+      - 2:3
+      - 3:2
+      - 3:4
+      - 4:3
+      - 4:5
+      - 5:4
+      - 9:16
+      - 16:9
+      - 21:9
+    resolution:
+      - 1K
+      - 2K
+      - 4K
+    structured_output: True
     url_context: 1
-    structured_output: true
-    visible: false
+    visible: true
 
   - name: gemini-2.5-flash-preview-09-2025
     display_name: Gemini 2.5 Flash Preview
@@ -367,23 +337,6 @@ models:
       - high
     url_context: 1
     structured_output: true
-    visible: true
-
-  - name: gemini-3-pro-image-preview
-    display_name: Gemini 3 Pro Image
-    adapter: GoogleAdapter
-    pricing:
-      input: 2 # USD/1M tokens
-      output: 12 # USD/1M tokens
-    max_tokens: 32_768
-    context_window: 32_768
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-      - image
-    structured_output: True
     visible: true
 
   - name: gemini-robotics-er-1.5-preview
@@ -425,8 +378,25 @@ models:
     function_calling: 1
     web_search: 1
 
-  - name: grok-4-fast-non-reasoning
-    display_name: Grok 4 Fast (Non-Reasoning)
+  - name: grok-4-1-fast-reasoning
+    display_name: Grok 4.1 Fast (Reasoning)
+    adapter: GrokAdapter
+    pricing:
+      input: 0.2 # USD/1M tokens
+      output: 0.5 # USD/1M tokens
+    max_tokens: 64_000
+    context_window: 2_000_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    function_calling: 1
+    web_search: 1
+    visible: true
+
+  - name: grok-4-1-fast-non-reasoning
+    display_name: Grok 4.1 Fast (Non-Reasoning)
     adapter: GrokAdapter
     pricing:
       input: 0.2 # USD/1M tokens

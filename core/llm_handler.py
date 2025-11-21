@@ -311,6 +311,8 @@ class APIHandler:
                 * ``code_execution`` : bool  When *True* the model may call an integrated code_execution tool (OpenAI, Gemini).
                 * ``citations`` : bool  Ask Anthropic models to return source citations for attached documents.
                 * ``structured_output``: BaseModel - Pydantic model class: the adapter will attempt to parse the model’s response into an instance of that class.
+                * ``aspect_ratio``: str - Specify the desired aspect ratio for image outputs. (for Gemini 3 Image: "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9")
+                * ``resolution``: str - Specify the desired resolution for image outputs. (for Gemini 3 Image: "1K", "2K", "4K")
 
                 Adapters that do not support a key ignore it silently.
             **kwargs
