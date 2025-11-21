@@ -4,6 +4,29 @@ from typing import List, Dict
 
 class Model:
 
+    @staticmethod
+    def _as_ratio_string(item) -> str:
+        """Convert YAML-loaded ratio values (including base-60 ints) into colon-separated strings."""
+        if isinstance(item, dict) and len(item) == 1:
+            key, value = next(iter(item.items()))
+            return f"{key}:{value}"
+
+        if isinstance(item, (int, float)):
+            whole = int(item)
+            high, low = divmod(whole, 60)
+            if high == 0:
+                return str(whole)
+            return f"{high}:{low}"
+
+        return str(item)
+
+    @staticmethod
+    def _as_string_list(raw_value) -> List[str]:
+        if not isinstance(raw_value, list):
+            return []
+
+        return [str(item) for item in raw_value if item is not None]
+
     def __init__(self, model_config_data: Dict) -> None:
         self.model_config_data = model_config_data
 
@@ -60,6 +83,18 @@ class Model:
         if isinstance(value, list):
             return value
         return []
+
+    @property
+    def aspect_ratio(self) -> List[str]:
+        value = self.model_config_data.get('aspect_ratio')
+        if not isinstance(value, list):
+            return []
+
+        return [self._as_ratio_string(item) for item in value if item is not None]
+
+    @property
+    def resolution(self) -> List[str]:
+        return self._as_string_list(self.model_config_data.get('resolution'))
 
 class ModelConfig:
 
