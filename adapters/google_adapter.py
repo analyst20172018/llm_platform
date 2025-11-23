@@ -197,8 +197,7 @@ class GoogleAdapter(AdapterBase):
 
         return types.GenerateContentConfig(**config_params)
 
-    def _parse_gemini_response(self, response: types.HttpResponse, model_name: str,
-                               usage_metadata: types.UsageMetadata) -> Message:
+    def _parse_gemini_response(self, response: types.HttpResponse, model_name: str) -> Message:
         """Parses a Gemini API response candidate into a Message object."""
         text_content, thoughts, files, function_calls, additional_responses = "", [], [], [], []
 
@@ -214,38 +213,45 @@ class GoogleAdapter(AdapterBase):
 
         else:
             response_candidate = response.candidates[0]
-            for part in response_candidate.content.parts:
-                
-                # There is a new thought_signature field in Part since Gemini 3
-                if part.thought_signature:
-                    thought_signature = part.thought_signature
-                else:
-                    thought_signature = None
 
-                if fc := part.function_call:
-                    function_calls.append(FunctionCall(
-                        id=thought_signature,
-                        name=fc.name,
-                        arguments=json.dumps(dict(fc.args))
-                    ))
-                elif part.text:
-                    if part.thought:
-                        thoughts.append(ThinkingResponse(content=part.text, id=None))
+            if response_candidate.content.parts:
+                for part in response_candidate.content.parts:
+                    
+                    # There is a new thought_signature field in Part since Gemini 3
+                    if part.thought_signature:
+                        thought_signature = part.thought_signature
                     else:
-                        text_content += part.text
-                elif part.inline_data and "image" in part.inline_data.mime_type:
-                    
-                    mime_type = part.inline_data.mime_type  # e.g. "image/png"
-                    file_type = mime_type.split("/")[-1]
-                    
-                    files.append(ImageFile.from_bytes(
-                        file_bytes=part.inline_data.data,
-                        file_name=f"image_{len(files)}.{file_type}"
-                    ))
-                elif part.executable_code:
-                    additional_responses.append("# Executable code \n" + part.executable_code.code)
-                elif part.code_execution_result:
-                    additional_responses.append("# Code execution result \n" + part.code_execution_result.output)
+                        thought_signature = None
+
+                    if fc := part.function_call:
+                        function_calls.append(FunctionCall(
+                            id=thought_signature,
+                            name=fc.name,
+                            arguments=json.dumps(dict(fc.args))
+                        ))
+                    elif part.text:
+                        if part.thought:
+                            thoughts.append(ThinkingResponse(content=part.text, id=None))
+                        else:
+                            text_content += part.text
+                    elif part.inline_data and "image" in part.inline_data.mime_type:
+                        
+                        mime_type = part.inline_data.mime_type  # e.g. "image/png"
+                        file_type = mime_type.split("/")[-1]
+                        
+                        files.append(ImageFile.from_bytes(
+                            file_bytes=part.inline_data.data,
+                            file_name=f"image_{len(files)}.{file_type}"
+                        ))
+                    elif part.executable_code:
+                        additional_responses.append("# Executable code \n" + part.executable_code.code)
+                    elif part.code_execution_result:
+                        additional_responses.append("# Code execution result \n" + part.code_execution_result.output)
+            # There are no parts in the candidate in the response
+            else:
+                logger.warning(f"No parts in the response candidate. Finish reason is {response_candidate.finish_reason}")
+                text_content = f"No content in response. Finish reason is {response_candidate.finish_reason}"
+                thought_signature = response.response_id
 
         usage = {
             "model": model_name,
@@ -292,7 +298,7 @@ class GoogleAdapter(AdapterBase):
             )
 
             assistant_message = self._parse_gemini_response(
-                response=response, model_name=model, usage_metadata=response.usage_metadata
+                response=response, model_name=model
             )
             the_conversation.messages.append(assistant_message)
 
