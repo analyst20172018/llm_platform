@@ -21,13 +21,13 @@ models:
       - medium
       - high
   
-  - name: claude-opus-4-1
-    display_name: Claude Opus 4.1 💰
+  - name: claude-opus-4-5
+    display_name: Claude Opus 4.5 💰
     adapter: AnthropicAdapter
     pricing:
-      input: 15 # USD/1M tokens
-      output: 75 # USD/1M tokens
-    max_tokens: 32_000
+      input: 5 # USD/1M tokens
+      output: 25 # USD/1M tokens
+    max_tokens: 64_000
     context_window: 200_000
     inputs:
       - image
@@ -117,8 +117,8 @@ models:
     structured_output: true
     visible: false
 
-  - name: gpt-5.1-codex
-    display_name: GPT-5.1 Codex
+  - name: gpt-5.1-codex-max
+    display_name: GPT-5.1 Codex Max
     adapter: OpenAIAdapter
     pricing:
       input: 1.25 # USD/1M tokens
@@ -308,7 +308,7 @@ models:
       - 2K
       - 4K
     structured_output: True
-    url_context: 1
+    web_search: 1
     visible: true
 
   - name: gemini-2.5-flash-preview-09-2025
@@ -393,6 +393,7 @@ models:
       - text
     function_calling: 1
     web_search: 1
+    code_execution: 1
     visible: true
 
   - name: grok-4-1-fast-non-reasoning
@@ -410,6 +411,7 @@ models:
       - text
     function_calling: 1
     web_search: 1
+    code_execution: 1
     visible: false
 
 

@@ -3,6 +3,7 @@ from xai_sdk import Client
 from xai_sdk.chat import user, system, image, assistant, tool, tool_result
 from xai_sdk.proto import chat_pb2
 from xai_sdk.search import SearchParameters
+from xai_sdk.tools import web_search, x_search, code_execution
 import os
 from typing import List, Tuple, Callable, Dict
 from llm_platform.tools.base import BaseTool
@@ -96,6 +97,53 @@ class GrokAdapter(AdapterBase):
 
         return chat, kwargs
 
+    def _create_parameters_for_calling_llm(
+        self,
+        model: str,
+        additional_parameters: Dict = None,
+        **kwargs,
+    ) -> Dict:
+        """
+        Constructs the dictionary of parameters for an OpenAI API call.
+
+        Args:
+            model: The model identifier.
+            additional_parameters: A dictionary of extra parameters like 'web_search'.
+            use_previous_response_id: Flag to enable delta-based conversation updates.
+            **kwargs: Additional keyword arguments to pass to the API.
+
+        Returns:
+            A dictionary of parameters ready for the OpenAI client.
+        """
+        #model_object = self.model_config[model]
+        parameters = {
+            "model": model,
+            'tools': [],
+        }
+        parameters.update(kwargs)
+
+        # TODO: Remove the fixed mentioning of the model 'grok-4-1' in the future when all models support these features. Remove search_parameters completely.
+        # Add web search parameter if exists
+        if additional_parameters.get("web_search", False):
+            if 'grok-4-1' in model:
+                parameters['tools'] += [
+                    web_search(),
+                    x_search(),
+                ]
+            else:
+                parameters['search_parameters'] = SearchParameters(mode="auto")
+
+        # Add code execution parameter if exists
+        if additional_parameters.get("code_execution"):
+            if 'grok-4-1' in model:
+                parameters['tools'].append(
+                    code_execution(),
+                )
+            else:
+                logger.warning("Code execution is only supported for grok-4-1 models. Parameter is ignored.")
+
+        return parameters
+
     def request_llm(self, model: str, 
                     the_conversation: Conversation, 
                     functions:List[BaseTool]=None, 
@@ -130,16 +178,14 @@ class GrokAdapter(AdapterBase):
         """
         if functions is None:
             
-            # Create arguments for chat creation
-            chat_arguments = {
-                "model": model,
-            }
-            # Add web search parameter if exists
-            if additional_parameters.get("web_search", False):
-                chat_arguments['search_parameters'] = SearchParameters(mode="auto")
+            parameters = self._create_parameters_for_calling_llm(
+                model=model,
+                additional_parameters=additional_parameters,
+                **kwargs,
+            )
 
             # Create chat with the arguments
-            chat = self.client.chat.create(**chat_arguments)
+            chat = self.client.chat.create(**parameters)
 
             chat, kwargs = self.convert_conversation_history_to_adapter_format(chat, the_conversation, model, **kwargs)
 
@@ -170,6 +216,92 @@ class GrokAdapter(AdapterBase):
         the_conversation.messages.append(message)
         
         return message
+
+    def request_llm_with_functions(self, 
+                                    model: str, 
+                                    the_conversation: Conversation, 
+                                    functions: List[BaseTool | Callable], 
+                                    tool_output_callback: Callable=None,
+                                    additional_parameters: Dict={},
+                                    **kwargs):
+        tool_definitions = [self._convert_function_to_tool(each_function) for each_function in functions]
+
+        parameters = self._create_parameters_for_calling_llm(
+                model=model,
+                additional_parameters=additional_parameters,
+                **kwargs,
+            )
+        parameters['tools'] += tool_definitions
+        parameters['tool_choice'] = "auto"
+
+        # Create chat with the arguments
+        chat = self.client.chat.create(**parameters)
+
+        chat, kwargs = self.convert_conversation_history_to_adapter_format(chat, the_conversation, model, **kwargs)
+        
+        response = chat.sample()
+
+        usage = {"model": model,
+                "completion_tokens": response.usage.completion_tokens,
+                "prompt_tokens": response.usage.prompt_tokens}
+        
+        # Save tool_calls parameter from the openai answer for the history
+        if getattr(response, 'tool_calls', None):
+            function_call_records = [FunctionCall.from_grok(each_tool_call) for each_tool_call in response.tool_calls]
+        else: 
+            return response # If there are no tool calls, return the response directly
+
+        function_response_records = []
+        for each_tools_call in function_call_records:
+
+            tool_call_id = each_tools_call.id
+            tool_function_name = each_tools_call.name
+            tool_arguments = json.loads(each_tools_call.arguments)
+
+            # Find the requested function
+            function_index = next((i for i, tool in enumerate(tool_definitions) if tool.function.name == tool_function_name), -1)
+            if function_index == -1:
+                raise ValueError(f"Function {each_tools_call.name} not found in tools")
+            function = functions[function_index]
+
+            # Get all function parameters
+            function_parameters = []
+            parameters_from_tool_definition = json.loads(tool_definitions[function_index].function.parameters)
+            for key, value in parameters_from_tool_definition["properties"].items():
+                function_parameters.append(tool_arguments[key])
+
+            # Call the function
+            function_response = function(*function_parameters)
+
+            function_response_record = FunctionResponse(name=tool_function_name,
+                                                        id=tool_call_id,
+                                                        response=str(function_response))
+            function_response_records.append(function_response_record)
+            
+            if tool_output_callback:
+                tool_output_callback(tool_function_name,
+                                     function_parameters,
+                                     function_response
+                                    )
+
+        thinking_responses = []
+        if response.reasoning_content:
+            thinking_responses.append(ThinkingResponse(content=response.reasoning_content, id=response.id))
+        
+        message = Message(
+            role="assistant", 
+            content=response.content,
+            thinking_responses=thinking_responses,
+            function_calls=function_call_records,
+            function_responses=function_response_records,
+            usage=usage
+        )
+        the_conversation.messages.append(message)
+
+        final_response = self.request_llm_with_functions(model, the_conversation, functions, tool_output_callback=tool_output_callback, **kwargs)
+        
+        return final_response
+
 
     def voice_to_text(self, audio_file):
         raise NotImplementedError("OpenRoute does not support voice to text")
@@ -250,93 +382,6 @@ class GrokAdapter(AdapterBase):
             raise TypeError("func must be either a BaseTool or a function")
         
         return tool
-
-    def request_llm_with_functions(self, 
-                                    model: str, 
-                                    the_conversation: Conversation, 
-                                    functions: List[BaseTool | Callable], 
-                                    tool_output_callback: Callable=None,
-                                    additional_parameters: Dict={},
-                                    **kwargs):
-        tool_definitions = [self._convert_function_to_tool(each_function) for each_function in functions]
-
-        # Create arguments for chat creation
-        chat_arguments = {
-            "model": model,
-            "tools": tool_definitions,
-            "tool_choice": "auto",
-        }
-        # Add web search parameter if exists
-        if additional_parameters.get("web_search", False):
-            chat_arguments['search_parameters'] = SearchParameters(mode="auto")
-
-        # Create chat with the arguments
-        chat = self.client.chat.create(**chat_arguments)
-
-        chat, kwargs = self.convert_conversation_history_to_adapter_format(chat, the_conversation, model, **kwargs)
-        
-        response = chat.sample()
-
-        usage = {"model": model,
-                "completion_tokens": response.usage.completion_tokens,
-                "prompt_tokens": response.usage.prompt_tokens}
-        
-        # Save tool_calls parameter from the openai answer for the history
-        if getattr(response, 'tool_calls', None):
-            function_call_records = [FunctionCall.from_grok(each_tool_call) for each_tool_call in response.tool_calls]
-        else: 
-            return response # If there are no tool calls, return the response directly
-
-        function_response_records = []
-        for each_tools_call in function_call_records:
-
-            tool_call_id = each_tools_call.id
-            tool_function_name = each_tools_call.name
-            tool_arguments = json.loads(each_tools_call.arguments)
-
-            # Find the requested function
-            function_index = next((i for i, tool in enumerate(tool_definitions) if tool.function.name == tool_function_name), -1)
-            if function_index == -1:
-                raise ValueError(f"Function {each_tools_call.name} not found in tools")
-            function = functions[function_index]
-
-            # Get all function parameters
-            function_parameters = []
-            parameters_from_tool_definition = json.loads(tool_definitions[function_index].function.parameters)
-            for key, value in parameters_from_tool_definition["properties"].items():
-                function_parameters.append(tool_arguments[key])
-
-            # Call the function
-            function_response = function(*function_parameters)
-
-            function_response_record = FunctionResponse(name=tool_function_name,
-                                                        id=tool_call_id,
-                                                        response=str(function_response))
-            function_response_records.append(function_response_record)
-            
-            if tool_output_callback:
-                tool_output_callback(tool_function_name,
-                                     function_parameters,
-                                     function_response
-                                    )
-
-        thinking_responses = []
-        if response.reasoning_content:
-            thinking_responses.append(ThinkingResponse(content=response.reasoning_content, id=response.id))
-        
-        message = Message(
-            role="assistant", 
-            content=response.content,
-            thinking_responses=thinking_responses,
-            function_calls=function_call_records,
-            function_responses=function_response_records,
-            usage=usage
-        )
-        the_conversation.messages.append(message)
-
-        final_response = self.request_llm_with_functions(model, the_conversation, functions, tool_output_callback=tool_output_callback, **kwargs)
-        
-        return final_response
 
     def get_models(self) -> List[str]:
         raise NotImplementedError("Not implemented yet")

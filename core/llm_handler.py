@@ -439,7 +439,7 @@ class APIHandler:
             adapter =  self._lazy_initialization_of_adapter('ElenenlabsAdapter')
             language = kwargs.get('language', 'eng')
             diarized = kwargs.get('diarized', True)
-            transcript = adapter.voice_to_text(audio_file, language, diarized)
+            transcript = adapter.voice_to_text(audio_file, audio_format, language, diarized)
             return transcript
         
         else: 
