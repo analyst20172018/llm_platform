@@ -122,25 +122,18 @@ class GrokAdapter(AdapterBase):
         }
         parameters.update(kwargs)
 
-        # TODO: Remove the fixed mentioning of the model 'grok-4-1' in the future when all models support these features. Remove search_parameters completely.
         # Add web search parameter if exists
         if additional_parameters.get("web_search", False):
-            if 'grok-4-1' in model:
-                parameters['tools'] += [
-                    web_search(),
-                    x_search(),
-                ]
-            else:
-                parameters['search_parameters'] = SearchParameters(mode="auto")
+            parameters['tools'] += [
+                web_search(),
+                x_search(),
+            ]
 
         # Add code execution parameter if exists
         if additional_parameters.get("code_execution"):
-            if 'grok-4-1' in model:
-                parameters['tools'].append(
-                    code_execution(),
-                )
-            else:
-                logger.warning("Code execution is only supported for grok-4-1 models. Parameter is ignored.")
+            parameters['tools'].append(
+                code_execution(),
+            )
 
         return parameters
 

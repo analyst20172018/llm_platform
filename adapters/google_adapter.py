@@ -178,7 +178,7 @@ class GoogleAdapter(AdapterBase):
                    (resolution := additional_parameters.get("resolution")):
                     config_params["image_config"] = types.ImageConfig(
                         aspect_ratio=aspect_ratio,
-                        image_size=resolution
+                        image_size=resolution,
                     )
 
         if additional_parameters.get("web_search"):
