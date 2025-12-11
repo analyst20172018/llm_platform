@@ -104,7 +104,7 @@ class OpenAIAdapter(AdapterBase):
                 "text": f'<document name="{file.name}">{file.text}</document>',
             }
 
-        self.logger.warning(f"Unsupported file type for conversion: {type(file)}. Skipping file.")
+        logger.warning(f"Unsupported file type for conversion: {type(file)}. Skipping file.")
         return None
 
     def convert_conversation_history_to_adapter_format(
@@ -256,10 +256,12 @@ class OpenAIAdapter(AdapterBase):
             * a list of generated media files, and 
             * a usage dictionary.
         """
+
+        usage_obj = getattr(response, "usage", None)
         usage = {
             "model": getattr(response, "model", "Unknown model"),
-            "completion_tokens": response.usage.output_tokens,
-            "prompt_tokens": response.usage.input_tokens,
+            "completion_tokens": getattr(usage_obj, "output_tokens", None),
+            "prompt_tokens": getattr(usage_obj, "input_tokens", None),
         }
 
         outputs = getattr(response, "output", [])
@@ -282,11 +284,11 @@ class OpenAIAdapter(AdapterBase):
 
             # Extract image output from message outputs
             if output_type == IMAGE_GENERATION_CALL_TYPE:
-                image_b64_data = output.result
-                files_from_response.append(
-                    ImageFile.from_base64(base64_str=b64, file_name=f"image_{i}.png")
-                    for i, b64 in enumerate(image_b64_data)
-                )
+                image_b64_data = getattr(output, "result", None) or []
+                for i, b64 in enumerate(image_b64_data):
+                    files_from_response.append(
+                        ImageFile.from_base64(base64_str=b64, file_name=f"image_{i}.png")
+                    )
 
             # Extract reasoning output from message outputs
             if output_type == REASONING_CALL_TYPE:
@@ -352,12 +354,10 @@ class OpenAIAdapter(AdapterBase):
             function_name = tool_call.name
             arguments = json.loads(tool_call.arguments)
 
-            try:
-                # Find the corresponding function object using the tool definition name
-                function_to_call = next(
-                    f for i, f in enumerate(functions) if tools[i]["name"] == function_name
-                )
-            except StopIteration:
+            # Find the corresponding function object using the tool definition name
+            tool_map = {tool["name"]: func for tool, func in zip(tools, functions)}
+            function_to_call = tool_map.get(function_name)
+            if not function_to_call:
                 raise ValueError(f"Function '{function_name}' not found in provided tools.")
 
             # Execute the function with keyword arguments for robustness
@@ -712,9 +712,9 @@ class OpenAIAdapter(AdapterBase):
         )
 
         if video.status == "completed":
-            logger.info("Video successfully completed: ", video)
+            logger.info(f"Video successfully completed: {video}")
         else:
-            logger.error("Video creation failed. Status: ", video.status)
+            logger.error(f"Video creation failed. Status: {video.status}")
 
         content = await self.async_client.videos.download_content(video.id, variant="video")
         #await content.write_to_file("video.mp4")
