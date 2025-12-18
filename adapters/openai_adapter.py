@@ -23,7 +23,7 @@ from llm_platform.services.conversation import (Conversation, FunctionCall,
 from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          TextDocumentFile, PDFDocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
-                                         MediaFile, ImageFile, VideoFile)
+                                         MediaFile, ImageFile, VideoFile, define_file_type)
 from llm_platform.tools.base import BaseTool
 
 from .adapter_base import AdapterBase
@@ -39,6 +39,7 @@ FUNCTION_CALL_TYPE = "function_call"
 MESSAGE_CALL_TYPE = "message"
 IMAGE_GENERATION_CALL_TYPE = "image_generation_call"
 REASONING_CALL_TYPE = "reasoning"
+CODE_INTERPRETER_CALL_TYPE = "code_interpreter_call"
 
 # Constants for transcription models
 WHISPER_1 = "whisper-1"
@@ -275,12 +276,44 @@ class OpenAIAdapter(AdapterBase):
 
             # Extract text from message outputs
             if output_type == MESSAGE_CALL_TYPE:
-                text_parts = [
-                    content.text
-                    for content in (getattr(output, "content", []) or [])
-                    if getattr(content, "type", "") == TEXT_OUTPUT_TYPE
-                ]
-                answer_text += "\n".join(text_parts)
+                for content in (getattr(output, "content", []) or []):
+                    if getattr(content, "type", "") == TEXT_OUTPUT_TYPE:
+                        if answer_text:
+                            answer_text += "\n"
+                        answer_text += content.text
+
+                    # Extract annotations
+                    for annotation in (getattr(content, "annotations", []) or []):
+                        # Extract files from annotations
+                        if getattr(annotation, "type", "") == "container_file_citation":
+                            file_retrieve_response = self.client.containers.files.content.retrieve(
+                                    container_id=annotation.container_id,
+                                    file_id=annotation.file_id,
+                            )
+                            data = getattr(file_retrieve_response, "content", None)
+                            
+                            file_type = define_file_type(annotation.filename)
+                            retrieved_file = None
+                            if file_type == "image":
+                                retrieved_file = ImageFile.from_bytes(data, file_name=annotation.filename)
+                            elif file_type == "video":
+                                retrieved_file = VideoFile.from_bytes(data, file_name=annotation.filename)
+                            elif file_type == "audio":
+                                retrieved_file = AudioFile.from_bytes(data, file_name=annotation.filename)
+                            elif file_type == "text":
+                                retrieved_file = TextDocumentFile.from_bytes(data, file_name=annotation.filename)
+                            elif file_type == "pdf":
+                                retrieved_file = PDFDocumentFile.from_bytes(data, file_name=annotation.filename)
+                            elif file_type == "excel":
+                                retrieved_file = ExcelDocumentFile.from_bytes(data, file_name=annotation.filename)
+                            elif file_type == "word":
+                                retrieved_file = WordDocumentFile.from_bytes(data, file_name=annotation.filename)
+                            elif file_type == "powerpoint":
+                                retrieved_file = PowerPointDocumentFile.from_bytes(data, file_name=annotation.filename)
+                            
+                            if retrieved_file:
+                                files_from_response.append(retrieved_file)
+
 
             # Extract image output from message outputs
             if output_type == IMAGE_GENERATION_CALL_TYPE:
@@ -300,6 +333,10 @@ class OpenAIAdapter(AdapterBase):
                 thinking_responses.append(
                     ThinkingResponse(content=summary_text, id=output.id)
                 )
+
+            if output_type == CODE_INTERPRETER_CALL_TYPE:
+                code_text = getattr(output, "code", "")
+                answer_text += f"\n```\n{code_text}```\n"
 
         return answer_text, thinking_responses, files_from_response, usage
 

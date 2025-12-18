@@ -313,14 +313,14 @@ models:
     web_search: 1
     visible: true
 
-  - name: gemini-2.5-flash-preview-09-2025
-    display_name: Gemini 2.5 Flash Preview
+  - name: gemini-3-flash-preview
+    display_name: Gemini 3 Flash
     adapter: GoogleAdapter
     pricing:
-      input: 0.3 # USD/1M tokens
-      output: 2.50 # USD/1M tokens
-    max_tokens: 64_000
-    context_window: 1_000_000
+      input: 0.5 # USD/1M tokens
+      output: 3 # USD/1M tokens
+    max_tokens: 65_536
+    context_window: 1_048_576
     inputs:
       - text
       - image
@@ -332,14 +332,13 @@ models:
     web_search: 1
     code_execution: 1
     reasoning_effort:
-      - none
-      - dynamic
+      - minimal # Matches the “no thinking” setting for most queries
       - low
-      - medium
       - high
+    temperature: 1
     url_context: 1
     structured_output: true
-    visible: true
+    visible: False
 
   - name: gemini-robotics-er-1.5-preview
     display_name: Gemini Robotics-ER 1.5
@@ -461,6 +460,19 @@ models:
       - text
     visible: true
   
+  - name: thedrummer/cydonia-24b-v4.1
+    display_name: Cydonia 24B V4.1
+    adapter: OpenRouterAdapter
+    pricing:
+      input: 0.3 # USD/1M tokens
+      output: 0.5 # USD/1M tokens
+    max_tokens: 128_000
+    context_window: 131_072
+    inputs:
+      - text
+    outputs:
+      - text
+    visible: true
 
   - name: mistral-large-latest
     display_name: Mistral Large
@@ -474,30 +486,4 @@ models:
       - image
       - text
 
-  - name: mistral-ocr-latest
-    display_name: Mistral OCR
-    adapter: MistralAdapter
-    pricing:
-      input: 0 # USD/1M tokens
-      output: 0 # USD/1M tokens
-    max_tokens: 131_000
-    context_window: 131_000
-    inputs:
-      - image
-      - text
-    visible: false
-
-  - name: voxtral-small-latest
-    display_name: Voxtral Small
-    adapter: MistralAdapter
-    pricing:
-      input: 0.1 # USD/1M tokens
-      output: 0.3 # USD/1M tokens
-    max_tokens: 131_000
-    context_window: 131_000
-    inputs:
-      - audio
-      - text
-    outputs:
-      - text
-    visible: false
+  

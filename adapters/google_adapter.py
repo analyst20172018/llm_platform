@@ -210,6 +210,7 @@ class GoogleAdapter(AdapterBase):
             else:
                 block_reason = ''
             text_content = f"ERROR. No candidates in response. {block_reason}"
+            thought_signature = None
 
         else:
             response_candidate = response.candidates[0]
@@ -218,10 +219,7 @@ class GoogleAdapter(AdapterBase):
                 for part in response_candidate.content.parts:
                     
                     # There is a new thought_signature field in Part since Gemini 3
-                    if part.thought_signature:
-                        thought_signature = part.thought_signature
-                    else:
-                        thought_signature = None
+                    thought_signature = getattr(part, "thought_signature", None) or None
 
                     if fc := part.function_call:
                         function_calls.append(FunctionCall(

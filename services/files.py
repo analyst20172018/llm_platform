@@ -1,4 +1,4 @@
-from typing import List, Dict, BinaryIO
+from typing import List, Dict, BinaryIO, Literal
 from abc import ABC, abstractmethod
 from pathlib import Path
 import base64
@@ -12,6 +12,62 @@ import requests
 from loguru import logger
 import zipfile
 import xml.etree.ElementTree as ET
+from pathlib import Path
+
+FileType = Literal[
+    "text", "pdf", "excel", "word", "powerpoint",
+    "image", "audio", "video", "unknown",
+]
+
+_IMAGE_EXTS = {
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "heic", "heif"
+}
+_AUDIO_EXTS = {
+    "mp3", "wav", "m4a", "aac", "ogg", "flac", "opus", "wma", "aiff", "aif"
+}
+_VIDEO_EXTS = {
+    "mp4", "mov", "mkv", "avi", "webm", "m4v", "mpg", "mpeg", "3gp"
+}
+_TEXT_EXTS = {
+    "txt", "md", "rtf", "csv", "tsv", "json", "yaml", "yml", "xml", "log", "html", "htm"
+}
+_EXCEL_EXTS = {"xls", "xlsx", "xlsm", "xlsb"}
+_WORD_EXTS = {"docx"}        # note: your WordDocumentFile parser supports docx (OOXML) best
+_PPT_EXTS = {"pptx"}         # note: your PowerPointDocumentFile parser supports pptx (OOXML) best
+
+def define_file_type(file_name: str) -> FileType:
+    """
+    Determine a broad file type category from the filename extension.
+    Returns: 'image' | 'audio' | 'video' | 'pdf' | 'excel' | 'word' | 'powerpoint' | 'text' | 'unknown'
+    """
+    if not file_name:
+        return "unknown"
+
+    # In case a URL or "name?query=..." is passed in
+    clean_name = file_name.split("?", 1)[0].split("#", 1)[0]
+
+    ext = Path(clean_name).suffix.lower().lstrip(".")
+    if ext == "jpg":
+        ext = "jpeg"
+
+    if ext in _IMAGE_EXTS:
+        return "image"
+    if ext in _AUDIO_EXTS:
+        return "audio"
+    if ext in _VIDEO_EXTS:
+        return "video"
+    if ext == "pdf":
+        return "pdf"
+    if ext in _EXCEL_EXTS:
+        return "excel"
+    if ext in _WORD_EXTS:
+        return "word"
+    if ext in _PPT_EXTS:
+        return "powerpoint"
+    if ext in _TEXT_EXTS:
+        return "text"
+
+    return "unknown"
 
 
 class BaseFile(ABC):
