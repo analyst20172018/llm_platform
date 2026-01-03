@@ -220,9 +220,7 @@ models:
     max_tokens: 100_000
     context_window: 200_000
     reasoning_effort:
-      - low
       - medium
-      - high
     inputs:
       - image
       - text
