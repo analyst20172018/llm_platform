@@ -128,6 +128,11 @@ class PDFDocumentFile(DocumentFile):
     def from_bytes(cls, bytes: BinaryIO, name: str="") -> 'PDFDocumentFile':
         return cls(bytes, name)
 
+    @classmethod
+    def from_file(cls, name: str) -> "PDFDocumentFile":
+        with open(name, "rb") as f:
+            return cls(f.read(), name=name)
+
     @property
     def text(self) -> str:
         try:
@@ -158,6 +163,11 @@ class ExcelDocumentFile(DocumentFile):
     def from_bytes(cls, bytes: BinaryIO, name: str="") -> 'ExcelDocumentFile':
         return cls(bytes, name)
 
+    @classmethod
+    def from_file(cls, name: str) -> "ExcelDocumentFile":
+        with open(name, "rb") as f:
+            return cls(f.read(), name=name)
+
     @property
     def text(self) -> str:
         # Read Excel file from bytes using pandas
@@ -184,6 +194,11 @@ class WordDocumentFile(DocumentFile):
     def from_bytes(cls, bytes: BinaryIO, name: str="") -> 'WordDocumentFile':
         return cls(bytes, name)
     
+    @classmethod
+    def from_file(cls, name: str) -> "WordDocumentFile":
+        with open(name, "rb") as f:
+            return cls(f.read(), name=name)
+
     @property
     def text(self) -> str:
         try:
@@ -210,6 +225,11 @@ class PowerPointDocumentFile(DocumentFile):
     @classmethod
     def from_bytes(cls, bytes: BinaryIO, name: str="") -> 'PowerPointDocumentFile':
         return cls(bytes, name)
+
+    @classmethod
+    def from_file(cls, name: str) -> "PowerPointDocumentFile":
+        with open(name, "rb") as f:
+            return cls(f.read(), name=name)
 
     @property
     def text(self) -> str:
