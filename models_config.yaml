@@ -459,31 +459,19 @@ models:
     outputs:
       - text
     visible: true
-  
-  - name: thedrummer/cydonia-24b-v4.1
-    display_name: Cydonia 24B V4.1
-    adapter: OpenRouterAdapter
-    pricing:
-      input: 0.3 # USD/1M tokens
-      output: 0.5 # USD/1M tokens
-    max_tokens: 128_000
-    context_window: 131_072
-    inputs:
-      - text
-    outputs:
-      - text
-    visible: true
+
 
   - name: mistral-large-latest
     display_name: Mistral Large
     adapter: MistralAdapter
     pricing:
-      input: 0 # USD/1M tokens
-      output: 0 # USD/1M tokens
+      input: 0.5 # USD/1M tokens
+      output: 1.5 # USD/1M tokens
     max_tokens: 131_000
-    context_window: 131_000
+    context_window: 256_000
     inputs:
       - image
       - text
+
 
   
