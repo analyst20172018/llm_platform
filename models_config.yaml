@@ -485,6 +485,7 @@ models:
       - audio
     outputs:
       - text
+    background_mode: true
     visible: true
     additional_parameters:
       - name: language

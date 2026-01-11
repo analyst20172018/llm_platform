@@ -23,7 +23,7 @@ class SpeechmaticsAdapter(AdapterBase):
                     **kwargs) -> Message:
         raise NotImplementedError("Not implemented yet")
 
-    def voice_to_text(self, audio_file: Tuple[str, BinaryIO], language: str="en", transcription_config: Dict=None):
+    def voice_to_text(self, audio_file: Tuple[str, BinaryIO], language: str="en"):
         """
             audio_file should be a tuple (file name, bytes)
         """
@@ -34,15 +34,14 @@ class SpeechmaticsAdapter(AdapterBase):
         )
 
         # Define transcription parameters
-        if transcription_config is None:
-            transcription_config = { 
-                                        "language": language,
-                                        # Find out more about entity detection here:
-                                        # https://docs.speechmatics.com/features/entities#enable-entity-metadata
-                                        "enable_entities": True,
-                                        "operating_point": "enhanced",
-                                        "diarization": "speaker"
-                                    }
+        transcription_config = { 
+                                    "language": language,
+                                    # Find out more about entity detection here:
+                                    # https://docs.speechmatics.com/features/entities#enable-entity-metadata
+                                    "enable_entities": True,
+                                    "operating_point": "enhanced",
+                                    "diarization": "speaker"
+                                }
 
         conf = {
             "type": "transcription",
