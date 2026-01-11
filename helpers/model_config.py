@@ -96,6 +96,10 @@ class Model:
     def resolution(self) -> List[str]:
         return self._as_string_list(self.model_config_data.get('resolution'))
 
+    @property
+    def additional_parameters(self) -> List[Dict[str, any]]:
+        return self.model_config_data.get('additional_parameters', [])    
+
 class ModelConfig:
 
     def __init__(self) -> None:
