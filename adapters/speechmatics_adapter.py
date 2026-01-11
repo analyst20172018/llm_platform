@@ -14,15 +14,6 @@ class SpeechmaticsAdapter(AdapterBase):
     def convert_conversation_history_to_adapter_format(self, the_conversation: Conversation):
         raise NotImplementedError("Not implemented yet")
 
-    def request_llm(self, 
-                    model: str, 
-                    the_conversation: Conversation, 
-                    temperature: int=0, 
-                    tool_output_callback: Callable=None,
-                    additional_parameters: Dict={},
-                    **kwargs) -> Message:
-        raise NotImplementedError("Not implemented yet")
-
     def voice_to_text(self, audio_file: Tuple[str, BinaryIO], language: str="en"):
         """
             audio_file should be a tuple (file name, bytes)
@@ -68,6 +59,47 @@ class SpeechmaticsAdapter(AdapterBase):
                 print(f"Error: {str(e)}")
                 return str(e)
         
+    def request_llm(self, 
+                    model: str, 
+                    the_conversation: Conversation, 
+                    temperature: int=0, 
+                    tool_output_callback: Callable=None,
+                    additional_parameters: Dict={},
+                    **kwargs) -> Message:
+        
+        # Get files from the last message. I expect only one file - audio file for transcription
+        files = getattr(the_conversation.messages[-1], "files", [])
+        if len(files) != 1:
+            logger.error(f"There are {len(files)} files in the last message. I expect only one audio file to transcribe it.")
+            message = Message(role="assistant", content=f"There are {len(files)} files in the last message. I expect only one audio file to transcribe it.", usage={})
+            the_conversation.messages.append(message)
+            return message
+        
+        # Check that the only file is audio file.
+        audio_file = files[0]
+        if not isinstance(audio_file, AudioFile):
+            logger.error("The provided file is not audio. I need only audio file to transcribe it.")
+            message = Message(role="assistant", content="The provided file is not audio. I need only audio file to transcribe it.", usage={})
+            the_conversation.messages.append(message)
+            return message
+
+        language = additional_parameters.get("language", "en")
+        if len(language) != 2:
+            logger.error("Language code must be 2 characters long. For examle 'en' for English or 'cs' for Czech")
+            message = Message(role="assistant", content="Language code must be 2 characters long. For examle 'en' for English or 'cs' for Czech.", usage={})
+            the_conversation.messages.append(message)
+            return message
+
+        transcript = self.voice_to_text(
+            (audio_file.name, audio_file.bytes_io), 
+            language
+        )
+
+        message = Message(role="assistant", content=transcript, usage={})
+        the_conversation.messages.append(message)
+        
+        return message
+
     def generate_image(self, prompt: str, size: str, quality:str, n=1):
         NotImplementedError("Not implemented yet")
 

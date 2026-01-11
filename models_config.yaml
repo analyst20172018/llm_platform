@@ -500,3 +500,22 @@ models:
       - name: num_speakers
         type: int
         default: None
+
+  - name: speechmatics
+    display_name: Speechmatics
+    adapter: SpeechmaticsAdapter
+    pricing:
+      input: 0 # USD/1M tokens
+      output: 0 # USD/1M tokens
+    max_tokens: 1_048_576
+    context_window: 1_048_576
+    inputs:
+      - audio
+    outputs:
+      - text
+    background_mode: true
+    visible: true
+    additional_parameters:
+      - name: language
+        type: string
+        default: en
