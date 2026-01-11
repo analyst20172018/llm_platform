@@ -118,7 +118,7 @@ models:
     verbosity:
       - medium
     temperature: 0 # It means, that the parameter `temperature` is not available for this model.
-    code_execution: 1
+    code_execution: 0
     function_calling: 1
     web_search: 1
     visible: true
@@ -473,5 +473,29 @@ models:
       - image
       - text
 
-
-  
+  - name: scribe_v2
+    display_name: ElevenLabs Scribe v2
+    adapter: ElevenLabsAdapter
+    pricing:
+      input: 0 # USD/1M tokens
+      output: 0 # USD/1M tokens
+    max_tokens: 1_048_576
+    context_window: 1_048_576
+    inputs:
+      - audio
+    outputs:
+      - text
+    visible: true
+    additional_parameters:
+      - name: language
+        type: string
+        default: en
+      - name: diarized
+        type: boolean
+        default: true
+      - name: tag_audio_events
+        type: boolean
+        default: true
+      - name: num_speakers
+        type: int
+        default: None

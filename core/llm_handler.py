@@ -7,7 +7,7 @@ from llm_platform.adapters.speechmatics_adapter import SpeechmaticsAdapter
 from llm_platform.adapters.google_adapter import GoogleAdapter
 from llm_platform.adapters.grok_adapter import GrokAdapter
 from llm_platform.adapters.deepseek_adapter import DeepSeekAdapter
-from llm_platform.adapters.elevenlabs_adapter import ElenenlabsAdapter
+from llm_platform.adapters.elevenlabs_adapter import ElevenLabsAdapter
 from llm_platform.adapters.mistral_adapter import MistralAdapter
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
@@ -89,7 +89,7 @@ class APIHandler:
                 "AnthropicAdapter": AnthropicAdapter,
                 "OpenRouterAdapter": OpenRouterAdapter,
                 "SpeechmaticsAdapter": SpeechmaticsAdapter,
-                "ElenenlabsAdapter": ElenenlabsAdapter,
+                "ElevenLabsAdapter": ElevenLabsAdapter,
                 "GoogleAdapter": GoogleAdapter,
                 "GrokAdapter": GrokAdapter,
                 "DeepSeekAdapter": DeepSeekAdapter,
@@ -172,12 +172,20 @@ class APIHandler:
                 * ``structured_output``: BaseModel - Pydantic model class: the adapter will attempt to parse the model’s response into an instance of that class.
                 * ``aspect_ratio``: str - Specify the desired aspect ratio for image outputs. (for Gemini 3 Image: "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9")
                 * ``resolution``: str - Specify the desired resolution for image outputs. (for Gemini 3 Image: "1K", "2K", "4K")
+                * Additional parameters for Elevenlabs STT: 
+                  * ``language``: str - The language of the audio. (for Elevenlabs STT: "en", "de", "fr", "es", "it", "pt", "ru", "ja", "ko", "zh")
+                  * ``diarized``: bool - Whether to diarize the audio. (for Elevenlabs STT: True, False)
+                  * ``tag_audio_events``: bool - Tag audio events like laughter, applause, etc. (for Elevenlabs STT: True, False)
             **kwargs
                 Provider‑specific low‑level parameters that are forwarded unchanged
                 to the adapter.  Common examples:
                 * ``max_tokens`` : int – hard limit for the assistant’s answer.  
-                * ``reasoning`` : dict – OpenAI / Anthropic chain‑of‑thought budget, e.g. ``{"effort": "high"}``.
-                * ``audio`` / ``modalities`` – legacy keys for GPT‑4o‑audio endpoints.  
+                * Low‑level provider specific parameters:
+                    * max_tokens: int
+                    * reasoning: Dict = {"effort": "medium"}, # or "low" or "high" or "minimal"
+                    * text: Dict ={
+                        "verbosity": "low" # high, medium, or low for gpt-5
+                    }
                 * Any other keyword accepted by the vendor’s SDK.
 
             Returns
@@ -210,9 +218,6 @@ class APIHandler:
             conversational context to the model until ``Conversation.clear()`` is
             invoked.
             """
-        if not prompt:
-            raise ValueError("Prompt cannot be empty")
-        
         # Add prompt to the conversation
         message = Message(role="user", 
                           content=prompt, 
@@ -307,7 +312,6 @@ class APIHandler:
                 every tool call.
             additional_parameters : dict, optional
                 Provider‑agnostic high‑level switches.  Currently understood keys (silently ignored by adapters that do not support them):
-
                 * ``response_modalities`` : list[str]  e.g. ``["text", "image", "audio"]`` – request multimodal output from OpenAI or Gemini.
                 * ``web_search`` : bool When *True* the model may call an integrated web‑search/retrieval tool (OpenAI, Gemini).
                 * ``code_execution`` : bool  When *True* the model may call an integrated code_execution tool (OpenAI, Gemini).
@@ -315,16 +319,22 @@ class APIHandler:
                 * ``structured_output``: BaseModel - Pydantic model class: the adapter will attempt to parse the model’s response into an instance of that class.
                 * ``aspect_ratio``: str - Specify the desired aspect ratio for image outputs. (for Gemini 3 Image: "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9")
                 * ``resolution``: str - Specify the desired resolution for image outputs. (for Gemini 3 Image: "1K", "2K", "4K")
-
-                Adapters that do not support a key ignore it silently.
+                * Additional parameters for Elevenlabs STT: 
+                  * ``language``: str - The language of the audio. (for Elevenlabs STT: "en", "de", "fr", "es", "it", "pt", "ru", "ja", "ko", "zh")
+                  * ``diarized``: bool - Whether to diarize the audio. (for Elevenlabs STT: True, False)
+                  * ``tag_audio_events``: bool - Tag audio events like laughter, applause, etc. (for Elevenlabs STT: True, False)
+                  * ``num_speakers``: int - Number of speakers in the audio. (for Elevenlabs STT: 1-32)
             **kwargs
-                Low‑level provider specific parameters:
-                    max_tokens: int
-                    reasoning: Dict = {"effort": "medium"}, # or "low" or "high" or "minimal"
-                    text: Dict ={
+                Provider‑specific low‑level parameters that are forwarded unchanged
+                to the adapter.  Common examples:
+                * ``max_tokens`` : int – hard limit for the assistant’s answer.  
+                * Low‑level provider specific parameters:
+                    * max_tokens: int
+                    * reasoning: Dict = {"effort": "medium"}, # or "low" or "high" or "minimal"
+                    * text: Dict ={
                         "verbosity": "low" # high, medium, or low for gpt-5
                     }
-                All keys are passed unchanged to the adapter.
+                * Any other keyword accepted by the vendor’s SDK.
 
             Returns
             -------
@@ -436,7 +446,7 @@ class APIHandler:
             return transcript
         
         elif provider.lower() == 'elevenlabs':
-            adapter =  self._lazy_initialization_of_adapter('ElenenlabsAdapter')
+            adapter =  self._lazy_initialization_of_adapter('ElevenLabsAdapter')
             language = kwargs.get('language', 'eng')
             diarized = kwargs.get('diarized', True)
             transcript = adapter.voice_to_text(audio_file, audio_format, language, diarized)
