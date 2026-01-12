@@ -1,7 +1,7 @@
 from .adapter_base import AdapterBase
 from mistralai import Mistral
 import os
-from typing import List, Tuple, Callable, Dict
+from typing import Any, Callable, Dict, List, Tuple
 from loguru import logger
 from llm_platform.tools.base import BaseTool
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
@@ -131,10 +131,39 @@ class MistralAdapter(AdapterBase):
                     additional_parameters: Dict={},
                     **kwargs) -> Message:
 
-        if additional_parameters:
-            logger.warning("Additional parameters is not supported by Mistral API")
+        if additional_parameters is None:
+            additional_parameters = {}
 
-        kwargs['temperature'] = temperature
+        if temperature not in (None, 0) and "temperature" not in additional_parameters:
+            additional_parameters["temperature"] = temperature
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
+
+        request_params: Dict[str, Any] = {}
+        if "temperature" in additional_parameters:
+            request_params["temperature"] = additional_parameters["temperature"]
+        if "max_tokens" in additional_parameters:
+            request_params["max_tokens"] = additional_parameters["max_tokens"]
+
+        reserved = {
+            "response_modalities",
+            "web_search",
+            "code_execution",
+            "citations_enabled",
+            "url_context",
+            "structured_output",
+            "reasoning",
+            "text",
+            "temperature",
+            "max_tokens",
+        }
+        for key, value in additional_parameters.items():
+            if key in reserved:
+                continue
+            request_params[key] = value
 
         # OCR
         if model == "mistral-ocr-latest":
@@ -159,16 +188,17 @@ class MistralAdapter(AdapterBase):
                             the_conversation=the_conversation,
                             functions=functions,
                             tool_output_callback=tool_output_callback,
-                            **kwargs,
+                            **request_params,
                         )
             
         # Standard text LLM
         else:
-            messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
+            messages, history_kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model)
+            request_params.update(history_kwargs)
             response = self.client.chat.complete(
                             model=model,
                             messages=messages,
-                            **kwargs,
+                            **request_params,
                             )
         
         usage = {"model": model,

@@ -1,7 +1,7 @@
 from .adapter_base import AdapterBase
 from openai import OpenAI
 import os
-from typing import List, Tuple, Callable, Dict
+from typing import Any, Callable, Dict, List, Tuple
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          TextDocumentFile, PDFDocumentFile,
@@ -111,25 +111,48 @@ class DeepSeekAdapter(AdapterBase):
                     additional_parameters: Dict={},
                     **kwargs) -> Message:
         
-        if additional_parameters:
-            logger.warning("Additional parameters is not supported by DeepSeek API")
+        if additional_parameters is None:
+            additional_parameters = {}
 
-        # Remove 'max_tokens' from kwargs if it exists
-        max_tokens = kwargs.pop('max_tokens', None)
-        if max_tokens:
-            logger.warning("Max tokens parameter is removed.")
+        if temperature not in (None, 0) and "temperature" not in additional_parameters:
+            additional_parameters["temperature"] = temperature
 
-        if model != 'deepseek-reasoner':
-            # Add temperature to kwargs, note that the model deepseek-reasoner does not support temperature
-            kwargs['temperature'] = temperature
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
 
-        history, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
+        request_params: Dict[str, Any] = {}
+        if model != 'deepseek-reasoner' and "temperature" in additional_parameters:
+            request_params["temperature"] = additional_parameters["temperature"]
+        if "max_tokens" in additional_parameters:
+            request_params["max_tokens"] = additional_parameters["max_tokens"]
+
+        reserved = {
+            "response_modalities",
+            "web_search",
+            "code_execution",
+            "citations_enabled",
+            "url_context",
+            "structured_output",
+            "reasoning",
+            "text",
+            "temperature",
+            "max_tokens",
+        }
+        for key, value in additional_parameters.items():
+            if key in reserved:
+                continue
+            request_params[key] = value
+
+        history, history_kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model)
+        request_params.update(history_kwargs)
 
         try:
             response = self.client.chat.completions.create(
                             model=model,
                             messages=history,
-                            **kwargs,
+                            **request_params,
                             )
             
             usage = {"model": model,

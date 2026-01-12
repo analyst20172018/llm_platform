@@ -67,6 +67,13 @@ class SpeechmaticsAdapter(AdapterBase):
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={},
                     **kwargs) -> Message:
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
         
         # Get files from the last message. I expect only one file - audio file for transcription
         files = getattr(the_conversation.messages[-1], "files", [])

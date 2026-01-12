@@ -16,14 +16,14 @@ def convert_conversation_history_to_adapter_format(self, the_conversation, model
 Transforms conversation history to provider-specific format.
 
 ```python
-def request_llm(self, model, the_conversation, functions=None, temperature=0, tool_output_callback=None, **kwargs)
+def request_llm(self, model, the_conversation, functions=None, tool_output_callback=None, additional_parameters=None)
 ```
-Main method to request text generation from an LLM.
+Main method to request text generation from an LLM. Provider-specific tuning (temperature, max_tokens, reasoning, etc.) is passed via `additional_parameters`.
 
 ```python
-def request_llm_with_functions(self, model, the_conversation, functions, temperature=0, tool_output_callback=None, **kwargs)
+def request_llm_with_functions(self, model, the_conversation, functions, tool_output_callback=None, additional_parameters=None)
 ```
-Requests LLM completion with tool/function calling capabilities.
+Requests LLM completion with tool/function calling capabilities. Parameters are passed via `additional_parameters` (deprecated kwargs are merged when supplied).
 
 ```python
 def generate_image(self, prompt, n=1, **kwargs)
@@ -154,7 +154,7 @@ conversation.messages.append({"role": "user", "content": "What is the capital of
 response = adapter.request_llm(
     model="claude-3-opus-20240229",
     the_conversation=conversation,
-    temperature=0.7
+    additional_parameters={"temperature": 0.7}
 )
 
 print(response)

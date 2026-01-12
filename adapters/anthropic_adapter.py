@@ -3,7 +3,7 @@ import inspect
 import json
 from loguru import logger
 import os
-from typing import Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import anthropic
 
@@ -184,6 +184,14 @@ class AnthropicAdapter(AdapterBase):
         if additional_parameters is None:
             additional_parameters = {}
 
+        if temperature not in (None, 0) and "temperature" not in additional_parameters:
+            additional_parameters["temperature"] = temperature
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
+
         if functions:
             processor = self._request_llm_with_tools_streaming(
                 model=model,
@@ -238,7 +246,7 @@ class AnthropicAdapter(AdapterBase):
     ) -> ClaudeStreamProcessor:
         """Handles a non-tool-use streaming request."""
         history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
-        request_kwargs, temp = self._prepare_request_kwargs(model, temperature, **kwargs)
+        request_kwargs, temp = self._prepare_request_kwargs(model, temperature, additional_parameters, **kwargs)
 
         if 'max_tokens' in request_kwargs:
             request_kwargs['max_tokens'] = self.correct_max_tokens(model, history, request_kwargs['max_tokens'])
@@ -278,7 +286,7 @@ class AnthropicAdapter(AdapterBase):
         if additional_parameters.get("web_search", False):
             tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
 
-        request_kwargs, temp = self._prepare_request_kwargs(model, temperature, **kwargs)
+        request_kwargs, temp = self._prepare_request_kwargs(model, temperature, additional_parameters, **kwargs)
 
         stream = self.client.beta.messages.create(
             model=model,
@@ -346,16 +354,28 @@ class AnthropicAdapter(AdapterBase):
         )
         conversation.messages.append(assistant_message)
 
-    def _prepare_request_kwargs(self, model: str, temperature: int, **kwargs) -> Tuple[Dict, int]:
+    def _prepare_request_kwargs(
+        self,
+        model: str,
+        temperature: int,
+        additional_parameters: Dict,
+        **kwargs,
+    ) -> Tuple[Dict, int]:
         """Prepares kwargs for the API call, handling reasoning, betas, etc."""
-        request_kwargs = kwargs.copy()
-        temp = temperature
+        request_kwargs: Dict[str, Any] = {}
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            request_kwargs.update(kwargs)
 
-        if 'reasoning' in request_kwargs:
-            reasoning_effort = request_kwargs.pop('reasoning', {}).get('effort', 'none')
-            if budget_tokens := REASONING_BUDGETS.get(reasoning_effort):
-                request_kwargs['thinking'] = {"type": "enabled", "budget_tokens": budget_tokens}
-                temp = 1  # Anthropic recommends temp=1 for best results with thinking
+        if (max_tokens := additional_parameters.get("max_tokens")) is not None:
+            request_kwargs["max_tokens"] = max_tokens
+
+        temp = additional_parameters.get("temperature", temperature)
+
+        reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "none")
+        if budget_tokens := REASONING_BUDGETS.get(reasoning_effort):
+            request_kwargs['thinking'] = {"type": "enabled", "budget_tokens": budget_tokens}
+            temp = 1  # Anthropic recommends temp=1 for best results with thinking
 
         if beta_flag := BETA_FLAGS.get(model):
             request_kwargs['betas'] = beta_flag
@@ -372,7 +392,10 @@ class AnthropicAdapter(AdapterBase):
             additional_parameters = {}
 
         history = []
-        citations_enabled = additional_parameters.get("citations", False)
+        citations_enabled = additional_parameters.get(
+            "citations_enabled",
+            additional_parameters.get("citations", False),
+        )
 
         for message in conversation.messages:
             content = self._prepare_message_content(message, citations_enabled)

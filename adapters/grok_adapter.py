@@ -5,7 +5,7 @@ from xai_sdk.proto import chat_pb2
 from xai_sdk.search import SearchParameters
 from xai_sdk.tools import web_search, x_search, code_execution
 import os
-from typing import List, Tuple, Callable, Dict
+from typing import Any, Callable, Dict, List, Tuple
 from llm_platform.tools.base import BaseTool
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse, ThinkingResponse
 from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
@@ -101,7 +101,6 @@ class GrokAdapter(AdapterBase):
         self,
         model: str,
         additional_parameters: Dict = None,
-        **kwargs,
     ) -> Dict:
         """
         Constructs the dictionary of parameters for an OpenAI API call.
@@ -116,11 +115,27 @@ class GrokAdapter(AdapterBase):
             A dictionary of parameters ready for the OpenAI client.
         """
         #model_object = self.model_config[model]
+        additional_parameters = additional_parameters or {}
+
         parameters = {
             "model": model,
-            'tools': [],
+            "tools": [],
         }
-        parameters.update(kwargs)
+
+        reserved = {
+            "web_search",
+            "code_execution",
+            "response_modalities",
+            "citations_enabled",
+            "url_context",
+            "structured_output",
+            "reasoning",
+            "text",
+        }
+        for key, value in additional_parameters.items():
+            if key in reserved:
+                continue
+            parameters[key] = value
 
         # Add web search parameter if exists
         if additional_parameters.get("web_search", False):
@@ -169,18 +184,28 @@ class GrokAdapter(AdapterBase):
                             content and usage statistics. This message is also appended to
                             `the_conversation.messages`.
         """
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        if temperature not in (None, 0) and "temperature" not in additional_parameters:
+            additional_parameters["temperature"] = temperature
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
+
         if functions is None:
             
             parameters = self._create_parameters_for_calling_llm(
                 model=model,
                 additional_parameters=additional_parameters,
-                **kwargs,
             )
 
             # Create chat with the arguments
             chat = self.client.chat.create(**parameters)
 
-            chat, kwargs = self.convert_conversation_history_to_adapter_format(chat, the_conversation, model, **kwargs)
+            chat, _ = self.convert_conversation_history_to_adapter_format(chat, the_conversation, model)
 
             response = chat.sample()
         else:
@@ -217,12 +242,18 @@ class GrokAdapter(AdapterBase):
                                     tool_output_callback: Callable=None,
                                     additional_parameters: Dict={},
                                     **kwargs):
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
         tool_definitions = [self._convert_function_to_tool(each_function) for each_function in functions]
 
         parameters = self._create_parameters_for_calling_llm(
                 model=model,
                 additional_parameters=additional_parameters,
-                **kwargs,
             )
         parameters['tools'] += tool_definitions
         parameters['tool_choice'] = "auto"
@@ -230,7 +261,7 @@ class GrokAdapter(AdapterBase):
         # Create chat with the arguments
         chat = self.client.chat.create(**parameters)
 
-        chat, kwargs = self.convert_conversation_history_to_adapter_format(chat, the_conversation, model, **kwargs)
+        chat, _ = self.convert_conversation_history_to_adapter_format(chat, the_conversation, model)
         
         response = chat.sample()
 

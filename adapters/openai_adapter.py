@@ -171,7 +171,6 @@ class OpenAIAdapter(AdapterBase):
         the_conversation: Conversation,
         additional_parameters: Dict = None,
         use_previous_response_id: bool = True,
-        **kwargs,
     ) -> Dict:
         """
         Constructs the dictionary of parameters for an OpenAI API call.
@@ -189,15 +188,7 @@ class OpenAIAdapter(AdapterBase):
         if additional_parameters is None:
             additional_parameters = {}
 
-        # For reasoning-focused models, certain parameters are not needed
         model_object = self.model_config[model]
-        temperature = model_object["temperature"]
-        if temperature == 0:
-            kwargs.pop("temperature", None)
-
-        # Rename 'max_tokens' to OpenAI's expected 'max_output_tokens'
-        if "max_tokens" in kwargs:
-            kwargs["max_output_tokens"] = kwargs.pop("max_tokens")
 
         tools = []
         if additional_parameters.get("web_search"):
@@ -210,7 +201,7 @@ class OpenAIAdapter(AdapterBase):
         if "image" in additional_parameters.get("response_modalities", []):
             tools.append({"type": "image_generation", "quality": "high", "size": "1536x1024"})
 
-        messages, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation.messages, **kwargs)
+        messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation.messages)
 
         parameters = {
             "model": model,
@@ -218,7 +209,21 @@ class OpenAIAdapter(AdapterBase):
             "input": messages,
             "tools": tools,
         }
-        parameters.update(kwargs)
+
+        passthrough_keys = {
+            "web_search",
+            "code_execution",
+            "response_modalities",
+            "structured_output",
+            "max_tokens",
+        }
+        for key, value in additional_parameters.items():
+            if key in passthrough_keys:
+                continue
+            parameters[key] = value
+
+        if "max_tokens" in additional_parameters:
+            parameters["max_output_tokens"] = additional_parameters["max_tokens"]
 
         if "reasoning" in parameters:
             parameters["reasoning"]["summary"] = "auto"
@@ -477,6 +482,14 @@ class OpenAIAdapter(AdapterBase):
         Returns:
             The final assistant Message object after all processing.
         """
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
+
         if functions:
             response = self.request_llm_with_functions(
                 model=model,
@@ -484,11 +497,10 @@ class OpenAIAdapter(AdapterBase):
                 functions=functions,
                 tool_output_callback=tool_output_callback,
                 additional_parameters=additional_parameters,
-                **kwargs,
             )
         else:
             parameters = self._create_parameters_for_calling_llm(
-                model, the_conversation, additional_parameters, use_previous_response_id=True, **kwargs
+                model, the_conversation, additional_parameters, use_previous_response_id=True
             )
 
             if "text_format" in parameters:
@@ -540,6 +552,14 @@ class OpenAIAdapter(AdapterBase):
         Returns:
             The final assistant Message object after all processing.
         """
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
+
         if functions:
             response = await self.request_llm_with_functions_async(
                 model=model,
@@ -547,11 +567,10 @@ class OpenAIAdapter(AdapterBase):
                 functions=functions,
                 tool_output_callback=tool_output_callback,
                 additional_parameters=additional_parameters,
-                **kwargs,
             )
         else:
             parameters = self._create_parameters_for_calling_llm(
-                model, the_conversation, additional_parameters, use_previous_response_id=True, **kwargs
+                model, the_conversation, additional_parameters, use_previous_response_id=True
             )
             response = await self.async_client.responses.create(**parameters)
 
@@ -578,9 +597,16 @@ class OpenAIAdapter(AdapterBase):
         **kwargs,
     ):
         """Handles the synchronous, recursive logic for tool-use conversations."""
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
         tools = [self._convert_function_to_tool(f) for f in functions]
         parameters = self._create_parameters_for_calling_llm(
-            model, the_conversation, additional_parameters, use_previous_response_id=True, **kwargs
+            model, the_conversation, additional_parameters, use_previous_response_id=True
         )
         parameters["tools"].extend(tools)
 
@@ -615,7 +641,7 @@ class OpenAIAdapter(AdapterBase):
 
         # 5. Call the model again with the updated history to get the final answer
         return self.request_llm_with_functions(
-            model, the_conversation, functions, tool_output_callback, additional_parameters, **kwargs
+            model, the_conversation, functions, tool_output_callback, additional_parameters
         )
 
     async def request_llm_with_functions_async(
@@ -628,9 +654,16 @@ class OpenAIAdapter(AdapterBase):
         **kwargs,
     ):
         """Handles the asynchronous, recursive logic for tool-use conversations."""
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
         tools = [self._convert_function_to_tool(f) for f in functions]
         parameters = self._create_parameters_for_calling_llm(
-            model, the_conversation, additional_parameters, use_previous_response_id=True, **kwargs
+            model, the_conversation, additional_parameters, use_previous_response_id=True
         )
         parameters["tools"].extend(tools)
 
@@ -655,7 +688,7 @@ class OpenAIAdapter(AdapterBase):
 
         # 5. Call the model again with the updated history to get the final answer
         return await self.request_llm_with_functions_async(
-            model, the_conversation, functions, tool_output_callback, additional_parameters, **kwargs
+            model, the_conversation, functions, tool_output_callback, additional_parameters
         )
 
     def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:

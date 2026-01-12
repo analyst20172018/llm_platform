@@ -26,9 +26,9 @@ def __init__(self, system_prompt: str = "You are a helpful assistant")
 #### Request Methods
 
 ```python
-def request(self, model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None, 
-           files: List[BaseFile] = [], temperature: int = 0, tool_output_callback: Callable = None,
-           additional_parameters: Dict = {}, **kwargs) -> str
+def request(self, model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None,
+           files: List[BaseFile] = [], tool_output_callback: Callable = None,
+           additional_parameters: Dict = None) -> str
 ```
 
 Makes a synchronous request to the language model.
@@ -38,21 +38,19 @@ Makes a synchronous request to the language model.
 - `prompt (str)`: The prompt to send to the model
 - `functions (Union[List[BaseTool], List[Callable]])`: Optional tools or callables to use
 - `files (List[BaseFile])`: Optional files to include in the request
-- `temperature (int)`: Temperature setting for the model (default: 0)
 - `tool_output_callback (Callable)`: Optional callback function for tool output
-- `additional_parameters (Dict)`: Optional additional parameters
-- `**kwargs`: Additional keyword arguments
+- `additional_parameters (Dict)`: Optional additional parameters (e.g. `temperature`, `max_tokens`, `reasoning`, `text.verbosity`, `web_search`)
 
 **Returns:**
 - `str`: The response from the language model
 
 ```python
 async def request_async(self, model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None,
-                       files: List[BaseFile] = [], temperature: int = 0, tool_output_callback: Callable = None,
-                       additional_parameters: Dict = {}, **kwargs) -> str
+                       files: List[BaseFile] = [], tool_output_callback: Callable = None,
+                       additional_parameters: Dict = None) -> str
 ```
 
-Makes an asynchronous request to the language model with the same parameters as `request()`.
+Makes an asynchronous request to the language model with the same parameters as `request()`. Provider tuning flows through `additional_parameters`.
 
 #### Adapter Management
 

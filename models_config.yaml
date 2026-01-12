@@ -1,3 +1,65 @@
+parameter_templates:
+  web_search: &param_web_search
+    type: boolean
+    default: false
+    ui: toggle
+    label: Web Search
+  code_execution: &param_code_execution
+    type: boolean
+    default: false
+    ui: toggle
+    label: Code Execution
+  citations_enabled: &param_citations_enabled
+    type: boolean
+    default: false
+    ui: toggle
+    label: Citations Enabled
+  url_context: &param_url_context
+    type: boolean
+    default: false
+    ui: toggle
+    label: URL Context
+  function_calling: &param_function_calling
+    type: boolean
+    default: true
+    ui: hidden
+    send_default: false
+    include_in_request: false
+  structured_output: &param_structured_output
+    type: boolean
+    default: true
+    ui: hidden
+    send_default: false
+  image_output: &param_image_output
+    type: boolean
+    default: false
+    ui: toggle
+    label: Image Output
+    requires_output: image
+    include_in_request: false
+  aspect_ratio: &param_aspect_ratio
+    type: enum
+    options: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+    default: "16:9"
+    ui: select
+    label: Aspect Ratio
+    depends_on:
+      param: image_output
+      value: true
+  resolution: &param_resolution
+    type: enum
+    options: [1K, 2K, 4K]
+    default: 4K
+    ui: select
+    label: Resolution
+    depends_on:
+      param: image_output
+      value: true
+  temperature_fixed_1: &param_temperature_fixed_1
+    type: float
+    default: 1
+    ui: hidden
+
 models:
   - name: claude-sonnet-4-5
     display_name: Claude Sonnet 4.5 👍
@@ -12,14 +74,17 @@ models:
       - text
     outputs:
       - text
-    citations_enabled: 1
-    function_calling: 1
-    web_search: 1
-    reasoning_effort:
-      - none
-      - low
-      - medium
-      - high
+    additional_parameters:
+      web_search: *param_web_search
+      citations_enabled: *param_citations_enabled
+      function_calling: *param_function_calling
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, high]
+        default: none
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
 
   - name: claude-opus-4-5
     display_name: Claude Opus 4.5 💰
@@ -34,15 +99,17 @@ models:
       - text
     outputs:
       - text
-    function_calling: 1
-    citations_enabled: 1
-    function_calling: 1
-    reasoning_effort:
-      - none
-      - low
-      - medium
-      - high
-    web_search: 1
+    additional_parameters:
+      web_search: *param_web_search
+      citations_enabled: *param_citations_enabled
+      function_calling: *param_function_calling
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, high]
+        default: none
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
 
   - name: claude-haiku-4-5
     display_name: Claude Haiku 4.5
@@ -57,16 +124,18 @@ models:
       - text
     outputs:
       - text
-    citations_enabled: 1
-    function_calling: 1
-    web_search: 1
-    reasoning_effort:
-      - none
-      - low
-      - medium
-      - high
+    additional_parameters:
+      web_search: *param_web_search
+      citations_enabled: *param_citations_enabled
+      function_calling: *param_function_calling
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, high]
+        default: none
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
     visible: false
-
 
   - name: gpt-5.2
     display_name: GPT-5.2 👍
@@ -81,21 +150,25 @@ models:
       - image
     outputs:
       - text
-    reasoning_effort:
-      - none
-      - low
-      - medium
-      - high
-      - xhigh
-    verbosity:
-      - low
-      - medium
-      - high
-    temperature: 0 # It means, that the parameter `temperature` is not available for this model.
-    function_calling: 1
-    web_search: 1
-    code_execution: 1
-    structured_output: true
+    additional_parameters:
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, high, xhigh]
+        default: none
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+      verbosity:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Verbosity
+        request_key: text.verbosity
     visible: true
 
   - name: gpt-5.1-codex-max
@@ -111,16 +184,23 @@ models:
       - image
     outputs:
       - text
-    reasoning_effort:
-      - low
-      - medium
-      - high
-    verbosity:
-      - medium
-    temperature: 0 # It means, that the parameter `temperature` is not available for this model.
-    code_execution: 0
-    function_calling: 1
-    web_search: 1
+    additional_parameters:
+      web_search: *param_web_search
+      function_calling: *param_function_calling
+      reasoning_effort:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+      verbosity:
+        type: enum
+        options: [medium]
+        default: medium
+        ui: select
+        label: Verbosity
+        request_key: text.verbosity
     visible: true
 
   - name: gpt-5-mini
@@ -136,19 +216,25 @@ models:
       - image
     outputs:
       - text
-    reasoning_effort:
-      - low
-      - medium
-      - high
-    verbosity:
-      - low
-      - medium
-      - high
-    temperature: 0
-    function_calling: 1
-    code_execution: 1
-    structured_output: true
-    web_search: 1
+    additional_parameters:
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+      verbosity:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Verbosity
+        request_key: text.verbosity
     visible: false
 
   - name: gpt-5-nano
@@ -164,18 +250,25 @@ models:
       - image
     outputs:
       - text
-    reasoning_effort:
-      - low
-      - medium
-      - high
-    verbosity:
-      - low
-      - medium
-      - high
-    function_calling: 1
-    web_search: 1
-    code_execution: 1
-    structured_output: true
+    additional_parameters:
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+      verbosity:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Verbosity
+        request_key: text.verbosity
     visible: false
 
   - name: gpt-audio-mini
@@ -208,7 +301,8 @@ models:
     outputs:
       - text
       - audio
-    function_calling: 1
+    additional_parameters:
+      function_calling: *param_function_calling
     visible: false
 
   - name: o3-deep-research
@@ -219,17 +313,22 @@ models:
       output: 40 # USD/1M tokens
     max_tokens: 100_000
     context_window: 200_000
-    reasoning_effort:
-      - medium
     inputs:
       - image
       - text
     outputs:
       - text
-    web_search: 1
+    additional_parameters:
+      web_search: *param_web_search
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [medium]
+        default: medium
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
     background_mode: true
-    structured_output: true
-    temperature: 0 # It means, that the parameter `temperature` is not available for this model.
     visible: true
 
   - name: gpt-5.2-pro
@@ -240,19 +339,23 @@ models:
       output: 120 # USD/1M tokens
     max_tokens: 272_000
     context_window: 400_000
-    reasoning_effort:
-      - high
-    function_calling: 1
     inputs:
       - image
       - text
     outputs:
       - text
+    additional_parameters:
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [high]
+        default: high
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
     background_mode: true
-    structured_output: true
-    temperature: 0 # It means, that the parameter `temperature` is not available for this model.
     visible: true
-
 
   - name: gemini-3-pro-preview
     display_name: Gemini 3 Pro 👍
@@ -269,15 +372,20 @@ models:
       - video
     outputs:
       - text
-    function_calling: 1
-    web_search: 1
-    code_execution: 1
-    reasoning_effort:
-      - low
-      - high
-    temperature: 1
-    url_context: 1
-    structured_output: true
+    additional_parameters:
+      function_calling: *param_function_calling
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      url_context: *param_url_context
+      structured_output: *param_structured_output
+      temperature: *param_temperature_fixed_1
+      reasoning_effort:
+        type: enum
+        options: [low, high]
+        default: low
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
     visible: true
 
   - name: gemini-3-pro-image-preview
@@ -294,23 +402,12 @@ models:
     outputs:
       - text
       - image
-    aspect_ratio:
-      - "1:1"
-      - "2:3"
-      - "3:2"
-      - "3:4"
-      - "4:3"
-      - "4:5"
-      - "5:4"
-      - "9:16"
-      - "16:9"
-      - "21:9"
-    resolution:
-      - 1K
-      - 2K
-      - 4K
-    structured_output: True
-    web_search: 1
+    additional_parameters:
+      web_search: *param_web_search
+      structured_output: *param_structured_output
+      image_output: *param_image_output
+      aspect_ratio: *param_aspect_ratio
+      resolution: *param_resolution
     visible: true
 
   - name: gemini-3-flash-preview
@@ -328,17 +425,21 @@ models:
       - video
     outputs:
       - text
-    function_calling: 1
-    web_search: 1
-    code_execution: 1
-    reasoning_effort:
-      - minimal # Matches the “no thinking” setting for most queries
-      - low
-      - high
-    temperature: 1
-    url_context: 1
-    structured_output: true
-    visible: False
+    additional_parameters:
+      function_calling: *param_function_calling
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      url_context: *param_url_context
+      structured_output: *param_structured_output
+      temperature: *param_temperature_fixed_1
+      reasoning_effort:
+        type: enum
+        options: [minimal, low, high]
+        default: minimal
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+    visible: false
 
   - name: gemini-robotics-er-1.5-preview
     display_name: Gemini Robotics-ER 1.5
@@ -353,16 +454,17 @@ models:
       - image
     outputs:
       - text
-    function_calling: 1
-    reasoning_effort:
-      - none
-      - dynamic
-      - low
-      - medium
-      - high
+    additional_parameters:
+      function_calling: *param_function_calling
+      reasoning_effort:
+        type: enum
+        options: [none, dynamic, low, medium, high]
+        default: none
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
     visible: false
 
-  
   - name: grok-4
     display_name: Grok 4
     adapter: GrokAdapter
@@ -376,8 +478,8 @@ models:
       - image
     outputs:
       - text
-    function_calling: 1
-    web_search: 0
+    additional_parameters:
+      function_calling: *param_function_calling
 
   - name: grok-4-1-fast-reasoning
     display_name: Grok 4.1 Fast (Reasoning)
@@ -392,9 +494,10 @@ models:
       - image
     outputs:
       - text
-    function_calling: 1
-    web_search: 1
-    code_execution: 1
+    additional_parameters:
+      function_calling: *param_function_calling
+      web_search: *param_web_search
+      code_execution: *param_code_execution
     visible: true
 
   - name: grok-4-1-fast-non-reasoning
@@ -410,11 +513,11 @@ models:
       - image
     outputs:
       - text
-    function_calling: 1
-    web_search: 1
-    code_execution: 1
+    additional_parameters:
+      function_calling: *param_function_calling
+      web_search: *param_web_search
+      code_execution: *param_code_execution
     visible: false
-
 
   - name: deepseek-chat
     display_name: DeepSeek Chat
@@ -445,7 +548,6 @@ models:
     outputs:
       - text
 
-
   - name: meta-llama/llama-4-maverick
     display_name: Llama 4 Maverick
     adapter: OpenRouterAdapter
@@ -459,7 +561,6 @@ models:
     outputs:
       - text
     visible: true
-
 
   - name: mistral-large-latest
     display_name: Mistral Large
@@ -488,18 +589,26 @@ models:
     background_mode: true
     visible: true
     additional_parameters:
-      - name: language
+      language:
         type: string
         default: en
-      - name: diarized
+        ui: input
+        label: Language
+      diarized:
         type: boolean
         default: true
-      - name: tag_audio_events
+        ui: toggle
+        label: Diarized
+      tag_audio_events:
         type: boolean
         default: true
-      - name: num_speakers
+        ui: toggle
+        label: Tag Audio Events
+      num_speakers:
         type: int
-        default: None
+        default: null
+        ui: input
+        label: Number of Speakers
 
   - name: speechmatics
     display_name: Speechmatics
@@ -516,6 +625,8 @@ models:
     background_mode: true
     visible: true
     additional_parameters:
-      - name: language
+      language:
         type: string
         default: en
+        ui: input
+        label: Language

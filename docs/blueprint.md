@@ -60,7 +60,7 @@
 - `docs/`: Deep dives per major subsystem to supplement this blueprint.
 
 ## 7. Configuration & Secrets
-- **Model Catalog**: `models_config.yaml` captures pricing, capabilities flags (`function_calling`, `reasoning_effort`, `web_search`, etc.) and visibility toggles.
+- **Model Catalog**: `models_config.yaml` captures pricing, visibility, modalities, and a per-model `additional_parameters` schema (type/default/UI metadata, `request_key` mappings for nested payloads, and `send_default`/`include_in_request` flags for request shaping).
 - **Environment Variables**: `.env` keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `GROK_API_KEY`, `OPENROUTER_API_KEY`, `SPEECHMATICS_API_KEY`, `ELEVENLABS_API_KEY`) required per provider.
 - **Override Strategy**: Allow per-environment YAML overrides or dynamic registry injection for automated deployments.
 

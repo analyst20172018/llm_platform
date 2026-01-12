@@ -116,7 +116,7 @@ handler = APIHandler(system_prompt="You are a helpful assistant.")
 result = handler.request(
     model="gpt-4o",
     prompt="Summarise the key takeaways from the latest quarterly report in three bullet points.",
-    temperature=0.2,
+    additional_parameters={"temperature": 0.2},
 )
 
 print(result.content)
@@ -132,7 +132,7 @@ handler.request(
 handler.request(
     model="gemini-2.0-pro",
     prompt="Translate that email into Spanish and cite your sources if you used any.",
-    additional_parameters={"citations": True}
+    additional_parameters={"citations_enabled": True}
 )
 ```
 Conversation history is preserved and normalised automatically, even as providers change.

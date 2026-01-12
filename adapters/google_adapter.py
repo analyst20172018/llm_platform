@@ -127,35 +127,32 @@ class GoogleAdapter(AdapterBase):
                     history.append(types.Content(role="function", parts=response_parts))
         return history
 
-    def _prepare_generation_config(self, model: str, the_conversation: Conversation, temperature: float,
-                                   tools: List, additional_parameters: Dict, **kwargs) -> types.GenerateContentConfig:
+    def _prepare_generation_config(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        tools: List,
+        additional_parameters: Dict,
+    ) -> types.GenerateContentConfig:
         """Prepares the GenerateContentConfig for a Gemini API call."""
-        # Gemini uses 'max_output_tokens'
-        if 'max_tokens' in kwargs:
-            kwargs['max_output_tokens'] = kwargs.pop('max_tokens')
-        else:
-            kwargs['max_output_tokens'] = the_conversation.model_config.get_max_tokens(model)
-
         config_params = {
             "tools": tools,
             "safety_settings": self.safety_settings,
         }
 
-        # Handle temperature settings (For Gemini 3 it is always 1)
-        model_object = self.model_config[model]
-        temperature = model_object["temperature"]
-        if temperature == 0:
-            pass
-        elif temperature == 1:
-            config_params["temperature"] = 1
-        else:
-            config_params["temperature"] = temperature
+        max_tokens = additional_parameters.get("max_tokens")
+        if max_tokens is None:
+            max_tokens = the_conversation.model_config.get_max_tokens(model)
+        config_params["max_output_tokens"] = max_tokens
+
+        if "temperature" in additional_parameters:
+            config_params["temperature"] = additional_parameters["temperature"]
 
         if the_conversation.system_prompt:
             config_params["system_instruction"] = the_conversation.system_prompt
 
         # Reasoning effort / Thinking config
-        if reasoning_effort_parameter := kwargs.pop('reasoning', {}):
+        if reasoning_effort_parameter := additional_parameters.get("reasoning", {}):
             reasoning_effort = reasoning_effort_parameter.get('effort', 'none')
             if 'gemini-3' in model:
                 # Gemini 3 introduces new parameter - Thinking level
@@ -193,7 +190,22 @@ class GoogleAdapter(AdapterBase):
             config_params["response_mime_type"] = "application/json"
             config_params["response_schema"] = structured_output_class
 
-        config_params.update(kwargs)
+        reserved_keys = {
+            "max_tokens",
+            "temperature",
+            "reasoning",
+            "response_modalities",
+            "web_search",
+            "url_context",
+            "code_execution",
+            "structured_output",
+            "aspect_ratio",
+            "resolution",
+        }
+        for key, value in additional_parameters.items():
+            if key in reserved_keys:
+                continue
+            config_params[key] = value
 
         return types.GenerateContentConfig(**config_params)
 
@@ -278,14 +290,24 @@ class GoogleAdapter(AdapterBase):
         functions = functions or []
         additional_parameters = additional_parameters or {}
 
+        if temperature not in (None, 0) and "temperature" not in additional_parameters:
+            additional_parameters["temperature"] = temperature
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
+
         converted_tools = [
             types.Tool(function_declarations=[func.to_params(provider="google")])
             for func in functions if isinstance(func, BaseTool)
         ]
 
         generation_config = self._prepare_generation_config(
-            model=model, the_conversation=the_conversation, temperature=temperature,
-            tools=converted_tools, additional_parameters=additional_parameters, **kwargs
+            model=model,
+            the_conversation=the_conversation,
+            tools=converted_tools,
+            additional_parameters=additional_parameters,
         )
 
         while True:

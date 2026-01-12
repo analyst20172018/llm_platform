@@ -1,4 +1,3 @@
-from typing import List, Dict
 from llm_platform.adapters.openai_adapter import OpenAIAdapter
 from llm_platform.adapters.openai_old_adapter import OpenAIOldAdapter
 from llm_platform.adapters.anthropic_adapter import AnthropicAdapter
@@ -16,7 +15,7 @@ from llm_platform.helpers.model_config import ModelConfig
 from loguru import logger
 import tiktoken
 import os
-from typing import List, Dict, Tuple, BinaryIO, Any, Callable, Union
+from typing import Any, BinaryIO, Callable, Dict, List, Tuple, Union
 
 class APIHandler:
     """
@@ -118,6 +117,97 @@ class APIHandler:
         #print(f"Using adapter: {adapter_name} for model: {model_name}")
         return self._lazy_initialization_of_adapter(adapter_name)
 
+    @staticmethod
+    def _set_nested_parameter(target: Dict[str, Any], path: str, value: Any) -> None:
+        if not path:
+            return
+        parts = [part for part in str(path).split(".") if part]
+        if not parts:
+            return
+        cursor = target
+        for part in parts[:-1]:
+            if part not in cursor or not isinstance(cursor[part], dict):
+                cursor[part] = {}
+            cursor = cursor[part]
+        cursor[parts[-1]] = value
+
+    def _allowed_parameter_keys(self, model_object: Any) -> set:
+        if not model_object:
+            return set()
+        allowed = set()
+        for name, definition in model_object.parameter_definitions().items():
+            if definition.get("include_in_request", True):
+                allowed.add(name)
+            request_key = definition.get("request_key")
+            if request_key:
+                allowed.add(str(request_key).split(".")[0])
+        allowed.update({"response_modalities", "max_tokens"})
+        return allowed
+
+    def _prepare_additional_parameters(
+        self,
+        model: str,
+        additional_parameters: Dict | None,
+        *,
+        temperature: int | float | None = None,
+        **kwargs,
+    ) -> Dict:
+        merged: Dict[str, Any] = {}
+        if additional_parameters:
+            merged.update(additional_parameters)
+
+        if temperature not in (None, 0) and "temperature" not in merged:
+            merged["temperature"] = temperature
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                merged.setdefault(key, value)
+
+        model_object = self.model_config[model] if model else None
+        if model_object:
+            for name, definition in model_object.parameter_definitions().items():
+                if not definition.get("send_default", True):
+                    continue
+                if name in merged:
+                    continue
+                request_key = definition.get("request_key")
+                if request_key:
+                    root_key = str(request_key).split(".")[0]
+                    if root_key in merged:
+                        continue
+                if "default" in definition and definition["default"] is not None:
+                    merged[name] = definition["default"]
+
+            if model_object.max_tokens is not None:
+                merged.setdefault("max_tokens", model_object.max_tokens)
+
+            for name, definition in model_object.parameter_definitions().items():
+                request_key = definition.get("request_key")
+                if request_key and name in merged:
+                    value = merged.pop(name)
+                    if value is None or value == "":
+                        continue
+                    self._set_nested_parameter(merged, request_key, value)
+
+            for name, definition in model_object.parameter_definitions().items():
+                if not definition.get("include_in_request", True):
+                    merged.pop(name, None)
+
+            allowed = self._allowed_parameter_keys(model_object)
+            if allowed:
+                filtered: Dict[str, Any] = {}
+                for key, value in merged.items():
+                    if key in allowed:
+                        filtered[key] = value
+                    else:
+                        logger.warning(
+                            f"Model {model} does not support parameter '{key}'. Ignoring the parameter."
+                        )
+                merged = filtered
+
+        return merged
+
     def request(self, 
                 model: str, 
                 prompt: str, 
@@ -158,8 +248,7 @@ class APIHandler:
                 plain text files, …).  
                 See ``llm_platform.services.files`` for available file classes.
             temperature : int | float, default 0
-                Sampling temperature passed to the model (if supported by the
-                underlying provider).  Higher values ⇒ more creativity.
+                Deprecated; pass ``temperature`` via ``additional_parameters``.
             tool_output_callback : Callable, optional
                 ``callback(tool_name: str, args: list, result: Any) -> None``  
                 Invoked after every successful tool execution.
@@ -168,25 +257,20 @@ class APIHandler:
                 * ``response_modalities`` : list[str]  e.g. ``["text", "image", "audio"]`` – request multimodal output from OpenAI or Gemini.
                 * ``web_search`` : bool When *True* the model may call an integrated web‑search/retrieval tool (OpenAI, Gemini).
                 * ``code_execution`` : bool  When *True* the model may call an integrated code_execution tool (OpenAI, Gemini).
-                * ``citations`` : bool  Ask Anthropic models to return source citations for attached documents.
+                * ``citations_enabled`` : bool  Ask Anthropic models to return source citations for attached documents.
                 * ``structured_output``: BaseModel - Pydantic model class: the adapter will attempt to parse the model’s response into an instance of that class.
                 * ``aspect_ratio``: str - Specify the desired aspect ratio for image outputs. (for Gemini 3 Image: "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9")
                 * ``resolution``: str - Specify the desired resolution for image outputs. (for Gemini 3 Image: "1K", "2K", "4K")
+                * ``temperature``: float - Sampling temperature passed to the model (if supported).
+                * ``max_tokens`` : int – hard limit for the assistant’s answer.
+                * ``reasoning``: Dict = {"effort": "medium"}  (e.g., "low", "high", "minimal")
+                * ``text``: Dict = {"verbosity": "low"}  (e.g., "low", "medium", "high")
                 * Additional parameters for Elevenlabs STT: 
                   * ``language``: str - The language of the audio. (for Elevenlabs STT: "en", "de", "fr", "es", "it", "pt", "ru", "ja", "ko", "zh")
                   * ``diarized``: bool - Whether to diarize the audio. (for Elevenlabs STT: True, False)
                   * ``tag_audio_events``: bool - Tag audio events like laughter, applause, etc. (for Elevenlabs STT: True, False)
             **kwargs
-                Provider‑specific low‑level parameters that are forwarded unchanged
-                to the adapter.  Common examples:
-                * ``max_tokens`` : int – hard limit for the assistant’s answer.  
-                * Low‑level provider specific parameters:
-                    * max_tokens: int
-                    * reasoning: Dict = {"effort": "medium"}, # or "low" or "high" or "minimal"
-                    * text: Dict ={
-                        "verbosity": "low" # high, medium, or low for gpt-5
-                    }
-                * Any other keyword accepted by the vendor’s SDK.
+                Deprecated: keyword arguments are merged into ``additional_parameters`` for backwards compatibility.
 
             Returns
             -------
@@ -225,12 +309,19 @@ class APIHandler:
                           files=files)
         self.the_conversation.messages.append(message)
 
-        return self.request_llm(model,
-                                functions=functions,
-                                temperature=temperature,
-                                tool_output_callback=tool_output_callback,
-                                additional_parameters=additional_parameters,
-                                **kwargs)
+        normalized_parameters = self._prepare_additional_parameters(
+            model,
+            additional_parameters,
+            temperature=temperature,
+            **kwargs,
+        )
+
+        return self.request_llm(
+            model,
+            functions=functions,
+            tool_output_callback=tool_output_callback,
+            additional_parameters=normalized_parameters,
+        )
         
     async def request_async(self, 
                 model: str, 
@@ -247,7 +338,7 @@ class APIHandler:
         Args:
             model (str): The name of the model to use.
             prompt (str): The prompt to send to the model.
-            temperature (float): The temperature for text generation.
+            temperature (float): Deprecated; pass via ``additional_parameters``.
             images (Optional[List[ImageFile]]): A list of image files to include in the request.
             **kwargs: Additional keyword arguments for the request.
 
@@ -264,12 +355,19 @@ class APIHandler:
                           files=files)
         self.the_conversation.messages.append(message)
 
-        return await self.request_llm_async(model,
-                                functions=functions,
-                                temperature=temperature,
-                                tool_output_callback=tool_output_callback,
-                                additional_parameters=additional_parameters,
-                                **kwargs)
+        normalized_parameters = self._prepare_additional_parameters(
+            model,
+            additional_parameters,
+            temperature=temperature,
+            **kwargs,
+        )
+
+        return await self.request_llm_async(
+            model,
+            functions=functions,
+            tool_output_callback=tool_output_callback,
+            additional_parameters=normalized_parameters,
+        )
     
     def request_llm(self, 
                     model: str, 
@@ -292,7 +390,7 @@ class APIHandler:
             1.  Select the adapter that corresponds to ``model`` based on
                 *models_config.yaml*.
             2.  Inject a default ``max_tokens`` value from the configuration file
-                into ``**kwargs`` if the caller did not specify one.
+                into ``additional_parameters`` if the caller did not specify one.
             3.  Forward the entire conversation as well as all arguments to
                 ``adapter.request_llm``.
             4.  Store the returned assistant message inside the conversation and
@@ -306,7 +404,7 @@ class APIHandler:
                 Tools that the model is allowed to call.  See
                 :py:meth:`APIHandler.request` for details.
             temperature : int | float, default 0
-                Sampling temperature forwarded to the underlying provider.
+                Deprecated; pass ``temperature`` via ``additional_parameters``.
             tool_output_callback : Callable, optional
                 ``callback(tool_name: str, args: list, result: Any)`` executed after
                 every tool call.
@@ -315,26 +413,21 @@ class APIHandler:
                 * ``response_modalities`` : list[str]  e.g. ``["text", "image", "audio"]`` – request multimodal output from OpenAI or Gemini.
                 * ``web_search`` : bool When *True* the model may call an integrated web‑search/retrieval tool (OpenAI, Gemini).
                 * ``code_execution`` : bool  When *True* the model may call an integrated code_execution tool (OpenAI, Gemini).
-                * ``citations`` : bool  Ask Anthropic models to return source citations for attached documents.
+                * ``citations_enabled`` : bool  Ask Anthropic models to return source citations for attached documents.
                 * ``structured_output``: BaseModel - Pydantic model class: the adapter will attempt to parse the model’s response into an instance of that class.
                 * ``aspect_ratio``: str - Specify the desired aspect ratio for image outputs. (for Gemini 3 Image: "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9")
                 * ``resolution``: str - Specify the desired resolution for image outputs. (for Gemini 3 Image: "1K", "2K", "4K")
+                * ``temperature``: float - Sampling temperature passed to the model (if supported).
+                * ``max_tokens`` : int – hard limit for the assistant’s answer.
+                * ``reasoning``: Dict = {"effort": "medium"}  (e.g., "low", "high", "minimal")
+                * ``text``: Dict = {"verbosity": "low"}  (e.g., "low", "medium", "high")
                 * Additional parameters for Elevenlabs STT: 
                   * ``language``: str - The language of the audio. (for Elevenlabs STT: "en", "de", "fr", "es", "it", "pt", "ru", "ja", "ko", "zh")
                   * ``diarized``: bool - Whether to diarize the audio. (for Elevenlabs STT: True, False)
                   * ``tag_audio_events``: bool - Tag audio events like laughter, applause, etc. (for Elevenlabs STT: True, False)
                   * ``num_speakers``: int - Number of speakers in the audio. (for Elevenlabs STT: 1-32)
             **kwargs
-                Provider‑specific low‑level parameters that are forwarded unchanged
-                to the adapter.  Common examples:
-                * ``max_tokens`` : int – hard limit for the assistant’s answer.  
-                * Low‑level provider specific parameters:
-                    * max_tokens: int
-                    * reasoning: Dict = {"effort": "medium"}, # or "low" or "high" or "minimal"
-                    * text: Dict ={
-                        "verbosity": "low" # high, medium, or low for gpt-5
-                    }
-                * Any other keyword accepted by the vendor’s SDK.
+                Deprecated: keyword arguments are merged into ``additional_parameters`` for backwards compatibility.
 
             Returns
             -------
@@ -359,25 +452,21 @@ class APIHandler:
         logger.info(f"Calling API with model {model}")
         adapter = self.get_adapter(model)
 
-        # Fetch max_tokens from the model config
-        if not "max_tokens" in kwargs:
-            kwargs["max_tokens"] = self.model_config[model].max_tokens
-
-        # Compare parameters with the model config and warn if something is off
-        parameters_to_check = ["structured_output", "web_search", "code_execution"]
-        for parameter in parameters_to_check:
-            if parameter in additional_parameters and self.model_config[model][parameter] is None:
-                logger.warning(f"Model {model} does not support {parameter}. Ignoring the {parameter} parameter.")
-                additional_parameters.pop(parameter)
+        normalized_parameters = self._prepare_additional_parameters(
+            model,
+            additional_parameters,
+            temperature=temperature,
+            **kwargs,
+        )
 
         try:
-            response = adapter.request_llm(model=model, 
-                                        the_conversation=self.the_conversation, 
-                                        functions=functions,
-                                        temperature = temperature,
-                                        tool_output_callback=tool_output_callback,
-                                        additional_parameters=additional_parameters,
-                                        **kwargs)
+            response = adapter.request_llm(
+                model=model,
+                the_conversation=self.the_conversation,
+                functions=functions,
+                tool_output_callback=tool_output_callback,
+                additional_parameters=normalized_parameters,
+            )
 
             return response
         except Exception as e:
@@ -396,18 +485,19 @@ class APIHandler:
         logger.info(f"Calling API asynchronously with model {model}")
         adapter = self.get_adapter(model)
 
-        # Fetch max_tokens from the model config
-        if not "max_tokens" in kwargs:
-            kwargs["max_tokens"] = self.model_config[model].max_tokens
+        normalized_parameters = self._prepare_additional_parameters(
+            model,
+            additional_parameters,
+            temperature=temperature,
+            **kwargs,
+        )
 
         response = await adapter.request_llm_async(
             model=model,
             the_conversation=self.the_conversation,
             functions=functions,
-            temperature=temperature,
             tool_output_callback=tool_output_callback,
-            additional_parameters=additional_parameters,
-            **kwargs
+            additional_parameters=normalized_parameters,
         )
         return response
 

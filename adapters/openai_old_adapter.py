@@ -2,7 +2,7 @@ from .adapter_base import AdapterBase
 from openai import OpenAI
 import os
 import json
-from typing import List, Tuple, Callable, Dict
+from typing import Any, Callable, Dict, List, Tuple
 from llm_platform.tools.base import BaseTool
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
 from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
@@ -10,6 +10,7 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
                                          MediaFile, ImageFile, VideoFile)
 import inspect
+from loguru import logger
 
 class OpenAIOldAdapter(AdapterBase):
     
@@ -107,16 +108,48 @@ class OpenAIOldAdapter(AdapterBase):
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={},
                     **kwargs) -> Dict:
-        history, kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model, **kwargs)
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        if temperature not in (None, 0) and "temperature" not in additional_parameters:
+            additional_parameters["temperature"] = temperature
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
+
+        history, history_kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model)
 
         chat_completion_parameters = {
             "model": model,
             "messages": history,
-            "temperature": temperature,
             "audio": {"voice": "alloy", "format": "wav"},
             "modalities": ["text", "audio"],
         }
-        chat_completion_parameters.update(kwargs)
+        if "temperature" in additional_parameters:
+            chat_completion_parameters["temperature"] = additional_parameters["temperature"]
+        if "max_tokens" in additional_parameters:
+            chat_completion_parameters["max_tokens"] = additional_parameters["max_tokens"]
+
+        reserved = {
+            "response_modalities",
+            "web_search",
+            "code_execution",
+            "citations_enabled",
+            "url_context",
+            "structured_output",
+            "reasoning",
+            "text",
+            "temperature",
+            "max_tokens",
+        }
+        for key, value in additional_parameters.items():
+            if key in reserved:
+                continue
+            chat_completion_parameters[key] = value
+
+        chat_completion_parameters.update(history_kwargs)
 
         if "response_modalities" in additional_parameters:
                 chat_completion_parameters["modalities"] = additional_parameters["response_modalities"]
@@ -132,14 +165,22 @@ class OpenAIOldAdapter(AdapterBase):
                     tool_output_callback: Callable=None,
                     additional_parameters: Dict={},
                     **kwargs) -> Message:
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        if temperature not in (None, 0) and "temperature" not in additional_parameters:
+            additional_parameters["temperature"] = temperature
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
 
         if functions is None or len(functions) == 0:
             chat_completion_parameters = self.define_parameters_for_chat_completion_request(
                 model=model,
                 the_conversation=the_conversation,
-                temperature=temperature,
                 additional_parameters=additional_parameters,
-                **kwargs
             )
 
             response = self.client.chat.completions.create(**chat_completion_parameters)
@@ -151,7 +192,6 @@ class OpenAIOldAdapter(AdapterBase):
                             functions=functions,
                             tool_output_callback=tool_output_callback,
                             additional_parameters=additional_parameters,
-                            **kwargs,
              )
             
         usage = {"model": model,
@@ -263,13 +303,21 @@ class OpenAIOldAdapter(AdapterBase):
                                    tool_output_callback: Callable=None,
                                    additional_parameters: Dict={},
                                    **kwargs):
+        if additional_parameters is None:
+            additional_parameters = {}
+
+        if temperature not in (None, 0) and "temperature" not in additional_parameters:
+            additional_parameters["temperature"] = temperature
+
+        if kwargs:
+            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
+            for key, value in kwargs.items():
+                additional_parameters.setdefault(key, value)
         
         chat_completion_parameters = self.define_parameters_for_chat_completion_request(
                 model=model,
                 the_conversation=the_conversation,
-                temperature=temperature,
                 additional_parameters=additional_parameters,
-                **kwargs
             )
         
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
