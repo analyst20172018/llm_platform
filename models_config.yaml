@@ -37,24 +37,6 @@ parameter_templates:
     label: Image Output
     requires_output: image
     include_in_request: false
-  aspect_ratio: &param_aspect_ratio
-    type: enum
-    options: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
-    default: "16:9"
-    ui: select
-    label: Aspect Ratio
-    depends_on:
-      param: image_output
-      value: true
-  resolution: &param_resolution
-    type: enum
-    options: [1K, 2K, 4K]
-    default: 4K
-    ui: select
-    label: Resolution
-    depends_on:
-      param: image_output
-      value: true
   temperature_fixed_1: &param_temperature_fixed_1
     type: float
     default: 1
@@ -462,8 +444,24 @@ models:
       web_search: *param_web_search
       structured_output: *param_structured_output
       image_output: *param_image_output
-      aspect_ratio: *param_aspect_ratio
-      resolution: *param_resolution
+      aspect_ratio:
+        type: enum
+        options: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+        default: "16:9"
+        ui: select
+        label: Aspect Ratio
+        depends_on:
+          param: image_output
+          value: true
+      resolution:
+        type: enum
+        options: [1K, 2K, 4K]
+        default: 4K
+        ui: select
+        label: Resolution
+        depends_on:
+          param: image_output
+          value: true
     visible: true
 
   - name: gemini-3-flash-preview

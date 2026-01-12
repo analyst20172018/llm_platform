@@ -114,12 +114,18 @@ class OpenAIImageAdapter:
             the_conversation.messages.append(message)
             return message
         
+        # Create parameters for calling LLM
         parameters = self._create_parameters_for_calling_llm(
             model, the_conversation, additional_parameters
         )
 
+        # Get image files from last message
         image_files_in_last_message = [file for file in the_conversation.messages[-1].files if isinstance(file, ImageFile)]
+        if (not image_files_in_last_message) and (len(the_conversation.messages) > 1):
+            # If there are no image files in the last message, then we will go to the previous assistant message and try to find the image files there
+            image_files_in_last_message = [file for file in the_conversation.messages[-2].files if isinstance(file, ImageFile)]
 
+        # If there are provided image(s), then we will use them to edit the image
         if image_files_in_last_message:
 
             image_files: list[BytesIO] = []
@@ -130,6 +136,7 @@ class OpenAIImageAdapter:
 
             result = self.client.images.edit(image=image_files, **parameters)
 
+        # If there are no image files in the last message, then we will generate a new image
         else:
             result = self.client.images.generate(**parameters)
 
