@@ -1,4 +1,5 @@
 from llm_platform.adapters.openai_adapter import OpenAIAdapter
+from llm_platform.adapters.openai_image_adapter import OpenAIImageAdapter
 from llm_platform.adapters.openai_old_adapter import OpenAIOldAdapter
 from llm_platform.adapters.anthropic_adapter import AnthropicAdapter
 from llm_platform.adapters.openrouter_adapter import OpenRouterAdapter
@@ -85,6 +86,7 @@ class APIHandler:
         if adapter_name not in self.adapters:
             adapter_class = {
                 "OpenAIAdapter": OpenAIAdapter,
+                "OpenAIImageAdapter": OpenAIImageAdapter,
                 "AnthropicAdapter": AnthropicAdapter,
                 "OpenRouterAdapter": OpenRouterAdapter,
                 "SpeechmaticsAdapter": SpeechmaticsAdapter,

@@ -137,6 +137,7 @@ models:
         request_key: reasoning.effort
     visible: false
 
+
   - name: gpt-5.2
     display_name: GPT-5.2 👍
     adapter: OpenAIAdapter
@@ -357,6 +358,61 @@ models:
     background_mode: true
     visible: true
 
+  - name: gpt-image-1.5
+    display_name: GPT Image 1.5
+    adapter: OpenAIImageAdapter
+    pricing:
+      input: 5 # USD/1M tokens
+      output: 10 # USD/1M tokens
+    max_tokens: 128_000
+    context_window: 400_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+      - image
+    additional_parameters:
+      image_output: *param_image_output
+      size:
+        type: enum
+        options: ["auto", "1024x1024", "1536x1024", "1024x1536"]
+        default: "auto"
+        ui: select
+        label: Size
+        depends_on:
+          param: image_output
+          value: true
+      background:
+        type: enum
+        options: ["auto", "transparent", "opaque"]
+        default: "auto"
+        ui: select
+        label: Background
+        depends_on:
+          param: image_output
+          value: true
+      quality:
+        type: enum
+        options: ["auto", "low", "medium", "high"]
+        default: "high"
+        ui: select
+        label: Quality
+        depends_on:
+          param: image_output
+          value: true
+      output_format:
+        type: enum
+        options: ["png", "jpeg", "webp"]
+        default: "png"
+        ui: select
+        label: Output Format
+        depends_on:
+          param: image_output
+          value: true
+    visible: true
+
+
   - name: gemini-3-pro-preview
     display_name: Gemini 3 Pro 👍
     adapter: GoogleAdapter
@@ -464,6 +520,7 @@ models:
         label: Reasoning
         request_key: reasoning.effort
     visible: false
+
 
   - name: grok-4
     display_name: Grok 4
@@ -573,6 +630,7 @@ models:
     inputs:
       - image
       - text
+
 
   - name: scribe_v2
     display_name: ElevenLabs Scribe v2
