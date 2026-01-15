@@ -199,7 +199,7 @@ class OpenAIAdapter(AdapterBase):
                 "container": {"type": "auto"}
             })
 
-        messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation.messages)
+        messages = self.convert_conversation_history_to_adapter_format(the_conversation.messages)
 
         parameters = {
             "model": model,
