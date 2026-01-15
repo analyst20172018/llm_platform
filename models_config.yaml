@@ -495,30 +495,6 @@ models:
         request_key: reasoning.effort
     visible: false
 
-  - name: gemini-robotics-er-1.5-preview
-    display_name: Gemini Robotics-ER 1.5
-    adapter: GoogleAdapter
-    pricing:
-      input: 0.3 # USD/1M tokens
-      output: 2.50 # USD/1M tokens
-    max_tokens: 8_000
-    context_window: 128_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      function_calling: *param_function_calling
-      reasoning_effort:
-        type: enum
-        options: [none, dynamic, low, medium, high]
-        default: none
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
-    visible: false
-
 
   - name: grok-4
     display_name: Grok 4

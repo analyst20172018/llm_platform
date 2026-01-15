@@ -5,6 +5,7 @@ from speechmatics.batch_client import BatchClient
 from typing import List, Tuple, Dict, BinaryIO, Callable, Union, Tuple, Optional
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import AudioFile
+from loguru import logger
 
 class SpeechmaticsAdapter(AdapterBase):
     

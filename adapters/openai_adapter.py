@@ -109,8 +109,8 @@ class OpenAIAdapter(AdapterBase):
         return None
 
     def convert_conversation_history_to_adapter_format(
-        self, conversation_messages: List[Message], **kwargs
-    ) -> Tuple[List[Dict], Dict]:
+        self, conversation_messages: List[Message]
+    ) -> List[Dict]:
         """
         Converts the platform's Conversation object into the list format
         required by the OpenAI API.
@@ -163,7 +163,7 @@ class OpenAIAdapter(AdapterBase):
             if message.function_responses:
                 history.extend(fr.to_openai() for fr in message.function_responses)
 
-        return history, kwargs
+        return history
 
     def _create_parameters_for_calling_llm(
         self,
@@ -198,8 +198,6 @@ class OpenAIAdapter(AdapterBase):
                 "type": "code_interpreter",
                 "container": {"type": "auto"}
             })
-        if "image" in additional_parameters.get("response_modalities", []):
-            tools.append({"type": "image_generation", "quality": "high", "size": "1536x1024"})
 
         messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation.messages)
 
@@ -236,7 +234,7 @@ class OpenAIAdapter(AdapterBase):
                 (msg for msg in reversed(the_conversation.messages) if msg.role == "user"), None
             )
             if last_user_message:
-                messages, kwargs = self.convert_conversation_history_to_adapter_format([last_user_message], **kwargs)
+                messages = self.convert_conversation_history_to_adapter_format([last_user_message])
                 parameters["input"] = messages
 
         # Use background mode for long-running tasks if supported
@@ -503,8 +501,10 @@ class OpenAIAdapter(AdapterBase):
                 model, the_conversation, additional_parameters, use_previous_response_id=True
             )
 
-            if "text_format" in parameters:
+            # For Structured model outputs
+            if additional_parameters.get("structured_output", None):
                 response = self.client.responses.parse(**parameters)
+            # For all other outputs
             else:
                 response = self.client.responses.create(**parameters)
 
