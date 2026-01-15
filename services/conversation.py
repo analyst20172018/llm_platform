@@ -238,9 +238,11 @@ class Message:
                 "\n".join([str(additional_response) for additional_response in self.additional_responses])
 
 class Conversation:
-    def __init__(self, 
-                 messages: List[Message] = [], 
-                 system_prompt: str = None):
+    def __init__(
+        self,
+        messages: List[Message] | None = None,
+        system_prompt: str | None = None,
+    ):
         """
         Initializes a Conversation instance.
 
@@ -265,7 +267,7 @@ class Conversation:
             The initial system prompt used in the conversation.
         """
 
-        self.messages = messages if messages is not None else []
+        self.messages = list(messages) if messages is not None else []
         #self.model_config = ModelConfig()
         self.system_prompt = system_prompt
 

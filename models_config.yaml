@@ -154,6 +154,39 @@ models:
         request_key: text.verbosity
     visible: true
 
+  - name: gpt-5.2-codex
+    display_name: GPT-5.2-Codex
+    adapter: OpenAIAdapter
+    pricing:
+      input: 1.75 # USD/1M tokens
+      output: 14 # USD/1M tokens
+    max_tokens: 128_000
+    context_window: 400_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      web_search: *param_web_search
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [low, medium, high, xhigh]
+        default: none
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+      verbosity:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Verbosity
+        request_key: text.verbosity
+    visible: true
+
   - name: gpt-5.1-codex-max
     display_name: GPT-5.1 Codex Max
     adapter: OpenAIAdapter
@@ -184,7 +217,7 @@ models:
         ui: select
         label: Verbosity
         request_key: text.verbosity
-    visible: true
+    visible: false
 
   - name: gpt-5-mini
     display_name: GPT-5 mini
