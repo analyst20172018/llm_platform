@@ -180,8 +180,8 @@ models:
         request_key: reasoning.effort
       verbosity:
         type: enum
-        options: [low, medium, high]
-        default: low
+        options: [medium]
+        default: medium
         ui: select
         label: Verbosity
         request_key: text.verbosity

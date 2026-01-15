@@ -12,16 +12,17 @@ class AdapterBase(ABC):
         self.model_config = ModelConfig()
 
     @abstractmethod
-    def convert_conversation_history_to_adapter_format(self, the_conversation: Conversation):
+    def convert_conversation_history_to_adapter_format(
+        self, conversation_messages: List[Message]
+    ) -> List[Dict]:
         pass
 
     @abstractmethod
     def request_llm(self, model: str, 
                     the_conversation: Conversation, 
                     functions:List[BaseTool]=None, 
-                    temperature: int=0,
                     tool_output_callback: Callable=None,
-                    additional_parameters: Dict={}, 
+                    additional_parameters: Dict=None, 
                     **kwargs) -> Message:
         pass
 
@@ -29,9 +30,8 @@ class AdapterBase(ABC):
     def request_llm_with_functions(self, model: str, 
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool], 
-                                   temperature: int=0,
                                    tool_output_callback: Callable=None,
-                                   additional_parameters: Dict={},
+                                   additional_parameters: Dict=None,
                                    **kwargs):
         pass
 
