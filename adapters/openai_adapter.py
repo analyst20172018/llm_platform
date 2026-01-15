@@ -25,6 +25,7 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
                                          MediaFile, ImageFile, VideoFile, define_file_type)
 from llm_platform.tools.base import BaseTool
+from llm_platform.types import AdditionalParameters
 
 from .adapter_base import AdapterBase
 
@@ -169,7 +170,7 @@ class OpenAIAdapter(AdapterBase):
         self,
         model: str,
         the_conversation: Conversation,
-        additional_parameters: Dict = None,
+        additional_parameters: AdditionalParameters | None = None,
         use_previous_response_id: bool = True,
     ) -> Dict:
         """
@@ -458,7 +459,7 @@ class OpenAIAdapter(AdapterBase):
         the_conversation: Conversation,
         functions: List[BaseTool] = None,
         tool_output_callback: Callable = None,
-        additional_parameters: Dict = None,
+        additional_parameters: AdditionalParameters | None = None,
         **kwargs,
     ) -> Message:
         """
@@ -533,7 +534,7 @@ class OpenAIAdapter(AdapterBase):
         the_conversation: Conversation,
         functions: List[BaseTool] = None,
         tool_output_callback: Callable = None,
-        additional_parameters: Dict = None,
+        additional_parameters: AdditionalParameters | None = None,
         **kwargs,
     ) -> Message:
         """
@@ -593,7 +594,7 @@ class OpenAIAdapter(AdapterBase):
         the_conversation: Conversation,
         functions: List[Union[BaseTool, Callable]],
         tool_output_callback: Callable = None,
-        additional_parameters: Dict = None,
+        additional_parameters: AdditionalParameters | None = None,
         **kwargs,
     ):
         """Handles the synchronous, recursive logic for tool-use conversations."""
@@ -650,7 +651,7 @@ class OpenAIAdapter(AdapterBase):
         the_conversation: Conversation,
         functions: List[Union[BaseTool, Callable]],
         tool_output_callback: Callable = None,
-        additional_parameters: Dict = None,
+        additional_parameters: AdditionalParameters | None = None,
         **kwargs,
     ):
         """Handles the asynchronous, recursive logic for tool-use conversations."""

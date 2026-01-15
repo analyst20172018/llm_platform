@@ -25,6 +25,7 @@ from llm_platform.services.files import (
 from llm_platform.tools.base import BaseTool
 
 from .adapter_base import AdapterBase
+from llm_platform.types import AdditionalParameters
 
 # --- Constants ---
 
@@ -175,7 +176,7 @@ class AnthropicAdapter(AdapterBase):
         functions: List[BaseTool] = None,
         temperature: int = 0,
         tool_output_callback: Callable = None,
-        additional_parameters: Dict = None,
+        additional_parameters: AdditionalParameters | None = None,
         **kwargs,
     ) -> Message:
         """
@@ -241,7 +242,7 @@ class AnthropicAdapter(AdapterBase):
         model: str,
         conversation: Conversation,
         temperature: int,
-        additional_parameters: Dict,
+        additional_parameters: AdditionalParameters,
         **kwargs,
     ) -> ClaudeStreamProcessor:
         """Handles a non-tool-use streaming request."""
@@ -277,7 +278,7 @@ class AnthropicAdapter(AdapterBase):
         functions: List[BaseTool],
         temperature: int,
         tool_output_callback: Callable,
-        additional_parameters: Dict,
+        additional_parameters: AdditionalParameters,
         **kwargs,
     ) -> ClaudeStreamProcessor:
         """Handles the recursive, streaming tool-use loop."""
@@ -358,7 +359,7 @@ class AnthropicAdapter(AdapterBase):
         self,
         model: str,
         temperature: int,
-        additional_parameters: Dict,
+        additional_parameters: AdditionalParameters,
         **kwargs,
     ) -> Tuple[Dict, int]:
         """Prepares kwargs for the API call, handling reasoning, betas, etc."""
@@ -385,7 +386,7 @@ class AnthropicAdapter(AdapterBase):
     # --- Conversation and Tool Formatting ---
 
     def convert_conversation_history_to_adapter_format(
-        self, conversation: Conversation, additional_parameters: Dict = None
+        self, conversation: Conversation, additional_parameters: AdditionalParameters | None = None
     ) -> List[Dict]:
         """Converts a Conversation object into the format required by the Anthropic API."""
         if additional_parameters is None:
@@ -394,7 +395,7 @@ class AnthropicAdapter(AdapterBase):
         history = []
         citations_enabled = additional_parameters.get(
             "citations_enabled",
-            additional_parameters.get("citations", False),
+            False,
         )
 
         for message in conversation.messages:
@@ -539,7 +540,7 @@ class AnthropicAdapter(AdapterBase):
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool]=[], 
                                    tool_output_callback: Callable=None,
-                                   additional_parameters: Dict={},
+                                   additional_parameters: AdditionalParameters | None = None,
                                    **kwargs
                                    ): 
         """

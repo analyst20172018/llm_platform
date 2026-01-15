@@ -11,6 +11,7 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          MediaFile, ImageFile, VideoFile)
 import inspect
 from loguru import logger
+from llm_platform.types import AdditionalParameters
 
 class OpenAIOldAdapter(AdapterBase):
     
@@ -106,7 +107,7 @@ class OpenAIOldAdapter(AdapterBase):
                     the_conversation: Conversation, 
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
-                    additional_parameters: Dict={},
+                    additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Dict:
         if additional_parameters is None:
             additional_parameters = {}
@@ -163,7 +164,7 @@ class OpenAIOldAdapter(AdapterBase):
                     functions:List[BaseTool]=[], 
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
-                    additional_parameters: Dict={},
+                    additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:
         if additional_parameters is None:
             additional_parameters = {}
@@ -301,7 +302,7 @@ class OpenAIOldAdapter(AdapterBase):
                                    functions: List[BaseTool], 
                                    temperature: int=0,  
                                    tool_output_callback: Callable=None,
-                                   additional_parameters: Dict={},
+                                   additional_parameters: AdditionalParameters | None = None,
                                    **kwargs):
         if additional_parameters is None:
             additional_parameters = {}

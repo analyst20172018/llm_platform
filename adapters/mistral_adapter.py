@@ -11,6 +11,7 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          MediaFile, ImageFile, VideoFile)
 import json
 import inspect
+from llm_platform.types import AdditionalParameters
 
 class MistralAdapter(AdapterBase):
     
@@ -128,7 +129,7 @@ class MistralAdapter(AdapterBase):
                     functions:List[BaseTool]=None, 
                     temperature: int=0, 
                     tool_output_callback: Callable=None, 
-                    additional_parameters: Dict={},
+                    additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:
 
         if additional_parameters is None:
@@ -284,7 +285,7 @@ class MistralAdapter(AdapterBase):
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool | Callable], 
                                    tool_output_callback: Callable=None,
-                                   additional_parameters: Dict={},
+                                   additional_parameters: AdditionalParameters | None = None,
                                    **kwargs):
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
         messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation, model)

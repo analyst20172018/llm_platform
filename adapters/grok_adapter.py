@@ -15,6 +15,7 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
 import json
 import inspect
 from loguru import logger
+from llm_platform.types import AdditionalParameters
 
 class GrokAdapter(AdapterBase):
     
@@ -100,7 +101,7 @@ class GrokAdapter(AdapterBase):
     def _create_parameters_for_calling_llm(
         self,
         model: str,
-        additional_parameters: Dict = None,
+        additional_parameters: AdditionalParameters | None = None,
     ) -> Dict:
         """
         Constructs the dictionary of parameters for an OpenAI API call.
@@ -157,7 +158,7 @@ class GrokAdapter(AdapterBase):
                     functions:List[BaseTool]=None, 
                     temperature: int=0, 
                     tool_output_callback: Callable=None, 
-                    additional_parameters: Dict={},
+                    additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:
         """Requests a completion from the Language Model.
                     This method sends the current conversation to the LLM and retrieves a response.
@@ -240,7 +241,7 @@ class GrokAdapter(AdapterBase):
                                     the_conversation: Conversation, 
                                     functions: List[BaseTool | Callable], 
                                     tool_output_callback: Callable=None,
-                                    additional_parameters: Dict={},
+                                    additional_parameters: AdditionalParameters | None = None,
                                     **kwargs):
         if additional_parameters is None:
             additional_parameters = {}

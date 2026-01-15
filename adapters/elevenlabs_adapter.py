@@ -8,6 +8,7 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          MediaFile, ImageFile, VideoFile)
 from elevenlabs.client import ElevenLabs
 from loguru import logger
+from llm_platform.types import AdditionalParameters
 
 class ElevenLabsAdapter:
     def __init__(self):
@@ -106,7 +107,7 @@ class ElevenLabsAdapter:
                     the_conversation: Conversation, 
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
-                    additional_parameters: Dict={},
+                    additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:
         if additional_parameters is None:
             additional_parameters = {}

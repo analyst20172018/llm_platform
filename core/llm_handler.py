@@ -13,6 +13,7 @@ from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
 from llm_platform.tools.base import BaseTool
 from llm_platform.helpers.model_config import ModelConfig
+from llm_platform.types import AdditionalParameters
 from loguru import logger
 import tiktoken
 import os
@@ -37,12 +38,12 @@ class APIHandler:
             Lazily initializes and returns the specified adapter.
         get_adapter(model_name: str) -> Any:
             Gets the appropriate adapter for the given model name.
-        request(model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None, files: List[BaseFile] = [], temperature: int = 0, tool_output_callback: Callable = None, additional_parameters: Dict = {}, **kwargs) -> str:
-        request_async(model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None, files: List[BaseFile] = [], temperature: int = 0, tool_output_callback: Callable = None, additional_parameters: Dict = {}, **kwargs) -> str:
+        request(model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None, files: List[BaseFile] = [], tool_output_callback: Callable = None, additional_parameters: AdditionalParameters | None = None, **kwargs) -> str:
+        request_async(model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None, files: List[BaseFile] = [], tool_output_callback: Callable = None, additional_parameters: AdditionalParameters | None = None, **kwargs) -> str:
             Asynchronously sends a request to the language model with the given parameters.
-        request_llm(model: str, functions: Union[List[BaseTool], List[Callable]] = None, temperature: int = 0, tool_output_callback: Callable = None, additional_parameters: Dict = {}, **kwargs) -> str:
+        request_llm(model: str, functions: Union[List[BaseTool], List[Callable]] = None, temperature: int = 0, tool_output_callback: Callable = None, additional_parameters: AdditionalParameters | None = None, **kwargs) -> str:
             Makes a request to the language model using the appropriate adapter.
-        request_llm_async(model: str, functions: Union[List[BaseTool], List[Callable]] = None, temperature: int = 0, tool_output_callback: Callable = None, additional_parameters: Dict = {}, **kwargs) -> str:
+        request_llm_async(model: str, functions: Union[List[BaseTool], List[Callable]] = None, temperature: int = 0, tool_output_callback: Callable = None, additional_parameters: AdditionalParameters | None = None, **kwargs) -> str:
             Asynchronously makes a request to the language model using the appropriate adapter.
         calculate_tokens(text: str) -> Dict[str, int]:
             Calculates the number of tokens in the given text.
@@ -149,7 +150,7 @@ class APIHandler:
     def _prepare_additional_parameters(
         self,
         model: str,
-        additional_parameters: Dict | None,
+        additional_parameters: AdditionalParameters | None,
         *,
         temperature: int | float | None = None,
         **kwargs,
@@ -215,9 +216,8 @@ class APIHandler:
                 prompt: str, 
                 functions: Union[List[BaseTool], List[Callable]] = None, 
                 files: List[BaseFile]=[],
-                temperature: int=0, 
                 tool_output_callback: Callable=None,
-                additional_parameters: Dict={},
+                additional_parameters: AdditionalParameters | None = None,
                 **kwargs) -> str:
         """
             Send a single prompt to a language model and receive the assistant’s answer.
@@ -249,12 +249,10 @@ class APIHandler:
                 Additional multimodal inputs (images, audio, PDFs, Excel sheets,
                 plain text files, …).  
                 See ``llm_platform.services.files`` for available file classes.
-            temperature : int | float, default 0
-                Deprecated; pass ``temperature`` via ``additional_parameters``.
             tool_output_callback : Callable, optional
                 ``callback(tool_name: str, args: list, result: Any) -> None``  
                 Invoked after every successful tool execution.
-            additional_parameters : dict, optional
+            additional_parameters : AdditionalParameters, optional
                 Provider‑agnostic high‑level switches.  Currently understood keys (silently ignored by adapters that do not support them):
                 * ``response_modalities`` : list[str]  e.g. ``["text", "image", "audio"]`` – request multimodal output from OpenAI or Gemini.
                 * ``web_search`` : bool When *True* the model may call an integrated web‑search/retrieval tool (OpenAI, Gemini).
@@ -314,7 +312,6 @@ class APIHandler:
         normalized_parameters = self._prepare_additional_parameters(
             model,
             additional_parameters,
-            temperature=temperature,
             **kwargs,
         )
 
@@ -330,9 +327,8 @@ class APIHandler:
                 prompt: str, 
                 functions: Union[List[BaseTool], List[Callable]] = None, 
                 files: List[BaseFile]=[],
-                temperature: int=0, 
                 tool_output_callback: Callable=None,
-                additional_parameters: Dict={},
+                additional_parameters: AdditionalParameters | None = None,
                 **kwargs) -> str:
         """
         Make a request to the language model.
@@ -340,7 +336,6 @@ class APIHandler:
         Args:
             model (str): The name of the model to use.
             prompt (str): The prompt to send to the model.
-            temperature (float): Deprecated; pass via ``additional_parameters``.
             images (Optional[List[ImageFile]]): A list of image files to include in the request.
             **kwargs: Additional keyword arguments for the request.
 
@@ -360,7 +355,6 @@ class APIHandler:
         normalized_parameters = self._prepare_additional_parameters(
             model,
             additional_parameters,
-            temperature=temperature,
             **kwargs,
         )
 
@@ -376,7 +370,7 @@ class APIHandler:
                     functions: Union[List[BaseTool], List[Callable]] = None, 
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
-                    additional_parameters: Dict={}, 
+                    additional_parameters: AdditionalParameters | None = None, 
                     **kwargs) -> Message:
         """
             Dispatch the current ``Conversation`` to the language‑model adapter and
@@ -410,7 +404,7 @@ class APIHandler:
             tool_output_callback : Callable, optional
                 ``callback(tool_name: str, args: list, result: Any)`` executed after
                 every tool call.
-            additional_parameters : dict, optional
+            additional_parameters : AdditionalParameters, optional
                 Provider‑agnostic high‑level switches.  Currently understood keys (silently ignored by adapters that do not support them):
                 * ``response_modalities`` : list[str]  e.g. ``["text", "image", "audio"]`` – request multimodal output from OpenAI or Gemini.
                 * ``web_search`` : bool When *True* the model may call an integrated web‑search/retrieval tool (OpenAI, Gemini).
@@ -482,7 +476,7 @@ class APIHandler:
                         functions: Union[List[BaseTool], List[Callable]] = None,
                         temperature: int=0,
                         tool_output_callback: Callable=None,
-                        additional_parameters: Dict={},
+                        additional_parameters: AdditionalParameters | None = None,
                         **kwargs) -> str:
         logger.info(f"Calling API asynchronously with model {model}")
         adapter = self.get_adapter(model)

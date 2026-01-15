@@ -21,6 +21,7 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
                                          MediaFile, ImageFile, VideoFile)
 from llm_platform.tools.base import BaseTool
+from llm_platform.types import AdditionalParameters
 
 class ImagenModel(Enum):
     STANDARD = "imagen-4.0-generate-001"
@@ -132,7 +133,7 @@ class GoogleAdapter(AdapterBase):
         model: str,
         the_conversation: Conversation,
         tools: List,
-        additional_parameters: Dict,
+        additional_parameters: AdditionalParameters,
     ) -> types.GenerateContentConfig:
         """Prepares the GenerateContentConfig for a Gemini API call."""
         config_params = {
@@ -283,7 +284,7 @@ class GoogleAdapter(AdapterBase):
 
     def request_llm(self, model: str, the_conversation: Conversation, functions: List[BaseTool] = None,
                     temperature: float = 0.0, tool_output_callback: Callable = None,
-                    additional_parameters: Dict = None, **kwargs) -> Message:
+                    additional_parameters: AdditionalParameters | None = None, **kwargs) -> Message:
         """
         Sends a request to the Gemini LLM, handling standard chat and function calling.
         """
@@ -499,7 +500,7 @@ class GoogleAdapter(AdapterBase):
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool]=[], 
                                    tool_output_callback: Callable=None,
-                                   additional_parameters: Dict={},
+                                   additional_parameters: AdditionalParameters | None = None,
                                    **kwargs
                                    ): 
         """

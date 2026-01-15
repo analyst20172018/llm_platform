@@ -4,6 +4,7 @@ from typing import List, Tuple, Callable, Dict
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.tools.base import BaseTool
 from llm_platform.helpers.model_config import ModelConfig
+from llm_platform.types import AdditionalParameters
 
 class AdapterBase(ABC):
     def __init__(self):
@@ -22,7 +23,7 @@ class AdapterBase(ABC):
                     the_conversation: Conversation, 
                     functions:List[BaseTool]=None, 
                     tool_output_callback: Callable=None,
-                    additional_parameters: Dict=None, 
+                    additional_parameters: AdditionalParameters | None = None, 
                     **kwargs) -> Message:
         pass
 
@@ -31,7 +32,7 @@ class AdapterBase(ABC):
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool], 
                                    tool_output_callback: Callable=None,
-                                   additional_parameters: Dict=None,
+                                   additional_parameters: AdditionalParameters | None = None,
                                    **kwargs):
         pass
 
@@ -47,7 +48,7 @@ class AdapterBase(ABC):
                         functions:List[BaseTool]=None,
                         temperature: int=0,
                         tool_output_callback: Callable=None,
-                        additional_parameters: Dict={},
+                        additional_parameters: AdditionalParameters | None = None,
                         **kwargs):
         pass
 

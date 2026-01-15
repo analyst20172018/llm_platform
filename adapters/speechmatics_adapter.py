@@ -6,6 +6,7 @@ from typing import List, Tuple, Dict, BinaryIO, Callable, Union, Tuple, Optional
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import AudioFile
 from loguru import logger
+from llm_platform.types import AdditionalParameters
 
 class SpeechmaticsAdapter(AdapterBase):
     
@@ -66,7 +67,7 @@ class SpeechmaticsAdapter(AdapterBase):
                     the_conversation: Conversation, 
                     temperature: int=0, 
                     tool_output_callback: Callable=None,
-                    additional_parameters: Dict={},
+                    additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:
         if additional_parameters is None:
             additional_parameters = {}
@@ -117,7 +118,7 @@ class SpeechmaticsAdapter(AdapterBase):
                                    the_conversation: Conversation, 
                                    functions: List[Callable],
                                    tool_output_callback: Callable=None, 
-                                   additional_parameters: Dict={},
+                                   additional_parameters: AdditionalParameters | None = None,
                                    **kwargs):
         raise NotImplementedError("Not implemented yet")
 

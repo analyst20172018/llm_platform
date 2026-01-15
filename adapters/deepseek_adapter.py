@@ -8,6 +8,7 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
                                          MediaFile, ImageFile, VideoFile)
 from loguru import logger
+from llm_platform.types import AdditionalParameters
 
 class DeepSeekAdapter(AdapterBase):
     
@@ -108,7 +109,7 @@ class DeepSeekAdapter(AdapterBase):
                     the_conversation: Conversation, 
                     temperature: int=0,  
                     tool_output_callback: Callable=None,
-                    additional_parameters: Dict={},
+                    additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:
         
         if additional_parameters is None:
@@ -180,7 +181,7 @@ class DeepSeekAdapter(AdapterBase):
                                    functions: List[Callable], 
                                    temperature: int=0,  
                                    tool_output_callback: Callable=None,
-                                   additional_parameters: Dict={},
+                                   additional_parameters: AdditionalParameters | None = None,
                                    **kwargs):
         raise NotImplementedError("Not implemented yet")
 

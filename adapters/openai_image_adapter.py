@@ -19,6 +19,7 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
                                          MediaFile, ImageFile, VideoFile, define_file_type)
 from llm_platform.tools.base import BaseTool
+from llm_platform.types import AdditionalParameters
 
 class OpenAIImageAdapter:
     """
@@ -36,7 +37,7 @@ class OpenAIImageAdapter:
         self,
         model: str,
         the_conversation: Conversation,
-        additional_parameters: Dict = None,
+        additional_parameters: AdditionalParameters | None = None,
     ) -> Dict:
         """
         Constructs the dictionary of parameters for an OpenAI API call.
@@ -51,6 +52,8 @@ class OpenAIImageAdapter:
         Returns:
             A dictionary of parameters ready for the OpenAI client.
         """
+        additional_parameters = additional_parameters or {}
+
         if additional_parameters.get("web_search"):
             logger.warning("Web search is not supported for image models.")
         if additional_parameters.get("code_execution"):
@@ -78,7 +81,7 @@ class OpenAIImageAdapter:
         the_conversation: Conversation,
         functions: List[BaseTool] = None,
         tool_output_callback: Callable = None,
-        additional_parameters: Dict = None,
+        additional_parameters: AdditionalParameters | None = None,
         **kwargs,
     ) -> Message:
         """

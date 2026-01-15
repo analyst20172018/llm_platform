@@ -28,7 +28,7 @@ def __init__(self, system_prompt: str = "You are a helpful assistant")
 ```python
 def request(self, model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None,
            files: List[BaseFile] = [], tool_output_callback: Callable = None,
-           additional_parameters: Dict = None) -> str
+           additional_parameters: AdditionalParameters | None = None) -> str
 ```
 
 Makes a synchronous request to the language model.
@@ -39,7 +39,7 @@ Makes a synchronous request to the language model.
 - `functions (Union[List[BaseTool], List[Callable]])`: Optional tools or callables to use
 - `files (List[BaseFile])`: Optional files to include in the request
 - `tool_output_callback (Callable)`: Optional callback function for tool output
-- `additional_parameters (Dict)`: Optional additional parameters (e.g. `temperature`, `max_tokens`, `reasoning`, `text.verbosity`, `web_search`)
+- `additional_parameters (AdditionalParameters)`: Optional additional parameters (e.g. `temperature`, `max_tokens`, `reasoning`, `text.verbosity`, `web_search`)
 
 **Returns:**
 - `str`: The response from the language model
@@ -47,7 +47,7 @@ Makes a synchronous request to the language model.
 ```python
 async def request_async(self, model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None,
                        files: List[BaseFile] = [], tool_output_callback: Callable = None,
-                       additional_parameters: Dict = None) -> str
+                       additional_parameters: AdditionalParameters | None = None) -> str
 ```
 
 Makes an asynchronous request to the language model with the same parameters as `request()`. Provider tuning flows through `additional_parameters`.
