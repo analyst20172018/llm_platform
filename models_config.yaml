@@ -737,6 +737,11 @@ models:
         default: en
         ui: input
         label: Language
+      language_detection:
+        type: boolean
+        default: false
+        ui: toggle
+        label: Language Detection
       diarized:
         type: boolean
         default: true

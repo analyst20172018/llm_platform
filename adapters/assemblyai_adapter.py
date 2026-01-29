@@ -15,15 +15,20 @@ class AssemblyAIAdapter:
 
     def voice_to_text(self, audio_file: AudioFile, additional_parameters: Dict) -> str:
 
+        language_detection = additional_parameters.get("language_detection", False)
         language = additional_parameters.get("language", "en")
         diarized = additional_parameters.get("diarized", True)
         num_speakers = additional_parameters.get("num_speakers", None)
 
         config_parameters = {
             "speech_models": ["universal"],
-            "language_code": language,
             "speaker_labels": diarized,
         }
+        if language_detection:
+            config_parameters["language_detection"] = True
+        else:
+            config_parameters["language_code"] = language
+
         if num_speakers is not None:
             config_parameters["speaker_count"] = num_speakers
 
