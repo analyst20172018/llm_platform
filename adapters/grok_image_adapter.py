@@ -1,16 +1,22 @@
 """
-Adapter for interacting with the OpenAI API Image model.
+Adapter for interacting with the Grok Image model.
 """
 
 import asyncio
 import inspect
 import json
 from typing import Callable, Dict, List, Tuple, Union
+from urllib import response
 from loguru import logger
 import time
+import os
 from io import BytesIO
 
-from openai import AsyncOpenAI, OpenAI
+from xai_sdk import Client
+from xai_sdk.chat import user, system, image, assistant, tool, tool_result
+from xai_sdk.proto import chat_pb2
+from xai_sdk.search import SearchParameters
+from xai_sdk.tools import web_search, x_search, code_execution
 
 from llm_platform.services.conversation import (Conversation, FunctionCall,
                                                 FunctionResponse, Message,
@@ -22,17 +28,16 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
 from llm_platform.tools.base import BaseTool
 from llm_platform.types import AdditionalParameters
 
-class OpenAIImageAdapter:
+class GrokImageAdapter:
     """
-    An adapter to interact with OpenAI's _image_ models.
+    An adapter to interact with Grok's image models.
     """
 
     def __init__(self):
         """
-        Initializes the OpenAIImageAdapter with synchronous and asynchronous clients.
+        Initializes the GrokImageAdapter with synchronous and asynchronous clients.
         """
-        self.client = OpenAI()
-        self.async_client = AsyncOpenAI()
+        self.client = Client(api_key = os.getenv("XAI_API_KEY"))
 
     def _create_parameters_for_calling_llm(
         self,
@@ -41,7 +46,7 @@ class OpenAIImageAdapter:
         additional_parameters: AdditionalParameters | None = None,
     ) -> Dict:
         """
-        Constructs the dictionary of parameters for an OpenAI API call.
+        Constructs the dictionary of parameters for an Grok API call.
 
         Args:
             model: The model identifier.
@@ -51,27 +56,16 @@ class OpenAIImageAdapter:
             **kwargs: Additional keyword arguments to pass to the API.
 
         Returns:
-            A dictionary of parameters ready for the OpenAI client.
+            A dictionary of parameters ready for the Grok client.
         """
         additional_parameters = additional_parameters or {}
-
-        if additional_parameters.get("web_search"):
-            logger.warning("Web search is not supported for image models.")
-        if additional_parameters.get("code_execution"):
-            logger.warning("Code execution is not supported for image models.")
-        if additional_parameters.get("reasoning"):
-            logger.warning("Reasoning is not supported for image models.")
-        if additional_parameters.get("structured_output"):
-            logger.warning("Structured output is not supported for image models.")
 
         parameters = {
             "model": model,
             "prompt": the_conversation.messages[-1].content,
-            "n": 1,
-            "size": additional_parameters.get("size"),
-            "background": additional_parameters.get("background"),
-            "quality": additional_parameters.get("quality"),
-            "output_format": additional_parameters.get("output_format"),
+            "image_format": "base64",
+            "aspect_ratio": additional_parameters.get("aspect_ratio"),
+            "resolution": additional_parameters.get("resolution"),
         }
 
         return parameters
@@ -85,25 +79,6 @@ class OpenAIImageAdapter:
         additional_parameters: AdditionalParameters | None = None,
         **kwargs,
     ) -> Message:
-        """
-        Requests a response from an OpenAI LLM, handling standard chat and
-        function calling (tool use).
-
-        This method orchestrates sending a request, processing the response,
-        and updating the conversation. If tools are provided, it will handle
-        the multi-step tool-use conversation flow.
-
-        Args:
-            model: The identifier of the LLM model to use.
-            the_conversation: The conversation object containing message history.
-            functions: A list of tools/functions the model can call.
-            tool_output_callback: A callback executed after each tool call.
-            additional_parameters: Extra parameters for the API call.
-            **kwargs: Additional keyword arguments for the OpenAI client.
-
-        Returns:
-            The final assistant Message object after all processing.
-        """
         if additional_parameters is None:
             additional_parameters = {}
 
@@ -131,34 +106,28 @@ class OpenAIImageAdapter:
 
         # If there are provided image(s), then we will use them to edit the image
         if image_files_in_last_message:
+            if len(image_files_in_last_message) > 1:
+                logger.warning("Grok Image model only supports editing one image at a time. Using the first image provided.")
 
-            image_files: list[BytesIO] = []
-            for image_file in image_files_in_last_message:
-                buf = image_file.bytes_io
-                buf.name = image_file.name
-                image_files.append(buf)
+            image_file_to_edit_base64 = image_files_in_last_message[0].base64
+            image_file_to_edit_extension = image_files_in_last_message[0].extension
+            parameters['image_url'] = f"data:image/{image_file_to_edit_extension};base64,{image_file_to_edit_base64}"
 
-            result = self.client.images.edit(image=image_files, **parameters)
+        result = self.client.image.sample(**parameters)
 
-        # If there are no image files in the last message, then we will generate a new image
-        else:
-            result = self.client.images.generate(**parameters)
-
-        output_format = getattr(result, "output_format", "png")
         images_output: list[ImageFile] = []
-        for i, item in enumerate(getattr(result, "data", []) or []):
-            b64 = getattr(item, "b64_json", None)
-            if not b64:
-                continue
-            image_file = ImageFile.from_base64(b64, file_name=f"image_{i}.{output_format}")
+        output_format = "jpeg"
+        image_bytes = getattr(result, "image", None)
+        if image_bytes:
+            image_file = ImageFile.from_bytes(image_bytes, file_name=f"image_0.{output_format}")
             images_output.append(image_file)
 
         usage = {}
         if result_usage := getattr(result, "usage", None):
             usage = {
                 "model": model,
-                "completion_tokens": getattr(result_usage, "total_tokens", None),
-                "prompt_tokens": getattr(result_usage, "input_tokens", None),
+                "completion_tokens": None,
+                "prompt_tokens": None,
             }
 
         message = Message(

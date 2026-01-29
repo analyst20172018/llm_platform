@@ -4,8 +4,10 @@ from llm_platform.adapters.openai_old_adapter import OpenAIOldAdapter
 from llm_platform.adapters.anthropic_adapter import AnthropicAdapter
 from llm_platform.adapters.openrouter_adapter import OpenRouterAdapter
 from llm_platform.adapters.speechmatics_adapter import SpeechmaticsAdapter
+from llm_platform.adapters.assemblyai_adapter import AssemblyAIAdapter
 from llm_platform.adapters.google_adapter import GoogleAdapter
 from llm_platform.adapters.grok_adapter import GrokAdapter
+from llm_platform.adapters.grok_image_adapter import GrokImageAdapter
 from llm_platform.adapters.deepseek_adapter import DeepSeekAdapter
 from llm_platform.adapters.elevenlabs_adapter import ElevenLabsAdapter
 from llm_platform.adapters.mistral_adapter import MistralAdapter
@@ -92,8 +94,10 @@ class APIHandler:
                 "OpenRouterAdapter": OpenRouterAdapter,
                 "SpeechmaticsAdapter": SpeechmaticsAdapter,
                 "ElevenLabsAdapter": ElevenLabsAdapter,
+                "AssemblyAIAdapter": AssemblyAIAdapter,
                 "GoogleAdapter": GoogleAdapter,
                 "GrokAdapter": GrokAdapter,
+                "GrokImageAdapter": GrokImageAdapter,
                 "DeepSeekAdapter": DeepSeekAdapter,
                 "MistralAdapter": MistralAdapter,
                 "OpenAIOldAdapter": OpenAIOldAdapter,
@@ -263,7 +267,7 @@ class APIHandler:
                 * ``resolution``: str - Specify the desired resolution for image outputs. (for Gemini 3 Image: "1K", "2K", "4K")
                 * ``temperature``: float - Sampling temperature passed to the model (if supported).
                 * ``max_tokens`` : int – hard limit for the assistant’s answer.
-                * ``reasoning``: Dict = {"effort": "medium"}  (e.g., "low", "high", "minimal")
+                * ``reasoning``: Dict = {"effort": "high"}  (e.g., "low", "high", "minimal")
                 * ``text``: Dict = {"verbosity": "low"}  (e.g., "low", "medium", "high")
                 * Additional parameters for Elevenlabs STT: 
                   * ``language``: str - The language of the audio. (for Elevenlabs STT: "en", "de", "fr", "es", "it", "pt", "ru", "ja", "ko", "zh")

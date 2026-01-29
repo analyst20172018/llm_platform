@@ -115,6 +115,11 @@ class TextDocumentFile(DocumentFile):
         self.text = text
 
     @classmethod
+    def from_file(cls, file_path: Path) -> 'TextDocumentFile':
+        with open(file_path, "r") as f:
+            return cls(f.read(), name=file_path.name)
+
+    @classmethod
     def from_string(cls, text: str, name: str="") -> 'TextDocumentFile':
         return cls(text, name)
 

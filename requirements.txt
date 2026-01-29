@@ -7,6 +7,7 @@ mistralai
 xai_sdk
 elevenlabs
 speechmatics-python
+assemblyai
 lxml
 pandas
 pillow
