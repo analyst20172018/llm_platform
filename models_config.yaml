@@ -747,7 +747,7 @@ models:
         default: true
         ui: toggle
         label: Diarized
-      num_speakers:
+      speakers_expected:
         type: int
         default: null
         ui: input

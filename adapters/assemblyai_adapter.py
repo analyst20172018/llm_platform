@@ -6,6 +6,8 @@ from llm_platform.services.files import AudioFile
 from loguru import logger
 from llm_platform.types import AdditionalParameters
 import assemblyai as aai
+from assemblyai import api, types
+import time
 
 class AssemblyAIAdapter:
     
@@ -18,7 +20,7 @@ class AssemblyAIAdapter:
         language_detection = additional_parameters.get("language_detection", False)
         language = additional_parameters.get("language", "en")
         diarized = additional_parameters.get("diarized", True)
-        num_speakers = additional_parameters.get("num_speakers", None)
+        speakers_expected = additional_parameters.get("speakers_expected", None)
 
         config_parameters = {
             "speech_models": ["universal"],
@@ -29,12 +31,24 @@ class AssemblyAIAdapter:
         else:
             config_parameters["language_code"] = language
 
-        if num_speakers is not None:
-            config_parameters["speaker_count"] = num_speakers
+        if speakers_expected is not None:
+            config_parameters["speakers_expected"] = speakers_expected
 
         config = aai.TranscriptionConfig(**config_parameters)
+        aai.settings.http_timeout = 120.0  # seconds - timeout for uploading large files
 
-        transcript = aai.Transcriber(config=config).transcribe(audio_file.file_bytes)
+        transcriber = aai.Transcriber(config=config) 
+        transcript = transcriber.submit(audio_file.file_bytes)
+        transcript_id = transcript.id
+
+        client = aai.Client.get_default()
+        while True:
+            resp = api.get_transcript(client.http_client, transcript_id)
+            if resp.status in (types.TranscriptStatus.completed, types.TranscriptStatus.error):
+                break
+            time.sleep(aai.settings.polling_interval)
+
+        transcript = aai.Transcript.from_response(client=client, response=resp)
 
         if transcript.status == "error":
             logger.error(f"Transcription failed: {transcript.error}")
