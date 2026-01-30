@@ -105,7 +105,6 @@ class ElevenLabsAdapter:
     def request_llm(self, 
                     model: str, 
                     the_conversation: Conversation, 
-                    temperature: int=0,  
                     tool_output_callback: Callable=None,
                     additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:

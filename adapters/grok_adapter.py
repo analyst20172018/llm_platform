@@ -156,7 +156,6 @@ class GrokAdapter(AdapterBase):
     def request_llm(self, model: str, 
                     the_conversation: Conversation, 
                     functions:List[BaseTool]=None, 
-                    temperature: int=0, 
                     tool_output_callback: Callable=None, 
                     additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:
@@ -170,8 +169,6 @@ class GrokAdapter(AdapterBase):
                             of messages. This object will be updated with the LLM's response.
                         functions (List[BaseTool], optional): A list of tools (functions) that the LLM
                             can choose to call. Defaults to None, indicating no functions are available.
-                        temperature (int, optional): Controls the randomness of the LLM's output.
-                            default: 0; min: 0; max: 2 What sampling temperature to use, between 0 and 2. Higher values like 0.8 will make the output more random, while lower values like 0.2 will make it more focused and deterministic.
                         tool_output_callback (Callable, optional): A callback function that is invoked
                             if the LLM decides to call a tool. This function is responsible for
                             executing the tool and returning its output. Required if `functions`
@@ -187,9 +184,6 @@ class GrokAdapter(AdapterBase):
         """
         if additional_parameters is None:
             additional_parameters = {}
-
-        if temperature not in (None, 0) and "temperature" not in additional_parameters:
-            additional_parameters["temperature"] = temperature
 
         if kwargs:
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")

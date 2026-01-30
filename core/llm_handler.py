@@ -155,16 +155,11 @@ class APIHandler:
         self,
         model: str,
         additional_parameters: AdditionalParameters | None,
-        *,
-        temperature: int | float | None = None,
         **kwargs,
     ) -> Dict:
         merged: Dict[str, Any] = {}
         if additional_parameters:
             merged.update(additional_parameters)
-
-        if temperature not in (None, 0) and "temperature" not in merged:
-            merged["temperature"] = temperature
 
         if kwargs:
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
@@ -372,7 +367,6 @@ class APIHandler:
     def request_llm(self, 
                     model: str, 
                     functions: Union[List[BaseTool], List[Callable]] = None, 
-                    temperature: int=0,  
                     tool_output_callback: Callable=None,
                     additional_parameters: AdditionalParameters | None = None, 
                     **kwargs) -> Message:
@@ -403,8 +397,6 @@ class APIHandler:
             functions : list[BaseTool | Callable], optional
                 Tools that the model is allowed to call.  See
                 :py:meth:`APIHandler.request` for details.
-            temperature : int | float, default 0
-                Deprecated; pass ``temperature`` via ``additional_parameters``.
             tool_output_callback : Callable, optional
                 ``callback(tool_name: str, args: list, result: Any)`` executed after
                 every tool call.
@@ -455,7 +447,6 @@ class APIHandler:
         normalized_parameters = self._prepare_additional_parameters(
             model,
             additional_parameters,
-            temperature=temperature,
             **kwargs,
         )
 
@@ -478,7 +469,6 @@ class APIHandler:
     async def request_llm_async(self,
                         model: str,
                         functions: Union[List[BaseTool], List[Callable]] = None,
-                        temperature: int=0,
                         tool_output_callback: Callable=None,
                         additional_parameters: AdditionalParameters | None = None,
                         **kwargs) -> str:
@@ -488,7 +478,6 @@ class APIHandler:
         normalized_parameters = self._prepare_additional_parameters(
             model,
             additional_parameters,
-            temperature=temperature,
             **kwargs,
         )
 

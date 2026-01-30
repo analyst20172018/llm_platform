@@ -105,15 +105,11 @@ class OpenAIOldAdapter(AdapterBase):
     def define_parameters_for_chat_completion_request(self, 
                     model: str, 
                     the_conversation: Conversation, 
-                    temperature: int=0,  
                     tool_output_callback: Callable=None,
                     additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Dict:
         if additional_parameters is None:
             additional_parameters = {}
-
-        if temperature not in (None, 0) and "temperature" not in additional_parameters:
-            additional_parameters["temperature"] = temperature
 
         if kwargs:
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
@@ -162,15 +158,11 @@ class OpenAIOldAdapter(AdapterBase):
                     model: str, 
                     the_conversation: Conversation, 
                     functions:List[BaseTool]=[], 
-                    temperature: int=0,  
                     tool_output_callback: Callable=None,
                     additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:
         if additional_parameters is None:
             additional_parameters = {}
-
-        if temperature not in (None, 0) and "temperature" not in additional_parameters:
-            additional_parameters["temperature"] = temperature
 
         if kwargs:
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
@@ -300,15 +292,11 @@ class OpenAIOldAdapter(AdapterBase):
     def request_llm_with_functions(self, model: str, 
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool], 
-                                   temperature: int=0,  
                                    tool_output_callback: Callable=None,
                                    additional_parameters: AdditionalParameters | None = None,
                                    **kwargs):
         if additional_parameters is None:
             additional_parameters = {}
-
-        if temperature not in (None, 0) and "temperature" not in additional_parameters:
-            additional_parameters["temperature"] = temperature
 
         if kwargs:
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")

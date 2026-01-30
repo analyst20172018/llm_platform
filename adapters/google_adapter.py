@@ -282,17 +282,20 @@ class GoogleAdapter(AdapterBase):
             additional_responses=additional_responses,
         )
 
-    def request_llm(self, model: str, the_conversation: Conversation, functions: List[BaseTool] = None,
-                    temperature: float = 0.0, tool_output_callback: Callable = None,
-                    additional_parameters: AdditionalParameters | None = None, **kwargs) -> Message:
+    def request_llm(
+            self, 
+            model: str, 
+            the_conversation: Conversation, 
+            functions: List[BaseTool] = None,
+            tool_output_callback: Callable = None,
+            additional_parameters: AdditionalParameters | None = None, 
+            **kwargs
+        ) -> Message:
         """
         Sends a request to the Gemini LLM, handling standard chat and function calling.
         """
         functions = functions or []
         additional_parameters = additional_parameters or {}
-
-        if temperature not in (None, 0) and "temperature" not in additional_parameters:
-            additional_parameters["temperature"] = temperature
 
         if kwargs:
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")

@@ -127,16 +127,12 @@ class MistralAdapter(AdapterBase):
     def request_llm(self, model: str, 
                     the_conversation: Conversation, 
                     functions:List[BaseTool]=None, 
-                    temperature: int=0, 
                     tool_output_callback: Callable=None, 
                     additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:
 
         if additional_parameters is None:
             additional_parameters = {}
-
-        if temperature not in (None, 0) and "temperature" not in additional_parameters:
-            additional_parameters["temperature"] = temperature
 
         if kwargs:
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")

@@ -174,7 +174,6 @@ class AnthropicAdapter(AdapterBase):
         model: str,
         the_conversation: Conversation,
         functions: List[BaseTool] = None,
-        temperature: int = 0,
         tool_output_callback: Callable = None,
         additional_parameters: AdditionalParameters | None = None,
         **kwargs,
@@ -184,9 +183,6 @@ class AnthropicAdapter(AdapterBase):
         """
         if additional_parameters is None:
             additional_parameters = {}
-
-        if temperature not in (None, 0) and "temperature" not in additional_parameters:
-            additional_parameters["temperature"] = temperature
 
         if kwargs:
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
@@ -198,7 +194,6 @@ class AnthropicAdapter(AdapterBase):
                 model=model,
                 conversation=the_conversation,
                 functions=functions,
-                temperature=temperature,
                 tool_output_callback=tool_output_callback,
                 additional_parameters=additional_parameters,
                 **kwargs,
@@ -207,7 +202,6 @@ class AnthropicAdapter(AdapterBase):
             processor = self._request_llm_simple_streaming(
                 model=model,
                 conversation=the_conversation,
-                temperature=temperature,
                 additional_parameters=additional_parameters,
                 **kwargs,
             )
@@ -241,13 +235,12 @@ class AnthropicAdapter(AdapterBase):
         self,
         model: str,
         conversation: Conversation,
-        temperature: int,
         additional_parameters: AdditionalParameters,
         **kwargs,
     ) -> ClaudeStreamProcessor:
         """Handles a non-tool-use streaming request."""
         history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
-        request_kwargs, temp = self._prepare_request_kwargs(model, temperature, additional_parameters, **kwargs)
+        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
 
         if 'max_tokens' in request_kwargs:
             request_kwargs['max_tokens'] = self.correct_max_tokens(model, history, request_kwargs['max_tokens'])
@@ -260,7 +253,6 @@ class AnthropicAdapter(AdapterBase):
             model=model,
             system=conversation.system_prompt,
             messages=history,
-            temperature=temp,
             stream=True,
             tools=tools,
             **request_kwargs,
@@ -276,7 +268,6 @@ class AnthropicAdapter(AdapterBase):
         model: str,
         conversation: Conversation,
         functions: List[BaseTool],
-        temperature: int,
         tool_output_callback: Callable,
         additional_parameters: AdditionalParameters,
         **kwargs,
@@ -287,13 +278,12 @@ class AnthropicAdapter(AdapterBase):
         if additional_parameters.get("web_search", False):
             tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
 
-        request_kwargs, temp = self._prepare_request_kwargs(model, temperature, additional_parameters, **kwargs)
+        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
 
         stream = self.client.beta.messages.create(
             model=model,
             system=conversation.system_prompt,
             messages=history,
-            temperature=temp,
             tools=tools,
             stream=True,
             **request_kwargs,
@@ -308,7 +298,7 @@ class AnthropicAdapter(AdapterBase):
             self._handle_tool_calls(processor, conversation, functions, tool_output_callback)
             # Recursively call to get the final response after tool execution.
             return self._request_llm_with_tools_streaming(
-                model, conversation, functions, temperature, tool_output_callback, additional_parameters, **kwargs
+                model, conversation, functions, tool_output_callback, additional_parameters, **kwargs
             )
 
         # If no tool use, return the final processor state.
@@ -358,20 +348,20 @@ class AnthropicAdapter(AdapterBase):
     def _prepare_request_kwargs(
         self,
         model: str,
-        temperature: int,
         additional_parameters: AdditionalParameters,
         **kwargs,
-    ) -> Tuple[Dict, int]:
+    ) -> Dict[str, Any]:
         """Prepares kwargs for the API call, handling reasoning, betas, etc."""
         request_kwargs: Dict[str, Any] = {}
         if kwargs:
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
             request_kwargs.update(kwargs)
 
-        if (max_tokens := additional_parameters.get("max_tokens")) is not None:
+        if max_tokens := additional_parameters.get("max_tokens", None):
             request_kwargs["max_tokens"] = max_tokens
 
-        temp = additional_parameters.get("temperature", temperature)
+        if temperatue := additional_parameters.get("temperature", None):
+            request_kwargs['temperature'] = temperatue
 
         reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "none")
         if budget_tokens := REASONING_BUDGETS.get(reasoning_effort):
@@ -381,7 +371,7 @@ class AnthropicAdapter(AdapterBase):
         if beta_flag := BETA_FLAGS.get(model):
             request_kwargs['betas'] = beta_flag
 
-        return request_kwargs, temp
+        return request_kwargs
 
     # --- Conversation and Tool Formatting ---
 
