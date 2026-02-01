@@ -33,3 +33,6 @@ class AdditionalParameters(TypedDict, total=False):
     background: str  # image background (OpenAI image models)
     quality: str  # image quality (e.g. "low", "medium", "high")
     output_format: str  # image output format (e.g. "png", "jpg")
+    # Additional parameters for AssemblyAI STT
+    language_detection: bool  # AssemblyAI language detection on/off
+    speakers_expected: int  # AssemblyAI expected speaker count

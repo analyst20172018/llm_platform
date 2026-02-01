@@ -218,9 +218,6 @@ class AnthropicAdapter(AdapterBase):
     def voice_to_text(self, audio_file):
         raise NotImplementedError("Anthropic does not support voice-to-text functionality.")
 
-    def generate_image(self, prompt: str, size: str, quality: str, n=1):
-        raise NotImplementedError("Anthropic does not support image generation.")
-
     def get_models(self) -> List[str]:
         """
         Returns a list of known Anthropic models.

@@ -305,7 +305,7 @@ class OpenAIAdapter(AdapterBase):
                             elif file_type == "audio":
                                 retrieved_file = AudioFile.from_bytes(data, file_name=annotation.filename)
                             elif file_type == "text":
-                                retrieved_file = TextDocumentFile.from_bytes(data, file_name=annotation.filename)
+                                retrieved_file = TextDocumentFile.from_string(data, file_name=annotation.filename)
                             elif file_type == "pdf":
                                 retrieved_file = PDFDocumentFile.from_bytes(data, file_name=annotation.filename)
                             elif file_type == "excel":
@@ -694,7 +694,9 @@ class OpenAIAdapter(AdapterBase):
 
     def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
         """
-        Generates images from a text prompt using gpt-image-1.
+        Old method, which generates images from a text prompt using gpt-image-1.
+        The current functionality to generate image is in the package `adapters\openai_image_adapter.py`
+        This old method can be removed later.
 
         Args:
             prompt: The text description of the desired image(s).

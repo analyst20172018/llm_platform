@@ -36,10 +36,6 @@ class AdapterBase(ABC):
                                    **kwargs):
         pass
 
-    @abstractmethod
-    def generate_image(self, prompt: str, size: str, quality:str, n=1):
-        pass
-
     """
     # --- Asynchronous Methods ---
     @abstractmethod

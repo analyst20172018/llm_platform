@@ -375,10 +375,6 @@ class MistralAdapter(AdapterBase):
 
         # Print the content of the response
         print(chat_response.choices[0].message.content)
-        
-
-    def generate_image(self, prompt: str, size: str, quality:str, n=1):
-        raise NotImplementedError("Not implemented yet")
 
     def get_models(self) -> List[str]:
         raise NotImplementedError("Not implemented yet")

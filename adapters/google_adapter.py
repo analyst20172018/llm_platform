@@ -141,10 +141,12 @@ class GoogleAdapter(AdapterBase):
             "safety_settings": self.safety_settings,
         }
 
+        model_object = self.model_config[model]
         max_tokens = additional_parameters.get("max_tokens")
         if max_tokens is None:
-            max_tokens = the_conversation.model_config.get_max_tokens(model)
-        config_params["max_output_tokens"] = max_tokens
+            max_tokens = model_object.max_tokens
+        if max_tokens:
+            config_params["max_output_tokens"] = max_tokens
 
         if "temperature" in additional_parameters:
             config_params["temperature"] = additional_parameters["temperature"]

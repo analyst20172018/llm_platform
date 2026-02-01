@@ -97,31 +97,3 @@ class BaseTool(ABC):
         else:
             raise NotImplementedError
         
-# --------------------------------------------------------------------------------------------------------------
-# EXAMPLES of tools
-# --------------------------------------------------------------------------------------------------------------
-class RunPowerShellCommand(BaseTool):
-    """
-    Runs PowerShell command on users Windows 11 machine.
-    """
-
-    class InputModel(BaseModel):
-        command: str = Field(description="Command to execute", required=True)
-
-    def __call__(self, command: str) -> Dict:
-        """Executes the tool with the given arguments."""
-        print(f"Running PowerShell command: {command}")
-        process = subprocess.run(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command", command
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding='utf-8'
-        )
-        print(f"Output: {process.stdout}")
-        return {"output": process.stdout or "", "error": process.stderr or ""}

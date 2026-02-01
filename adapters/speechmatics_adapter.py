@@ -109,9 +109,6 @@ class SpeechmaticsAdapter(AdapterBase):
         
         return message
 
-    def generate_image(self, prompt: str, size: str, quality:str, n=1):
-        NotImplementedError("Not implemented yet")
-
     def request_llm_with_functions(self, 
                                    model: str, 
                                    the_conversation: Conversation, 
