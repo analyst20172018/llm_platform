@@ -157,6 +157,32 @@ class APIHandler:
         additional_parameters: AdditionalParameters | None,
         **kwargs,
     ) -> Dict:
+        """
+            - It takes whatever the caller passed in additional_parameters and merges in any deprecated **kwargs (with a warning).
+            - It looks up the model in models_config.yaml and applies defaults for that model’s extra parameters (only when send_default is true).
+            - It injects a default max_tokens from the model config if one isn’t already set.
+            - It remaps “friendly” parameter names into nested provider formats using request_key (e.g. reasoning_effort → reasoning.effort), and drops empty values while doing so.
+            - It removes parameters marked include_in_request: false.
+            - It filters out anything the model doesn’t support, logging a warning for each unsupported key.
+
+            Concrete example
+                If a model defines:
+
+                reasoning_effort:
+                    type: enum
+                    default: none
+                    request_key: reasoning.effort
+
+                and you pass:
+
+                additional_parameters={"reasoning_effort": "high"}
+
+                _prepare_additional_parameters will turn that into:
+
+                {"reasoning": {"effort": "high"}}
+
+                and only send it if the model allows it.
+        """
         merged: Dict[str, Any] = {}
         if additional_parameters:
             merged.update(additional_parameters)
@@ -253,21 +279,13 @@ class APIHandler:
                 Invoked after every successful tool execution.
             additional_parameters : AdditionalParameters, optional
                 Provider‑agnostic high‑level switches.  Currently understood keys (silently ignored by adapters that do not support them):
-                * ``response_modalities`` : list[str]  e.g. ``["text", "image", "audio"]`` – request multimodal output from OpenAI or Gemini.
-                * ``web_search`` : bool When *True* the model may call an integrated web‑search/retrieval tool (OpenAI, Gemini).
-                * ``code_execution`` : bool  When *True* the model may call an integrated code_execution tool (OpenAI, Gemini).
-                * ``citations_enabled`` : bool  Ask Anthropic models to return source citations for attached documents.
-                * ``structured_output``: BaseModel - Pydantic model class: the adapter will attempt to parse the model’s response into an instance of that class.
-                * ``aspect_ratio``: str - Specify the desired aspect ratio for image outputs. (for Gemini 3 Image: "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9")
-                * ``resolution``: str - Specify the desired resolution for image outputs. (for Gemini 3 Image: "1K", "2K", "4K")
-                * ``temperature``: float - Sampling temperature passed to the model (if supported).
-                * ``max_tokens`` : int – hard limit for the assistant’s answer.
-                * ``reasoning``: Dict = {"effort": "high"}  (e.g., "low", "high", "minimal")
-                * ``text``: Dict = {"verbosity": "low"}  (e.g., "low", "medium", "high")
-                * Additional parameters for Elevenlabs STT: 
-                  * ``language``: str - The language of the audio. (for Elevenlabs STT: "en", "de", "fr", "es", "it", "pt", "ru", "ja", "ko", "zh")
-                  * ``diarized``: bool - Whether to diarize the audio. (for Elevenlabs STT: True, False)
-                  * ``tag_audio_events``: bool - Tag audio events like laughter, applause, etc. (for Elevenlabs STT: True, False)
+                  How additional_parameters works in the program overall
+                    - You pass additional_parameters to APIHandler.request(...) or APIHandler.request_llm(...).
+                    - The handler normalizes and validates them via _prepare_additional_parameters.
+                    - The cleaned dict is then passed to the adapter for the selected provider (OpenAI, Anthropic, Google, etc.).
+                    - Each adapter picks the keys it understands and translates them into provider‑specific request fields. Unsupported keys are ignored (or already filtered out).
+                    - The list of “allowed” parameters and defaults is defined per model in models_config.yaml under additional_parameters. This includes UI hints, defaults, and request_key mappings for nested fields.
+                * Every possible additional parameter is described in the file `llm_platform\types.py` under the `AdditionalParameters` type alias.
             **kwargs
                 Deprecated: keyword arguments are merged into ``additional_parameters`` for backwards compatibility.
 
@@ -402,22 +420,13 @@ class APIHandler:
                 every tool call.
             additional_parameters : AdditionalParameters, optional
                 Provider‑agnostic high‑level switches.  Currently understood keys (silently ignored by adapters that do not support them):
-                * ``response_modalities`` : list[str]  e.g. ``["text", "image", "audio"]`` – request multimodal output from OpenAI or Gemini.
-                * ``web_search`` : bool When *True* the model may call an integrated web‑search/retrieval tool (OpenAI, Gemini).
-                * ``code_execution`` : bool  When *True* the model may call an integrated code_execution tool (OpenAI, Gemini).
-                * ``citations_enabled`` : bool  Ask Anthropic models to return source citations for attached documents.
-                * ``structured_output``: BaseModel - Pydantic model class: the adapter will attempt to parse the model’s response into an instance of that class.
-                * ``aspect_ratio``: str - Specify the desired aspect ratio for image outputs. (for Gemini 3 Image: "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9")
-                * ``resolution``: str - Specify the desired resolution for image outputs. (for Gemini 3 Image: "1K", "2K", "4K")
-                * ``temperature``: float - Sampling temperature passed to the model (if supported).
-                * ``max_tokens`` : int – hard limit for the assistant’s answer.
-                * ``reasoning``: Dict = {"effort": "medium"}  (e.g., "low", "high", "minimal")
-                * ``text``: Dict = {"verbosity": "low"}  (e.g., "low", "medium", "high")
-                * Additional parameters for Elevenlabs STT: 
-                  * ``language``: str - The language of the audio. (for Elevenlabs STT: "en", "de", "fr", "es", "it", "pt", "ru", "ja", "ko", "zh")
-                  * ``diarized``: bool - Whether to diarize the audio. (for Elevenlabs STT: True, False)
-                  * ``tag_audio_events``: bool - Tag audio events like laughter, applause, etc. (for Elevenlabs STT: True, False)
-                  * ``num_speakers``: int - Number of speakers in the audio. (for Elevenlabs STT: 1-32)
+                  How additional_parameters works in the program overall
+                    - You pass additional_parameters to APIHandler.request(...) or APIHandler.request_llm(...).
+                    - The handler normalizes and validates them via _prepare_additional_parameters.
+                    - The cleaned dict is then passed to the adapter for the selected provider (OpenAI, Anthropic, Google, etc.).
+                    - Each adapter picks the keys it understands and translates them into provider‑specific request fields. Unsupported keys are ignored (or already filtered out).
+                    - The list of “allowed” parameters and defaults is defined per model in models_config.yaml under additional_parameters. This includes UI hints, defaults, and request_key mappings for nested fields.
+                * Every possible additional parameter is described in the file `llm_platform\types.py` under the `AdditionalParameters` type alias.
             **kwargs
                 Deprecated: keyword arguments are merged into ``additional_parameters`` for backwards compatibility.
 
