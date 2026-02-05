@@ -124,6 +124,62 @@ class MistralAdapter(AdapterBase):
 
         return None
 
+    def transcribe_audio(self, model: str, 
+                    the_conversation: Conversation, 
+                    functions:List[BaseTool]=None, 
+                    tool_output_callback: Callable=None, 
+                    additional_parameters: AdditionalParameters | None = None,
+                    **kwargs) -> Message:
+        """Transcribe the last conversation audio attachment with a Mistral speech model.
+
+        Expects exactly one audio file in the last message of ``the_conversation``.
+        Builds the transcription request, applies supported parameters from
+        ``additional_parameters`` (``language`` and ``timestamp_granularities``),
+        sends it to Mistral, and appends the assistant response to the conversation.
+
+        Args:
+            model: Target Mistral transcription model.
+            the_conversation: Conversation containing the audio file in its last message.
+            functions: Unused; accepted for interface compatibility.
+            tool_output_callback: Unused; accepted for interface compatibility.
+            additional_parameters: Optional transcription options.
+            **kwargs: Unused extra arguments for interface compatibility.
+
+        Returns:
+            Message: Assistant message containing transcribed text, or an error message
+            if the input does not contain exactly one file.
+        """
+        
+        # Get files from the last message. I expect only one file - audio file for transcription
+        files = getattr(the_conversation.messages[-1], "files", [])
+        if len(files) != 1:
+            logger.error(f"There are {len(files)} files in the last message. I expect only one audio file to transcribe it.")
+            message = Message(role="assistant", content=f"There are {len(files)} files in the last message. I expect only one audio file to transcribe it.", usage={})
+            the_conversation.messages.append(message)
+            return message
+        
+        audio_file = files[0]
+        parameters = {
+            'model': model,
+            'file': {
+                "content": audio_file.bytes_io.getvalue(),
+                "file_name": audio_file.name,
+            },
+        }
+        if language := additional_parameters.get("language", None):
+            parameters["language"] = language
+        #if diarized := additional_parameters.get("diarized", None):
+        #    parameters["diarize"] = diarized
+        if additional_parameters.get("timestamp_granularities", None):
+            parameters["timestamp_granularities"] = ["segment"] # NOTE: timestamp_granularities is currently not compatible with language, please use either one or the other.
+
+        transcription_response = self.client.audio.transcriptions.complete(**parameters)
+
+        message = Message(role="assistant", content=transcription_response.text)
+        the_conversation.messages.append(message)
+
+        return message
+
     def request_llm(self, model: str, 
                     the_conversation: Conversation, 
                     functions:List[BaseTool]=None, 
@@ -138,6 +194,15 @@ class MistralAdapter(AdapterBase):
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
             for key, value in kwargs.items():
                 additional_parameters.setdefault(key, value)
+
+        # Transcribe
+        if model == "voxtral-mini-latest":
+            return self.transcribe_audio(model=model, 
+                                        the_conversation=the_conversation, 
+                                        functions=functions, 
+                                        tool_output_callback=tool_output_callback, 
+                                        additional_parameters=additional_parameters,
+                                        **kwargs)
 
         request_params: Dict[str, Any] = {}
         if "temperature" in additional_parameters:
@@ -176,7 +241,7 @@ class MistralAdapter(AdapterBase):
             message = Message(role="assistant", content=output_markdown)
             the_conversation.messages.append(message)
 
-            return output_markdown
+            return message
         
         # LLM with functions
         elif not functions is None:

@@ -695,7 +695,7 @@ class OpenAIAdapter(AdapterBase):
     def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
         """
         Old method, which generates images from a text prompt using gpt-image-1.
-        The current functionality to generate image is in the package `adapters\openai_image_adapter.py`
+        The current functionality to generate image is in the package adapters/openai_image_adapter.py
         This old method can be removed later.
 
         Args:

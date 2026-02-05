@@ -23,7 +23,7 @@ class AssemblyAIAdapter:
         speakers_expected = additional_parameters.get("speakers_expected", None)
 
         config_parameters = {
-            "speech_models": ["universal"],
+            "speech_models": ["universal-2"],
             "speaker_labels": diarized,
         }
         if language_detection:

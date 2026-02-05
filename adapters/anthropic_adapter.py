@@ -32,6 +32,7 @@ from llm_platform.types import AdditionalParameters
 # Model-specific beta flags for experimental features
 BETA_FLAGS = {
     "claude-sonnet-4-5": ["context-1m-2025-08-07"],
+    "claude-opus-4-6": ["context-1m-2025-08-07"],
 }
 
 # Reasoning effort to 'thinking' token budget mapping
@@ -360,10 +361,15 @@ class AnthropicAdapter(AdapterBase):
         if temperatue := additional_parameters.get("temperature", None):
             request_kwargs['temperature'] = temperatue
 
-        reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "none")
-        if budget_tokens := REASONING_BUDGETS.get(reasoning_effort):
-            request_kwargs['thinking'] = {"type": "enabled", "budget_tokens": budget_tokens}
-            temp = 1  # Anthropic recommends temp=1 for best results with thinking
+        if model == "claude-opus-4-6":
+            request_kwargs['thinking'] = {"type": "adaptive"}
+            reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "high")
+            if reasoning_effort:
+                request_kwargs['output_config'] = {"effort": reasoning_effort}
+        else:
+            reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "none")
+            if budget_tokens := REASONING_BUDGETS.get(reasoning_effort):
+                request_kwargs['thinking'] = {"type": "enabled", "budget_tokens": budget_tokens}
 
         if beta_flag := BETA_FLAGS.get(model):
             request_kwargs['betas'] = beta_flag

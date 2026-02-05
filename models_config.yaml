@@ -68,14 +68,14 @@ models:
         label: Reasoning
         request_key: reasoning.effort
 
-  - name: claude-opus-4-5
-    display_name: Claude Opus 4.5 💰
+  - name: claude-opus-4-6
+    display_name: Claude Opus 4.6 💰
     adapter: AnthropicAdapter
     pricing:
       input: 5 # USD/1M tokens
       output: 25 # USD/1M tokens
-    max_tokens: 64_000
-    context_window: 200_000
+    max_tokens: 128_000
+    context_window: 1_000_000
     inputs:
       - image
       - text
@@ -87,8 +87,8 @@ models:
       function_calling: *param_function_calling
       reasoning_effort:
         type: enum
-        options: [none, low, medium, high]
-        default: none
+        options: [low, medium, high, max]
+        default: high
         ui: select
         label: Reasoning
         request_key: reasoning.effort
