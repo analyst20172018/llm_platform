@@ -1,3 +1,4 @@
+import copy
 from abc import ABC, abstractmethod
 from typing import ClassVar, Literal, Dict, Any
 from pydantic import BaseModel, Field
@@ -11,11 +12,11 @@ class BaseTool(ABC):
     def __call__(self, **kwargs) -> Any:
         """Executes the tool with the given arguments."""
         raise NotImplementedError
-    
+
     @property
     def __name__(self):
         return self.__class__.__name__
-    
+
     @property
     def name(self):
         return self.__class__.__name__
@@ -65,6 +66,55 @@ class BaseTool(ABC):
         return data
 
     @classmethod
+    def resolve_schema_for_google(cls, schema: Dict) -> Dict:
+        """
+        Make a JSON Schema compatible with Google Gemini's function declaration validator.
+
+        Gemini does not support $ref/$defs, anyOf, exclusiveMinimum,
+        exclusiveMaximum, or additionalProperties.
+        This method:
+          - Inlines all $ref references (recursively)
+          - Drops the $defs section
+          - Flattens anyOf: [T, {type: null}] to just T (preserving description/default)
+          - Removes exclusiveMinimum / exclusiveMaximum / additionalProperties keywords
+        """
+        schema = copy.deepcopy(schema)
+        defs = schema.pop("$defs", {})
+
+        def resolve(node: Any) -> Any:
+            if isinstance(node, list):
+                return [resolve(item) for item in node]
+            if not isinstance(node, dict):
+                return node
+
+            # Inline $ref
+            if "$ref" in node:
+                ref_key = node["$ref"].split("/")[-1]
+                return resolve(copy.deepcopy(defs.get(ref_key, {})))
+
+            # Flatten Optional[T]: anyOf: [T, {type: "null"}]
+            if "anyOf" in node:
+                non_null = [x for x in node["anyOf"] if x != {"type": "null"}]
+                if len(non_null) == 1:
+                    resolved = resolve(non_null[0])
+                    resolved = dict(resolved)
+                    for key in ("description", "default"):
+                        if key in node and key not in resolved:
+                            resolved[key] = node[key]
+                    return resolved
+
+            # Recurse, dropping unsupported keywords
+            result = {}
+            for k, v in node.items():
+                if k in ("$defs", "exclusiveMinimum", "exclusiveMaximum",
+                         "additionalProperties"):
+                    continue
+                result[k] = resolve(v)
+            return result
+
+        return resolve(schema)
+
+    @classmethod
     def to_params(cls, provider: Literal["anthropic", "openai", "google", "grok"]) -> Dict:
         input_model = cls.InputModel
         if not issubclass(input_model, BaseModel):
@@ -80,7 +130,7 @@ class BaseTool(ABC):
             return {
                 "name": cls.__name__,
                 "description": cls.__doc__,
-                "parameters": cls.clean_schema(schema),
+                "parameters": cls.clean_schema(cls.resolve_schema_for_google(schema)),
             }
         elif provider == 'anthropic':
             return {

@@ -10,7 +10,7 @@ from loguru import logger
 
 from google import genai
 from google.genai import types
-from google.protobuf import struct_pb2
+
 
 from .adapter_base import AdapterBase
 from llm_platform.services.conversation import (Conversation, FunctionCall,
@@ -108,9 +108,7 @@ class GoogleAdapter(AdapterBase):
 
             if message.function_calls:
                 for fc in message.function_calls:
-                    struct_args = struct_pb2.Struct()
-                    struct_args.update(json.loads(fc.arguments))
-                    part = types.Part.from_function_call(name=fc.name, args=struct_args)
+                    part = types.Part.from_function_call(name=fc.name, args=json.loads(fc.arguments))
                     if fc.id:
                         part.thought_signature = fc.id
                     parts.append(part)
@@ -125,7 +123,7 @@ class GoogleAdapter(AdapterBase):
                     for fr in message.function_responses
                 ]
                 if response_parts:
-                    history.append(types.Content(role="function", parts=response_parts))
+                    history.append(types.Content(role="user", parts=response_parts))
         return history
 
     def _prepare_generation_config(
@@ -191,7 +189,14 @@ class GoogleAdapter(AdapterBase):
         # Structured output
         if structured_output_class := additional_parameters.get("structured_output", None):
             config_params["response_mime_type"] = "application/json"
-            config_params["response_schema"] = structured_output_class
+            # If it's a Pydantic model, convert to a Gemini-compatible dict schema
+            if hasattr(structured_output_class, "model_json_schema"):
+                raw_schema = structured_output_class.model_json_schema()
+                config_params["response_schema"] = BaseTool.clean_schema(
+                    BaseTool.resolve_schema_for_google(raw_schema)
+                )
+            else:
+                config_params["response_schema"] = structured_output_class
 
         reserved_keys = {
             "max_tokens",
@@ -304,10 +309,11 @@ class GoogleAdapter(AdapterBase):
             for key, value in kwargs.items():
                 additional_parameters.setdefault(key, value)
 
-        converted_tools = [
-            types.Tool(function_declarations=[func.to_params(provider="google")])
+        function_declarations = [
+            func.to_params(provider="google")
             for func in functions if isinstance(func, BaseTool)
         ]
+        converted_tools = [types.Tool(function_declarations=function_declarations)] if function_declarations else []
 
         generation_config = self._prepare_generation_config(
             model=model,
