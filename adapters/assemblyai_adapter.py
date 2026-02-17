@@ -9,6 +9,8 @@ import assemblyai as aai
 from assemblyai import api, types
 import time
 
+MODEL_NAMES = ["universal-3-pro", "universal-2"]
+
 class AssemblyAIAdapter:
     
     def __init__(self):
@@ -23,7 +25,7 @@ class AssemblyAIAdapter:
         speakers_expected = additional_parameters.get("speakers_expected", None)
 
         config_parameters = {
-            "speech_models": ["universal-2"],
+            "speech_models": MODEL_NAMES,
             "speaker_labels": diarized,
         }
         if language_detection:

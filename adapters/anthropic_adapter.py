@@ -246,6 +246,8 @@ class AnthropicAdapter(AdapterBase):
         tools = []
         if additional_parameters.get("web_search", False):
             tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
+        if additional_parameters.get("code_execution", False):
+            tools.append({"type": "code_execution_20250825", "name": "code_execution"})
 
         stream = self.client.beta.messages.create(
             model=model,
@@ -361,7 +363,7 @@ class AnthropicAdapter(AdapterBase):
         if temperatue := additional_parameters.get("temperature", None):
             request_kwargs['temperature'] = temperatue
 
-        if model == "claude-opus-4-6":
+        if model in ["claude-opus-4-6", "claude-sonnet-4-6"]:
             request_kwargs['thinking'] = {"type": "adaptive"}
             reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "high")
             if reasoning_effort:

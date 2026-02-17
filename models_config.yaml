@@ -43,8 +43,8 @@ parameter_templates:
     ui: hidden
 
 models:
-  - name: claude-sonnet-4-5
-    display_name: Claude Sonnet 4.5 👍
+  - name: claude-sonnet-4-6
+    display_name: Claude Sonnet 4.6 👍
     adapter: AnthropicAdapter
     pricing:
       input: 3 # USD/1M tokens
@@ -58,11 +58,12 @@ models:
       - text
     additional_parameters:
       web_search: *param_web_search
+      code_execution: *param_code_execution
       citations_enabled: *param_citations_enabled
       function_calling: *param_function_calling
       reasoning_effort:
         type: enum
-        options: [none, low, medium, high]
+        options: [low, medium, high]
         default: none
         ui: select
         label: Reasoning
@@ -83,6 +84,7 @@ models:
       - text
     additional_parameters:
       web_search: *param_web_search
+      code_execution: *param_code_execution
       citations_enabled: *param_citations_enabled
       function_calling: *param_function_calling
       reasoning_effort:
