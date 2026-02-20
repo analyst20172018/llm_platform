@@ -31,7 +31,7 @@ from llm_platform.types import AdditionalParameters
 
 # Model-specific beta flags for experimental features
 BETA_FLAGS = {
-    "claude-sonnet-4-5": ["context-1m-2025-08-07"],
+    "claude-sonnet-4-6": ["context-1m-2025-08-07"],
     "claude-opus-4-6": ["context-1m-2025-08-07"],
 }
 
@@ -55,6 +55,9 @@ PYTHON_TYPE_TO_JSON_SCHEMA = {
     dict: 'object',
 }
 DEFAULT_JSON_SCHEMA_TYPE = 'string'
+
+# Threshold for max_tokens above which streaming is required to avoid HTTP timeouts
+MAX_TOKEN_THRESHOLD_FOR_STREANING = 21_000
 
 
 class ClaudeStreamProcessor:
@@ -181,6 +184,9 @@ class AnthropicAdapter(AdapterBase):
     ) -> Message:
         """
         Sends a request to the LLM, handling simple responses and tool use.
+
+        Uses streaming for requests with max_tokens >= MAX_TOKEN_THRESHOLD_FOR_STREANING
+        to avoid HTTP timeouts. Uses non-streaming otherwise, which enables structured output.
         """
         if additional_parameters is None:
             additional_parameters = {}
@@ -190,22 +196,50 @@ class AnthropicAdapter(AdapterBase):
             for key, value in kwargs.items():
                 additional_parameters.setdefault(key, value)
 
-        if functions:
-            processor = self._request_llm_with_tools_streaming(
-                model=model,
-                conversation=the_conversation,
-                functions=functions,
-                tool_output_callback=tool_output_callback,
-                additional_parameters=additional_parameters,
-                **kwargs,
+        max_tokens = additional_parameters.get("max_tokens") or 0
+        use_streaming = max_tokens >= MAX_TOKEN_THRESHOLD_FOR_STREANING
+
+        if use_streaming and additional_parameters.get("structured_output", None):
+            raise ValueError(
+                f"Streaming is required for max_tokens >= {MAX_TOKEN_THRESHOLD_FOR_STREANING}, "
+                f"but streaming does not support structured output. "
+                f"Please reduce max_tokens below {MAX_TOKEN_THRESHOLD_FOR_STREANING} or remove structured output."
             )
+
+        if use_streaming:
+            if functions:
+                processor = self._request_llm_with_tools_streaming(
+                    model=model,
+                    conversation=the_conversation,
+                    functions=functions,
+                    tool_output_callback=tool_output_callback,
+                    additional_parameters=additional_parameters,
+                    **kwargs,
+                )
+            else:
+                processor = self._request_llm_simple_streaming(
+                    model=model,
+                    conversation=the_conversation,
+                    additional_parameters=additional_parameters,
+                    **kwargs,
+                )
         else:
-            processor = self._request_llm_simple_streaming(
-                model=model,
-                conversation=the_conversation,
-                additional_parameters=additional_parameters,
-                **kwargs,
-            )
+            if functions:
+                processor = self._request_llm_with_tools(
+                    model=model,
+                    conversation=the_conversation,
+                    functions=functions,
+                    tool_output_callback=tool_output_callback,
+                    additional_parameters=additional_parameters,
+                    **kwargs,
+                )
+            else:
+                processor = self._request_llm_simple(
+                    model=model,
+                    conversation=the_conversation,
+                    additional_parameters=additional_parameters,
+                    **kwargs,
+                )
 
         response_message = Message(
             role="assistant",
@@ -228,6 +262,100 @@ class AnthropicAdapter(AdapterBase):
         raise NotImplementedError("Anthropic does not provide a public API to list models. Use known models instead.")
 
     # --- Private Helper Methods for LLM Requests ---
+
+    def _parse_non_streaming_response(self, response) -> ClaudeStreamProcessor:
+        """Converts a non-streaming API response into a ClaudeStreamProcessor for uniform handling."""
+        processor = ClaudeStreamProcessor()
+        processor.usage["model"] = response.model
+        processor.usage["prompt_tokens"] = response.usage.input_tokens
+        processor.usage["completion_tokens"] = response.usage.output_tokens
+        processor.stop_reason = response.stop_reason
+
+        for block in response.content:
+            if block.type == "thinking":
+                processor.thinking_responses.append(
+                    ThinkingResponse(content=block.thinking, id=block.signature)
+                )
+            elif block.type == "text":
+                processor.response_text += block.text
+            elif block.type == "tool_use":
+                processor.tool_uses.append({
+                    'name': block.name,
+                    'id': block.id,
+                    'parameters': block.input,
+                })
+
+        return processor
+
+    def _request_llm_simple(
+        self,
+        model: str,
+        conversation: Conversation,
+        additional_parameters: AdditionalParameters,
+        **kwargs,
+    ) -> ClaudeStreamProcessor:
+        """Handles a non-tool-use, non-streaming request."""
+        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
+        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
+
+        if 'max_tokens' in request_kwargs:
+            request_kwargs['max_tokens'] = self.correct_max_tokens(model, history, request_kwargs['max_tokens'])
+
+        tools = []
+        if additional_parameters.get("web_search", False):
+            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
+        if additional_parameters.get("code_execution", False):
+            tools.append({"type": "code_execution_20250825", "name": "code_execution"})
+
+        if additional_parameters.get("structured_output", None):
+            calling_function = self.client.beta.messages.parse
+        else:
+            calling_function = self.client.beta.messages.create
+
+        response = calling_function(
+            model=model,
+            system=conversation.system_prompt,
+            messages=history,
+            tools=tools,
+            **request_kwargs,
+        )
+
+        return self._parse_non_streaming_response(response)
+
+    def _request_llm_with_tools(
+        self,
+        model: str,
+        conversation: Conversation,
+        functions: List[BaseTool],
+        tool_output_callback: Callable,
+        additional_parameters: AdditionalParameters,
+        **kwargs,
+    ) -> ClaudeStreamProcessor:
+        """Handles the recursive, non-streaming tool-use loop."""
+        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
+        tools = [self._convert_function_to_tool(func) for func in functions]
+        if additional_parameters.get("web_search", False):
+            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
+
+        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
+
+        response = self.client.beta.messages.create(
+            model=model,
+            system=conversation.system_prompt,
+            messages=history,
+            tools=tools,
+            **request_kwargs,
+        )
+
+        processor = self._parse_non_streaming_response(response)
+
+        if processor.stop_reason == "tool_use":
+            self._handle_tool_calls(processor, conversation, functions, tool_output_callback)
+            return self._request_llm_with_tools(
+                model, conversation, functions, tool_output_callback, additional_parameters, **kwargs
+            )
+
+        return processor
 
     def _request_llm_simple_streaming(
         self,
@@ -372,6 +500,10 @@ class AnthropicAdapter(AdapterBase):
             reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "none")
             if budget_tokens := REASONING_BUDGETS.get(reasoning_effort):
                 request_kwargs['thinking'] = {"type": "enabled", "budget_tokens": budget_tokens}
+
+        # Structured output
+        if structured_output_class := additional_parameters.get("structured_output", None):
+            request_kwargs["output_format"] = structured_output_class
 
         if beta_flag := BETA_FLAGS.get(model):
             request_kwargs['betas'] = beta_flag

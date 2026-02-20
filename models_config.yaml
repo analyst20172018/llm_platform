@@ -61,6 +61,7 @@ models:
       code_execution: *param_code_execution
       citations_enabled: *param_citations_enabled
       function_calling: *param_function_calling
+      structured_output: *param_structured_output
       reasoning_effort:
         type: enum
         options: [low, medium, high]
@@ -87,6 +88,7 @@ models:
       code_execution: *param_code_execution
       citations_enabled: *param_citations_enabled
       function_calling: *param_function_calling
+      structured_output: *param_structured_output
       reasoning_effort:
         type: enum
         options: [low, medium, high, max]
@@ -398,8 +400,8 @@ models:
     visible: true
 
 
-  - name: gemini-3-pro-preview
-    display_name: Gemini 3 Pro 👍
+  - name: gemini-3.1-pro-preview
+    display_name: Gemini 3.1 Pro 👍
     adapter: GoogleAdapter
     pricing:
       input: 4 # USD/1M tokens
@@ -422,7 +424,7 @@ models:
       temperature: *param_temperature_fixed_1
       reasoning_effort:
         type: enum
-        options: [low, high]
+        options: [low, medium, high]
         default: low
         ui: select
         label: Reasoning

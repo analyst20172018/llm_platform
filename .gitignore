@@ -1,3 +1,6 @@
 .env
 __pycache__/
 AGENTS.md
+CLAUDE.md
+.venv/
+notebooks/
