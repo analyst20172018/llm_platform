@@ -214,15 +214,11 @@ class OpenAIAdapter(AdapterBase):
             "code_execution",
             "response_modalities",
             "structured_output",
-            "max_tokens",
         }
         for key, value in additional_parameters.items():
             if key in passthrough_keys:
                 continue
             parameters[key] = value
-
-        if "max_tokens" in additional_parameters:
-            parameters["max_output_tokens"] = additional_parameters["max_tokens"]
 
         if "reasoning" in parameters:
             parameters["reasoning"]["summary"] = "auto"

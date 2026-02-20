@@ -41,6 +41,13 @@ parameter_templates:
     type: float
     default: 1
     ui: hidden
+  max_tokens: &param_max_tokens
+    type: integer
+    ui: hidden
+  max_tokens_as_max_output: &param_max_output_tokens
+    type: integer
+    ui: hidden
+    request_key: max_output_tokens
 
 models:
   - name: claude-sonnet-4-6
@@ -57,6 +64,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 64000
       web_search: *param_web_search
       code_execution: *param_code_execution
       citations_enabled: *param_citations_enabled
@@ -84,6 +94,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 128000
       web_search: *param_web_search
       code_execution: *param_code_execution
       citations_enabled: *param_citations_enabled
@@ -111,6 +124,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 64000
       web_search: *param_web_search
       citations_enabled: *param_citations_enabled
       function_calling: *param_function_calling
@@ -138,6 +154,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 128000
       web_search: *param_web_search
       code_execution: *param_code_execution
       function_calling: *param_function_calling
@@ -172,6 +191,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 128000
       web_search: *param_web_search
       function_calling: *param_function_calling
       structured_output: *param_structured_output
@@ -205,6 +227,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 128000
       web_search: *param_web_search
       code_execution: *param_code_execution
       function_calling: *param_function_calling
@@ -239,6 +264,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 128000
       web_search: *param_web_search
       code_execution: *param_code_execution
       function_calling: *param_function_calling
@@ -273,6 +301,10 @@ models:
     outputs:
       - text
       - audio
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 16384
     visible: false
 
   - name: gpt-audio
@@ -290,6 +322,9 @@ models:
       - text
       - audio
     additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 16384
       function_calling: *param_function_calling
     visible: false
 
@@ -307,6 +342,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 100000
       web_search: *param_web_search
       structured_output: *param_structured_output
       reasoning_effort:
@@ -333,6 +371,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 272000
       function_calling: *param_function_calling
       structured_output: *param_structured_output
       reasoning_effort:
@@ -416,6 +457,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 65536
       function_calling: *param_function_calling
       web_search: *param_web_search
       code_execution: *param_code_execution
@@ -446,6 +490,9 @@ models:
       - text
       - image
     additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 32768
       web_search: *param_web_search
       structured_output: *param_structured_output
       image_output: *param_image_output
@@ -485,6 +532,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 65536
       function_calling: *param_function_calling
       web_search: *param_web_search
       code_execution: *param_code_execution
@@ -515,6 +565,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 64000
       function_calling: *param_function_calling
 
   - name: grok-4-1-fast-reasoning
@@ -531,6 +584,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 64000
       function_calling: *param_function_calling
       web_search: *param_web_search
       code_execution: *param_code_execution
@@ -550,6 +606,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 64000
       function_calling: *param_function_calling
       web_search: *param_web_search
       code_execution: *param_code_execution
@@ -605,6 +664,10 @@ models:
       - image
     outputs:
       - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 8000
     visible: true
 
   - name: deepseek-reasoner
@@ -620,6 +683,10 @@ models:
       - image
     outputs:
       - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 64000
 
 
   - name: meta-llama/llama-4-maverick
@@ -634,6 +701,10 @@ models:
       - text
     outputs:
       - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 1000000
     visible: true
 
   - name: moonshotai/kimi-k2.5
@@ -648,6 +719,10 @@ models:
       - text
     outputs:
       - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 262000
     visible: true
 
 
@@ -662,6 +737,10 @@ models:
     inputs:
       - image
       - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 131000
 
 
   - name: scribe_v2

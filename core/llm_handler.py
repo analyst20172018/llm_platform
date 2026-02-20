@@ -148,7 +148,7 @@ class APIHandler:
             request_key = definition.get("request_key")
             if request_key:
                 allowed.add(str(request_key).split(".")[0])
-        allowed.update({"response_modalities", "max_tokens"})
+        allowed.update({"response_modalities"})
         return allowed
 
     def _prepare_additional_parameters(
@@ -159,9 +159,8 @@ class APIHandler:
     ) -> Dict:
         """
             - It takes whatever the caller passed in additional_parameters and merges in any deprecated **kwargs (with a warning).
-            - It looks up the model in models_config.yaml and applies defaults for that model’s extra parameters (only when send_default is true).
-            - It injects a default max_tokens from the model config if one isn’t already set.
-            - It remaps “friendly” parameter names into nested provider formats using request_key (e.g. reasoning_effort → reasoning.effort), and drops empty values while doing so.
+            - It looks up the model in models_config.yaml and applies defaults for that model’s extra parameters (only when send_default is true), including max_tokens.
+            - It remaps “friendly” parameter names into nested provider formats using request_key (e.g. reasoning_effort → reasoning.effort, max_tokens → max_output_tokens), and drops empty values while doing so.
             - It removes parameters marked include_in_request: false.
             - It filters out anything the model doesn’t support, logging a warning for each unsupported key.
 
@@ -206,9 +205,6 @@ class APIHandler:
                         continue
                 if "default" in definition and definition["default"] is not None:
                     merged[name] = definition["default"]
-
-            if model_object.max_tokens is not None:
-                merged.setdefault("max_tokens", model_object.max_tokens)
 
             for name, definition in model_object.parameter_definitions().items():
                 request_key = definition.get("request_key")
@@ -401,8 +397,8 @@ class APIHandler:
             --------
             1.  Select the adapter that corresponds to ``model`` based on
                 *models_config.yaml*.
-            2.  Inject a default ``max_tokens`` value from the configuration file
-                into ``additional_parameters`` if the caller did not specify one.
+            2.  Normalize ``additional_parameters`` against the model's YAML schema
+                (apply defaults, map ``request_key`` fields, filter unsupported keys).
             3.  Forward the entire conversation as well as all arguments to
                 ``adapter.request_llm``.
             4.  Store the returned assistant message inside the conversation and
@@ -445,8 +441,6 @@ class APIHandler:
 
             Notes
             -----
-            * A default ``max_tokens`` is injected automatically from the model
-            configuration when the argument is omitted.
             * The conversation history grows with every invocation.  Call
             ``handler.the_conversation.clear()`` to reset the context.
         """

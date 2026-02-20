@@ -75,11 +75,10 @@ Registered adapter classes include:
 Implemented in `_prepare_additional_parameters`:
 1. Merge user `additional_parameters` and deprecated `**kwargs` (kwargs only fill missing keys).
 2. Load model parameter definitions from YAML.
-3. Apply defaults for definitions with `send_default: true`.
-4. Inject model-level default `max_tokens` when available and missing.
-5. Map friendly keys to nested request keys (`request_key`, e.g. `reasoning_effort -> reasoning.effort`).
-6. Drop fields where `include_in_request: false`.
-7. Filter unsupported keys for the selected model and log warnings.
+3. Apply defaults for definitions with `send_default: true` (including `max_tokens`, which is a standard YAML `additional_parameter` per model with provider-specific `request_key` mapping, e.g. `max_output_tokens` for OpenAI and Google).
+4. Map friendly keys to nested request keys (`request_key`, e.g. `reasoning_effort -> reasoning.effort`, `max_tokens -> max_output_tokens`).
+5. Drop fields where `include_in_request: false`.
+6. Filter unsupported keys for the selected model and log warnings.
 
 ## 4. Conversation domain model
 File: `services/conversation.py`
