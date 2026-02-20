@@ -307,12 +307,7 @@ class AnthropicAdapter(AdapterBase):
         if additional_parameters.get("code_execution", False):
             tools.append({"type": "code_execution_20250825", "name": "code_execution"})
 
-        if additional_parameters.get("structured_output", None):
-            calling_function = self.client.beta.messages.parse
-        else:
-            calling_function = self.client.beta.messages.create
-
-        response = calling_function(
+        response = self.client.beta.messages.create(
             model=model,
             system=conversation.system_prompt,
             messages=history,
@@ -491,19 +486,30 @@ class AnthropicAdapter(AdapterBase):
         if temperatue := additional_parameters.get("temperature", None):
             request_kwargs['temperature'] = temperatue
 
+        output_config = {}
+
         if model in ["claude-opus-4-6", "claude-sonnet-4-6"]:
             request_kwargs['thinking'] = {"type": "adaptive"}
             reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "high")
             if reasoning_effort:
-                request_kwargs['output_config'] = {"effort": reasoning_effort}
+                output_config["effort"] = reasoning_effort
         else:
             reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "none")
             if budget_tokens := REASONING_BUDGETS.get(reasoning_effort):
                 request_kwargs['thinking'] = {"type": "enabled", "budget_tokens": budget_tokens}
 
-        # Structured output
+        # Structured output — convert Pydantic model to JSON schema for output_config.format
         if structured_output_class := additional_parameters.get("structured_output", None):
-            request_kwargs["output_format"] = structured_output_class
+            if hasattr(structured_output_class, "model_json_schema"):
+                schema = structured_output_class.model_json_schema()
+            else:
+                from pydantic import TypeAdapter
+                schema = TypeAdapter(structured_output_class).json_schema()
+            schema = anthropic.transform_schema(schema)
+            output_config["format"] = {"type": "json_schema", "schema": schema}
+
+        if output_config:
+            request_kwargs["output_config"] = output_config
 
         if beta_flag := BETA_FLAGS.get(model):
             request_kwargs['betas'] = beta_flag
