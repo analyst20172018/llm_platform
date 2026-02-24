@@ -53,8 +53,19 @@ class BaseTool(ABC):
                     # Recursively clean nested dictionaries or lists under each property
                     cls.clean_schema(prop_data)
 
+                # Keep required entries aligned with the remaining property names.
+                # The "properties" dict is a field-name map, so its keys are real names
+                # (e.g. a field literally named "title"), not schema metadata.
+                if isinstance(data.get("required"), list):
+                    property_names = set(data["properties"].keys())
+                    data["required"] = [
+                        name for name in data["required"] if name in property_names
+                    ]
+
             # Recursively clean other nested objects
             for key, value in list(data.items()):
+                if key == "properties":
+                    continue
                 if isinstance(value, (dict, list)):
                     data[key] = cls.clean_schema(value)
 
