@@ -134,6 +134,11 @@ class Model:
 
     @property
     def max_tokens(self) -> int:
+        parameter_definition = self.get_parameter("max_tokens")
+        if parameter_definition and parameter_definition.get("default") is not None:
+            return parameter_definition.get("default")
+
+        # Legacy fallback for older configs that still define model-level max_tokens.
         return self.model_config_data.get('max_tokens', None)
 
     @property
@@ -290,7 +295,7 @@ class ModelConfig:
         """Get the max_tokens for the model"""
         for each_model in self.model_config['models']:
             if each_model['name'] == model_name:
-                return each_model.get('max_tokens', None)
+                return Model(each_model).max_tokens
         return None
     
     

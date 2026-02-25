@@ -133,9 +133,9 @@ Models are grouped by `adapter`, with metadata:
 - `name`, `display_name`
 - `inputs`, `outputs`
 - `pricing`
-- `max_tokens`, `context_window`
+- `context_window`
 - `visible`
-- `additional_parameters` schema
+- `additional_parameters` schema (including request defaults such as `max_tokens`)
 - optional `background_mode`
 
 ### 6.2 Parameter schema capabilities
@@ -324,4 +324,3 @@ From `requirements.txt`:
 - `tools/*.py`: callable tool implementations
 - `models_config.yaml`: model routing and metadata
 - `types.py`: typed `AdditionalParameters`
-

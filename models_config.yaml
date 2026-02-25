@@ -56,7 +56,6 @@ models:
     pricing:
       input: 3 # USD/1M tokens
       output: 15 # USD/1M tokens
-    max_tokens: 64_000
     context_window: 1_000_000
     inputs:
       - image
@@ -86,7 +85,6 @@ models:
     pricing:
       input: 5 # USD/1M tokens
       output: 25 # USD/1M tokens
-    max_tokens: 128_000
     context_window: 1_000_000
     inputs:
       - image
@@ -116,7 +114,6 @@ models:
     pricing:
       input: 1 # USD/1M tokens
       output: 5 # USD/1M tokens
-    max_tokens: 64_000
     context_window: 200_000
     inputs:
       - image
@@ -146,7 +143,6 @@ models:
     pricing:
       input: 1.75 # USD/1M tokens
       output: 14 # USD/1M tokens
-    max_tokens: 128_000
     context_window: 400_000
     inputs:
       - text
@@ -177,13 +173,12 @@ models:
         request_key: text.verbosity
     visible: true
 
-  - name: gpt-5.2-codex
-    display_name: GPT-5.2-Codex
+  - name: gpt-5.3-codex
+    display_name: GPT-5.3-Codex
     adapter: OpenAIAdapter
     pricing:
       input: 1.75 # USD/1M tokens
       output: 14 # USD/1M tokens
-    max_tokens: 128_000
     context_window: 400_000
     inputs:
       - text
@@ -219,7 +214,6 @@ models:
     pricing:
       input: 0.25 # USD/1M tokens
       output: 2 # USD/1M tokens
-    max_tokens: 128_000
     context_window: 400_000
     inputs:
       - text
@@ -256,7 +250,6 @@ models:
     pricing:
       input: 0.05 # USD/1M tokens
       output: 0.4 # USD/1M tokens
-    max_tokens: 128_000
     context_window: 400_000
     inputs:
       - text
@@ -293,7 +286,6 @@ models:
     pricing:
       input: 0.6 # USD/1M tokens
       output: 2.4 # USD/1M tokens
-    max_tokens: 16_384
     context_window: 128_000
     inputs:
       - text
@@ -313,7 +305,6 @@ models:
     pricing:
       input: 2.5 # USD/1M tokens
       output: 10 # USD/1M tokens
-    max_tokens: 16_384
     context_window: 128_000
     inputs:
       - text
@@ -334,7 +325,6 @@ models:
     pricing:
       input: 10 # USD/1M tokens
       output: 40 # USD/1M tokens
-    max_tokens: 100_000
     context_window: 200_000
     inputs:
       - image
@@ -363,7 +353,6 @@ models:
     pricing:
       input: 15 # USD/1M tokens
       output: 120 # USD/1M tokens
-    max_tokens: 272_000
     context_window: 400_000
     inputs:
       - image
@@ -392,7 +381,6 @@ models:
     pricing:
       input: 5 # USD/1M tokens
       output: 10 # USD/1M tokens
-    max_tokens: 128_000
     context_window: 400_000
     inputs:
       - text
@@ -447,7 +435,6 @@ models:
     pricing:
       input: 4 # USD/1M tokens
       output: 18 # USD/1M tokens
-    max_tokens: 65_536
     context_window: 1_048_576
     inputs:
       - text
@@ -481,7 +468,6 @@ models:
     pricing:
       input: 2 # USD/1M tokens
       output: 12 # USD/1M tokens
-    max_tokens: 32_768
     context_window: 32_768
     inputs:
       - text
@@ -522,7 +508,6 @@ models:
     pricing:
       input: 0.5 # USD/1M tokens
       output: 3 # USD/1M tokens
-    max_tokens: 65_536
     context_window: 1_048_576
     inputs:
       - text
@@ -557,7 +542,6 @@ models:
     pricing:
       input: 3 # USD/1M tokens
       output: 15 # USD/1M tokens
-    max_tokens: 64_000
     context_window: 256_000
     inputs:
       - text
@@ -576,7 +560,6 @@ models:
     pricing:
       input: 0.2 # USD/1M tokens
       output: 0.5 # USD/1M tokens
-    max_tokens: 64_000
     context_window: 2_000_000
     inputs:
       - text
@@ -598,7 +581,6 @@ models:
     pricing:
       input: 0.2 # USD/1M tokens
       output: 0.5 # USD/1M tokens
-    max_tokens: 64_000
     context_window: 2_000_000
     inputs:
       - text
@@ -620,7 +602,6 @@ models:
     pricing:
       input: 0 # USD/1M tokens
       output: 0 # USD/1M tokens
-    max_tokens: 64_000
     context_window: 64_000
     inputs:
       - text
@@ -657,7 +638,6 @@ models:
     pricing:
       input: 0.56 # USD/1M tokens
       output: 1.68 # USD/1M tokens
-    max_tokens: 8_000
     context_window: 128_000
     inputs:
       - text
@@ -676,7 +656,6 @@ models:
     pricing:
       input: 0.56 # USD/1M tokens
       output: 1.68 # USD/1M tokens
-    max_tokens: 64_000
     context_window: 128_000
     inputs:
       - text
@@ -695,7 +674,6 @@ models:
     pricing:
       input: 0.22 # USD/1M tokens
       output: 0.88 # USD/1M tokens
-    max_tokens: 1_000_000
     context_window: 1_000_000
     inputs:
       - text
@@ -713,7 +691,6 @@ models:
     pricing:
       input: 0.6 # USD/1M tokens
       output: 3 # USD/1M tokens
-    max_tokens: 262_000
     context_window: 262_000
     inputs:
       - text
@@ -732,7 +709,6 @@ models:
     pricing:
       input: 0.5 # USD/1M tokens
       output: 1.5 # USD/1M tokens
-    max_tokens: 131_000
     context_window: 256_000
     inputs:
       - image
@@ -749,7 +725,6 @@ models:
     pricing:
       input: 0 # USD/1M tokens
       output: 0 # USD/1M tokens
-    max_tokens: 1_048_576
     context_window: 1_048_576
     inputs:
       - audio
@@ -785,7 +760,6 @@ models:
     pricing:
       input: 0 # USD/1M tokens
       output: 0 # USD/1M tokens
-    max_tokens: 1_048_576
     context_window: 1_048_576
     inputs:
       - audio
@@ -806,7 +780,6 @@ models:
     pricing:
       input: 0 # USD/1M tokens
       output: 0 # USD/1M tokens
-    max_tokens: 1_048_576
     context_window: 1_048_576
     inputs:
       - audio
