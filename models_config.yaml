@@ -373,7 +373,7 @@ models:
         label: Reasoning
         request_key: reasoning.effort
     background_mode: true
-    visible: true
+    visible: false
 
   - name: gpt-image-1.5
     display_name: GPT Image 1.5
@@ -481,6 +481,13 @@ models:
         default: 32768
       web_search: *param_web_search
       structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
       image_output: *param_image_output
       aspect_ratio:
         type: enum
@@ -494,6 +501,46 @@ models:
       resolution:
         type: enum
         options: [1K, 2K, 4K]
+        default: 4K
+        ui: select
+        label: Resolution
+        depends_on:
+          param: image_output
+          value: true
+    visible: true
+
+  - name: gemini-3.1-flash-image-preview
+    display_name: Gemini 3.1 Flash Image 🍌
+    adapter: GoogleAdapter
+    pricing:
+      input: 2 # USD/1M tokens
+      output: 12 # USD/1M tokens
+    context_window: 32_768
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+      - image
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 32768
+      web_search: *param_web_search
+      structured_output: *param_structured_output
+      image_output: *param_image_output
+      aspect_ratio:
+        type: enum
+        options: ["1:1", "1:4", "4:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "1:8", "8:1", "9:16", "16:9", "21:9"]
+        default: "16:9"
+        ui: select
+        label: Aspect Ratio
+        depends_on:
+          param: image_output
+          value: true
+      resolution:
+        type: enum
+        options: [0.5K, 1K, 2K, 4K]
         default: 4K
         ui: select
         label: Resolution
