@@ -1,5 +1,4 @@
 from .adapter_base import AdapterBase
-from xai_sdk import Client
 from xai_sdk.chat import user, system, image, assistant, tool, tool_result
 from xai_sdk.proto import chat_pb2
 from xai_sdk.search import SearchParameters
@@ -25,7 +24,8 @@ class GrokAdapter(AdapterBase):
     }
 
     def __init__(self):
-        super().__init__()   
+        super().__init__()
+        from xai_sdk import Client
         self.client = Client(api_key = os.getenv("XAI_API_KEY"))
 
     def convert_conversation_history_to_adapter_format(self,

@@ -10,8 +10,6 @@ from loguru import logger
 import time
 from io import BytesIO
 
-from openai import AsyncOpenAI, OpenAI
-
 from llm_platform.services.conversation import (Conversation, FunctionCall,
                                                 FunctionResponse, Message,
                                                 ThinkingResponse)
@@ -31,6 +29,7 @@ class OpenAIImageAdapter:
         """
         Initializes the OpenAIImageAdapter with synchronous and asynchronous clients.
         """
+        from openai import AsyncOpenAI, OpenAI
         self.client = OpenAI()
         self.async_client = AsyncOpenAI()
 

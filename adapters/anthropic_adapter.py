@@ -5,8 +5,6 @@ from loguru import logger
 import os
 from typing import Any, Callable, Dict, List, Tuple
 
-import anthropic
-
 from llm_platform.helpers.model_config import ModelConfig
 from llm_platform.services.conversation import (
     Conversation,
@@ -168,6 +166,7 @@ class AnthropicAdapter(AdapterBase):
 
     def __init__(self):
         super().__init__()
+        import anthropic
         self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         self.model_config = ModelConfig()
 

@@ -12,7 +12,6 @@ import time
 import os
 from io import BytesIO
 
-from xai_sdk import Client
 from xai_sdk.chat import user, system, image, assistant, tool, tool_result
 from xai_sdk.proto import chat_pb2
 from xai_sdk.search import SearchParameters
@@ -37,6 +36,7 @@ class GrokImageAdapter:
         """
         Initializes the GrokImageAdapter with synchronous and asynchronous clients.
         """
+        from xai_sdk import Client
         self.client = Client(api_key = os.getenv("XAI_API_KEY"))
 
     def _create_parameters_for_calling_llm(

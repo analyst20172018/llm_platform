@@ -1,5 +1,4 @@
 from .adapter_base import AdapterBase
-from openai import OpenAI
 import os
 from typing import Any, Callable, Dict, List, Tuple
 from llm_platform.services.conversation import Conversation, Message
@@ -14,6 +13,7 @@ class DeepSeekAdapter(AdapterBase):
     
     def __init__(self):
         super().__init__()
+        from openai import OpenAI
         self.client = OpenAI(
             base_url="https://api.deepseek.com",
             api_key=os.getenv("DEEPSEEK_API_KEY"),

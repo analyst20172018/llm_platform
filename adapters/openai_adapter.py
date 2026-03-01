@@ -15,8 +15,6 @@ from typing import Callable, Dict, List, Tuple, Union
 from loguru import logger
 import time
 
-from openai import AsyncOpenAI, OpenAI
-
 from llm_platform.services.conversation import (Conversation, FunctionCall,
                                                 FunctionResponse, Message,
                                                 ThinkingResponse)
@@ -63,6 +61,7 @@ class OpenAIAdapter(AdapterBase):
         Initializes the OpenAIAdapter with synchronous and asynchronous clients.
         """
         super().__init__()
+        from openai import AsyncOpenAI, OpenAI
         self.client = OpenAI()
         self.async_client = AsyncOpenAI()
 

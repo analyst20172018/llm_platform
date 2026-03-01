@@ -1,5 +1,4 @@
 from .adapter_base import AdapterBase
-from mistralai import Mistral
 import os
 from typing import Any, Callable, Dict, List, Tuple
 from loguru import logger
@@ -16,7 +15,9 @@ from llm_platform.types import AdditionalParameters
 class MistralAdapter(AdapterBase):
     
     def __init__(self):
-        super().__init__()   
+        super().__init__()
+        # Import lazily so this SDK does not slow down module import time.
+        from mistralai import Mistral
         self.client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
 
     def convert_conversation_history_to_adapter_format(self, 

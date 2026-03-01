@@ -14,7 +14,7 @@ MODEL_NAMES = ["universal-3-pro", "universal-2"]
 class AssemblyAIAdapter:
     
     def __init__(self):
-        super().__init__()  
+        super().__init__()
         aai.settings.api_key = os.getenv("ASSEMBLYAI_API_KEY")
 
     def voice_to_text(self, audio_file: AudioFile, additional_parameters: Dict) -> str:

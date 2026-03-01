@@ -1,5 +1,4 @@
 from .adapter_base import AdapterBase
-from openai import OpenAI
 import os
 import json
 from typing import Any, Callable, Dict, List, Tuple
@@ -16,7 +15,8 @@ from llm_platform.types import AdditionalParameters
 class OpenAIOldAdapter(AdapterBase):
     
     def __init__(self):
-        super().__init__()   
+        super().__init__()
+        from openai import OpenAI
         self.client = OpenAI()
         
 

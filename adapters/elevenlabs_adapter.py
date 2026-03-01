@@ -6,13 +6,13 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          TextDocumentFile, PDFDocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
                                          MediaFile, ImageFile, VideoFile)
-from elevenlabs.client import ElevenLabs
 from loguru import logger
 from llm_platform.types import AdditionalParameters
 
 class ElevenLabsAdapter:
     def __init__(self):
         self.api_key = os.getenv("ELEVEN_API_KEY")
+        from elevenlabs.client import ElevenLabs
         self.client = ElevenLabs(api_key=self.api_key)
 
 

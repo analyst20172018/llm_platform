@@ -1,5 +1,4 @@
 from .adapter_base import AdapterBase
-from openai import OpenAI
 import os
 from typing import Any, Callable, Dict, List, Tuple
 from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
@@ -13,7 +12,8 @@ from llm_platform.types import AdditionalParameters
 class OpenRouterAdapter(AdapterBase):
     
     def __init__(self):
-        super().__init__()   
+        super().__init__()
+        from openai import OpenAI
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=os.getenv("OPENROUTER_API_KEY"),

@@ -8,9 +8,7 @@ from enum import Enum
 from xmlrpc import client
 from loguru import logger
 
-from google import genai
 from google.genai import types
-
 
 from .adapter_base import AdapterBase
 from llm_platform.services.conversation import (Conversation, FunctionCall,
@@ -45,6 +43,7 @@ class GoogleAdapter(AdapterBase):
         api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
         if not api_key:
             raise ValueError("GOOGLE_GEMINI_API_KEY environment variable not set.")
+        from google import genai
         self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
 
     def _convert_file_to_part(self, file: MediaFile, id=None) -> types.Part:
@@ -503,7 +502,7 @@ class GoogleAdapter(AdapterBase):
     
     def request_llm_with_functions(self,
                                    model: str, 
-                                   config: genai.types.GenerateContentConfig,
+                                   config: types.GenerateContentConfig,
                                    the_conversation: Conversation, 
                                    functions: List[BaseTool]=[], 
                                    tool_output_callback: Callable=None,
