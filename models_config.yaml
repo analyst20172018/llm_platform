@@ -173,6 +173,42 @@ models:
         request_key: text.verbosity
     visible: true
 
+  - name: gpt-5.3-chat-latest
+    display_name: GPT-5.3 Chat 👍
+    adapter: OpenAIAdapter
+    pricing:
+      input: 1.75 # USD/1M tokens
+      output: 14 # USD/1M tokens
+    context_window: 400_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 16_384
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, high, xhigh]
+        default: none
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+      verbosity:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Verbosity
+        request_key: text.verbosity
+    visible: true
+
   - name: gpt-5.3-codex
     display_name: GPT-5.3-Codex
     adapter: OpenAIAdapter
@@ -555,6 +591,39 @@ models:
     pricing:
       input: 0.5 # USD/1M tokens
       output: 3 # USD/1M tokens
+    context_window: 1_048_576
+    inputs:
+      - text
+      - image
+      - audio
+      - video
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 65536
+      function_calling: *param_function_calling
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      url_context: *param_url_context
+      structured_output: *param_structured_output
+      temperature: *param_temperature_fixed_1
+      reasoning_effort:
+        type: enum
+        options: [minimal, low, high]
+        default: minimal
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+    visible: false
+
+  - name: gemini-3.1-flash-lite-preview
+    display_name: Gemini 3.1 Flash-Lite
+    adapter: GoogleAdapter
+    pricing:
+      input: 0.25 # USD/1M tokens
+      output: 1.5 # USD/1M tokens
     context_window: 1_048_576
     inputs:
       - text
