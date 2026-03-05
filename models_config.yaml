@@ -137,13 +137,13 @@ models:
     visible: false
 
 
-  - name: gpt-5.2
-    display_name: GPT-5.2 👍
+  - name: gpt-5.4
+    display_name: GPT-5.4 👍
     adapter: OpenAIAdapter
     pricing:
-      input: 1.75 # USD/1M tokens
-      output: 14 # USD/1M tokens
-    context_window: 400_000
+      input: 2.5 # USD/1M tokens
+      output: 15 # USD/1M tokens
+    context_window: 1_050_000
     inputs:
       - text
       - image
@@ -159,43 +159,7 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [none, low, medium, high, xhigh]
-        default: none
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
-      verbosity:
-        type: enum
-        options: [low, medium, high]
-        default: low
-        ui: select
-        label: Verbosity
-        request_key: text.verbosity
-    visible: true
-
-  - name: gpt-5.3-chat-latest
-    display_name: GPT-5.3 Chat 👍
-    adapter: OpenAIAdapter
-    pricing:
-      input: 1.75 # USD/1M tokens
-      output: 14 # USD/1M tokens
-    context_window: 400_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_output_tokens
-        default: 16_384
-      web_search: *param_web_search
-      code_execution: *param_code_execution
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      reasoning_effort:
-        type: enum
-        options: [none, low, medium, high, xhigh]
+        options: [none, low, medium, high]
         default: none
         ui: select
         label: Reasoning
@@ -383,13 +347,13 @@ models:
     background_mode: true
     visible: true
 
-  - name: gpt-5.2-pro
-    display_name: GPT-5.2 pro 💰💰💰
+  - name: gpt-5.4-pro
+    display_name: GPT-5.4 pro 💰💰💰
     adapter: OpenAIAdapter
     pricing:
-      input: 15 # USD/1M tokens
-      output: 120 # USD/1M tokens
-    context_window: 400_000
+      input: 30 # USD/1M tokens
+      output: 180 # USD/1M tokens
+    context_window: 1_050_000
     inputs:
       - image
       - text
@@ -398,9 +362,8 @@ models:
     additional_parameters:
       max_tokens:
         <<: *param_max_output_tokens
-        default: 272000
+        default: 128000
       function_calling: *param_function_calling
-      structured_output: *param_structured_output
       reasoning_effort:
         type: enum
         options: [high]
