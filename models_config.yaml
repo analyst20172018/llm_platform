@@ -159,7 +159,7 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [none, low, medium, high]
+        options: [none, low, medium, high, xhigh]
         default: none
         ui: select
         label: Reasoning
@@ -480,13 +480,6 @@ models:
         default: 32768
       web_search: *param_web_search
       structured_output: *param_structured_output
-      reasoning_effort:
-        type: enum
-        options: [low, medium, high]
-        default: low
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
       image_output: *param_image_output
       aspect_ratio:
         type: enum
