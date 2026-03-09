@@ -280,27 +280,8 @@ models:
         request_key: text.verbosity
     visible: false
 
-  - name: gpt-audio-mini
-    display_name: GPT Audio Mini
-    adapter: OpenAIOldAdapter
-    pricing:
-      input: 0.6 # USD/1M tokens
-      output: 2.4 # USD/1M tokens
-    context_window: 128_000
-    inputs:
-      - text
-      - audio
-    outputs:
-      - text
-      - audio
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_tokens
-        default: 16384
-    visible: false
-
-  - name: gpt-audio
-    display_name: GPT Audio
+  - name: gpt-audio-1.5
+    display_name: GPT Audio 1.5
     adapter: OpenAIOldAdapter
     pricing:
       input: 2.5 # USD/1M tokens
