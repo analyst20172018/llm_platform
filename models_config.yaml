@@ -208,12 +208,12 @@ models:
         request_key: text.verbosity
     visible: true
 
-  - name: gpt-5-mini
-    display_name: GPT-5 mini
+  - name: gpt-5.4-mini
+    display_name: GPT-5.4 mini
     adapter: OpenAIAdapter
     pricing:
-      input: 0.25 # USD/1M tokens
-      output: 2 # USD/1M tokens
+      input: 0.75 # USD/1M tokens
+      output: 4.5 # USD/1M tokens
     context_window: 400_000
     inputs:
       - text
@@ -230,7 +230,7 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [low, medium, high]
+        options: [none, low, medium, high, xhigh]
         default: low
         ui: select
         label: Reasoning
@@ -244,12 +244,12 @@ models:
         request_key: text.verbosity
     visible: false
 
-  - name: gpt-5-nano
-    display_name: GPT-5 nano
+  - name: gpt-5.4-nano
+    display_name: GPT-5.4 nano
     adapter: OpenAIAdapter
     pricing:
-      input: 0.05 # USD/1M tokens
-      output: 0.4 # USD/1M tokens
+      input: 0.2 # USD/1M tokens
+      output: 1.25 # USD/1M tokens
     context_window: 400_000
     inputs:
       - text
@@ -266,7 +266,7 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [low, medium, high]
+        options: [none, low, medium, high, xhigh]
         default: low
         ui: select
         label: Reasoning
