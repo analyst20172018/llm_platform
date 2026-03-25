@@ -169,6 +169,7 @@ Models are grouped by `adapter`, with metadata:
 - `GrokAdapter`
   - Sync chat with optional tool execution loop
   - Supports web search and code execution tools in xAI SDK
+  - Supports structured output through xAI SDK `response_format` for both standard requests and Grok 4 tool-enabled requests
 - `MistralAdapter`
   - Sync chat, recursive function-calling, OCR mode, and audio transcription mode
 - `OpenAIOldAdapter`

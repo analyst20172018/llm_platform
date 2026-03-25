@@ -589,12 +589,12 @@ models:
     visible: false
 
 
-  - name: grok-4
-    display_name: Grok 4
+  - name: grok-4.20-0309-reasoning
+    display_name: Grok 4.2 Reasoning
     adapter: GrokAdapter
     pricing:
-      input: 3 # USD/1M tokens
-      output: 15 # USD/1M tokens
+      input: 2 # USD/1M tokens
+      output: 6 # USD/1M tokens
     context_window: 256_000
     inputs:
       - text
@@ -606,34 +606,17 @@ models:
         <<: *param_max_tokens
         default: 64000
       function_calling: *param_function_calling
-
-  - name: grok-4-1-fast-reasoning
-    display_name: Grok 4.1 Fast (Reasoning)
-    adapter: GrokAdapter
-    pricing:
-      input: 0.2 # USD/1M tokens
-      output: 0.5 # USD/1M tokens
-    context_window: 2_000_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_tokens
-        default: 64000
-      function_calling: *param_function_calling
+      structured_output: *param_structured_output
       web_search: *param_web_search
       code_execution: *param_code_execution
     visible: true
 
-  - name: grok-4-1-fast-non-reasoning
-    display_name: Grok 4.1 Fast (Non-Reasoning)
+  - name: grok-4.20-0309-non-reasoning
+    display_name: Grok 4.2 (Non-Reasoning)
     adapter: GrokAdapter
     pricing:
-      input: 0.2 # USD/1M tokens
-      output: 0.5 # USD/1M tokens
+      input: 2 # USD/1M tokens
+      output: 6 # USD/1M tokens
     context_window: 2_000_000
     inputs:
       - text
@@ -645,9 +628,32 @@ models:
         <<: *param_max_tokens
         default: 64000
       function_calling: *param_function_calling
+      structured_output: *param_structured_output
       web_search: *param_web_search
       code_execution: *param_code_execution
-    visible: false
+    visible: true
+
+  - name: grok-4.20-multi-agent-0309
+    display_name: Grok 4.2 Multi Agent
+    adapter: GrokAdapter
+    pricing:
+      input: 2 # USD/1M tokens
+      output: 6 # USD/1M tokens
+    context_window: 2_000_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 64000
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+    visible: true
 
   - name: grok-imagine-image
     display_name: Grok Imagine Image
