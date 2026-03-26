@@ -170,6 +170,7 @@ class GrokAdapter(AdapterBase):
             "structured_output",
             "reasoning",
             "text",
+            "agent_count",
         }
         for key, value in additional_parameters.items():
             if key in reserved_parameters:
@@ -181,6 +182,9 @@ class GrokAdapter(AdapterBase):
 
         if additional_parameters.get("code_execution"):
             parameters["tools"].append(code_execution())
+
+        if agent_count := additional_parameters.get("agent_count", None):
+            parameters['agent_count'] = int(agent_count)
 
         if reasoning_parameter := additional_parameters.get("reasoning", {}):
             reasoning_effort = reasoning_parameter.get("effort")

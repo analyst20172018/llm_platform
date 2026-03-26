@@ -653,6 +653,12 @@ models:
       structured_output: *param_structured_output
       web_search: *param_web_search
       code_execution: *param_code_execution
+      agent_count:
+        type: enum
+        options: [4, 16]
+        default: 4
+        ui: select
+        label: Agent Count
     visible: true
 
   - name: grok-imagine-image
