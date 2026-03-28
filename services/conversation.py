@@ -1,241 +1,263 @@
-from typing import List, Dict, BinaryIO
-from datetime import datetime
-from abc import ABC, abstractmethod
-from llm_platform.helpers.model_config import ModelConfig
-from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
-import json
 import base64
+import json
+from datetime import datetime
+from typing import Any, Dict, List
+
+from llm_platform.services.files import (
+    AudioFile,
+    BaseFile,
+    ExcelDocumentFile,
+    ImageFile,
+    MediaFile,
+    PDFDocumentFile,
+    TextDocumentFile,
+    VideoFile,
+)
 
 
 class FunctionCall:
-    def __init__(self, 
-                 id: str,
-                 name: str,
-                 arguments: Dict | List[Dict],
-                 call_id: str=None
-                ):
+    def __init__(
+        self,
+        id: str,
+        name: str,
+        arguments: Dict | List[Dict],
+        call_id: str = None,
+    ):
         self.id = id
         self.name = name
         self.arguments = arguments
-        if call_id is None:
-            self.call_id = id
-        else:
-            self.call_id = call_id
+        self.call_id = id if call_id is None else call_id
 
     @classmethod
     def from_openai(cls, tool_call):
-        return cls(id = tool_call.id, 
-                   name = tool_call.name, 
-                   arguments = str(tool_call.arguments),
-                   call_id = getattr(tool_call, "call_id", tool_call.id)
-                   )
-    
+        return cls(
+            id=tool_call.id,
+            name=tool_call.name,
+            arguments=str(tool_call.arguments),
+            call_id=getattr(tool_call, "call_id", tool_call.id),
+        )
+
     @classmethod
     def from_grok(cls, tool_call):
-        return cls(id = tool_call.id, 
-                   name = tool_call.function.name, 
-                   arguments = str(tool_call.function.arguments),
-                   call_id = tool_call.id
-                   )
-    
+        return cls(
+            id=tool_call.id,
+            name=tool_call.function.name,
+            arguments=str(tool_call.function.arguments),
+            call_id=tool_call.id,
+        )
+
     @classmethod
     def from_openai_old(cls, tool_call):
-        return cls(id = tool_call.id, 
-                   name = tool_call.function.name, 
-                   arguments = str(tool_call.function.arguments),
-                   call_id = tool_call.id
-                   )
-    
+        return cls(
+            id=tool_call.id,
+            name=tool_call.function.name,
+            arguments=str(tool_call.function.arguments),
+            call_id=tool_call.id,
+        )
+
     def to_openai(self) -> Dict:
-        return {"id": self.id, 
-                "call_id": self.call_id,
-                "name": self.name, 
-                "arguments": self.arguments,
-                "type": "function_call",
-            }
-    
+        return {
+            "id": self.id,
+            "call_id": self.call_id,
+            "name": self.name,
+            "arguments": self.arguments,
+            "type": "function_call",
+        }
+
     def to_grok(self) -> Dict:
         return {
-            'function': {'arguments': self.arguments,
-                         'name': self.name,
-                        },
-                        'id': self.call_id,
-                        'type': 'function'
+            "function": {
+                "arguments": self.arguments,
+                "name": self.name,
+            },
+            "id": self.call_id,
+            "type": "function",
         }
-    
+
     def to_openai_old(self) -> Dict:
-        return {"id": self.id, 
-                "function": {
-                    "name": self.name, 
-                    "arguments": self.arguments,
-                },
-                "type": "function",
-            }
-    
+        return {
+            "id": self.id,
+            "function": {
+                "name": self.name,
+                "arguments": self.arguments,
+            },
+            "type": "function",
+        }
+
     def to_anthropic(self) -> Dict:
-        return {"id": self.id,
-                "name": self.name, 
-                "input": self.arguments,
-                "type": "tool_use",
-                }
+        return {
+            "id": self.id,
+            "name": self.name,
+            "input": self.arguments,
+            "type": "tool_use",
+        }
 
     def __str__(self):
         return f"Id: {self.id}; Function: {self.name}, Arguments: {self.arguments}"
 
+
 class FunctionResponse:
-    def __init__(self, 
-                 name: str, 
-                 response: Dict,
-                 id: str=None,
-                 call_id: str=None
-                 ):
+    def __init__(
+        self,
+        name: str,
+        response: Dict,
+        id: str = None,
+        call_id: str = None,
+    ):
         self.name = name
         self.id = id
-        self.call_id = call_id
-        if isinstance(response, dict):
-            self.response = response
-        else:
-            self.response = {"text": response}
+        self.call_id = id if call_id is None else call_id
+        self.response = response if isinstance(response, dict) else {"text": response}
         self.files = []
-
-        if call_id is None:
-            self.call_id = id
-        else:
-            self.call_id = call_id
 
         self._parse_response()
 
     def _parse_response(self):
-        if "files" in self.response:
-            assert isinstance(self.response["files"], list), "`files` must be a list"
-            """
-            Example `files` key in response_dict:
-                "files": [{
-                                        "type": "image",
-                                        "source": {
-                                            "type": "base64",
-                                            "format": "png",
-                                            "data": image as base64 string,
-                                        },
-                                    }],
-            """
-            for file in self.response["files"]:
-                assert "type" in file, "File must have a 'type' key"
-                if file["type"] == "image":
-                    assert "source" in file, "File must have a 'source' key"
-                    assert "type" in file["source"], "File source must have a 'type' key"
-                    assert "format" in file["source"], "File source must have a 'format' key"
-                    if file["source"]["type"] == "base64":
-                        assert "data" in file["source"], "File source must have a 'type' data"
-                        self.files.append(ImageFile.from_base64(base64_str=file["source"]["data"],
-                                                                file_name=f"image.{file['source']['format']}")
-                                        )
-            self.response.pop("files")
+        response_files = self.response.pop("files", None)
+        if response_files is None:
+            return
+
+        assert isinstance(response_files, list), "`files` must be a list"
+
+        for file in response_files:
+            assert "type" in file, "File must have a 'type' key"
+            if file["type"] != "image":
+                continue
+
+            assert "source" in file, "File must have a 'source' key"
+            source = file["source"]
+            assert "type" in source, "File source must have a 'type' key"
+            assert "format" in source, "File source must have a 'format' key"
+
+            if source["type"] == "base64":
+                assert "data" in source, "File source must have a 'type' data"
+                self.files.append(
+                    ImageFile.from_base64(
+                        base64_str=source["data"],
+                        file_name=f"image.{source['format']}",
+                    )
+                )
 
     def to_openai(self) -> Dict:
         if self.files:
             print("WARNING: Files are not supported in function responses for OpenAI")
         return {
-                "type":"function_call_output", 
-                "call_id": self.call_id, 
-                #"name": self.name, 
-                "output": json.dumps(self.response)
+            "type": "function_call_output",
+            "call_id": self.call_id,
+            "output": json.dumps(self.response),
         }
-    
+
     def to_openai_old(self) -> Dict:
-        return { "role": "tool",
-                "tool_call_id": self.call_id, 
-                "name": self.name, 
-                "content": json.dumps(self.response)
+        return {
+            "role": "tool",
+            "tool_call_id": self.call_id,
+            "name": self.name,
+            "content": json.dumps(self.response),
         }
-    
+
     def to_anthropic(self) -> Dict:
         output = {
             "type": "tool_result",
             "tool_use_id": self.id,
-            "content": [{"type": "text", 
-                         "text": json.dumps(self.response)}] 
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(self.response),
+                }
+            ],
         }
 
-        if self.files:
-            for file in self.files:
-                if isinstance(file, ImageFile):
-                    new_content_block = {
+        for file in self.files:
+            if isinstance(file, ImageFile):
+                output["content"].append(
+                    {
                         "type": "image",
                         "source": {
                             "type": "base64",
                             "media_type": f"image/{file.extension}",
                             "data": file.base64,
-                        }
+                        },
                     }
-                    output["content"].append(new_content_block)
+                )
+
         return output
 
     def __str__(self):
-        return f"Id: {self.id}; Call id: {self.call_id}; Function: {self.name}, Response: {json.dumps(self.response)}"
+        return (
+            f"Id: {self.id}; Call id: {self.call_id}; Function: {self.name}, "
+            f"Response: {json.dumps(self.response)}"
+        )
+
 
 class ThinkingResponse:
-    def __init__(self, 
-                 content: str,
-                 id: str=None,
-                 ):
+    def __init__(self, content: str, id: str = None):
         self.content = content
         self.id = id
 
     def to_openai(self) -> Dict:
-        return {"id": self.id, 
-                "summary": [{
+        return {
+            "id": self.id,
+            "summary": [
+                {
                     "type": "summary_text",
-                    "text": self.content
-                }], 
-                "type": "reasoning",
-            }
+                    "text": self.content,
+                }
+            ],
+            "type": "reasoning",
+        }
 
     def to_anthropic(self) -> Dict:
         return {
-                "type": "thinking",
-                "thinking": self.content,
-                "signature": self.id if self.id else "0", 
-            }
+            "type": "thinking",
+            "thinking": self.content,
+            "signature": self.id if self.id else "0",
+        }
 
     def __str__(self):
         return f"Id: {self.id}; Thinking: {self.content}"
 
+
 class Message:
-    def __init__(self, 
-                 role: str, 
-                 content: str, 
-                 thinking_responses: List[ThinkingResponse]=[],
-                 usage: Dict=None, 
-                 files: List[BaseFile] = [],
-                 function_calls: List[FunctionCall]=[],
-                 function_responses: List[FunctionResponse]=[],
-                 id=None,
-                 additional_responses: List[str]=[],
-                 ):
-        
-        assert role in ["user", "assistant", "function"] #the only possible roles
+    def __init__(
+        self,
+        role: str,
+        content: str,
+        thinking_responses: List[ThinkingResponse] | None = None,
+        usage: Dict | None = None,
+        files: List[BaseFile] | None = None,
+        function_calls: List[FunctionCall] | None = None,
+        function_responses: List[FunctionResponse] | None = None,
+        id=None,
+        additional_responses: List[str] | None = None,
+    ):
+        assert role in ["user", "assistant", "function"]
+
         self.role = role
         self.content = content
-        self.thinking_responses = thinking_responses
+        self.thinking_responses = [] if thinking_responses is None else thinking_responses
         self.timestamp = datetime.now()
-        self.files = files
+        self.files = [] if files is None else files
         self.usage = usage
-        self.function_calls = function_calls
-        self.function_responses = function_responses
+        self.function_calls = [] if function_calls is None else function_calls
+        self.function_responses = [] if function_responses is None else function_responses
         self.id = id
-        self.additional_responses = additional_responses
+        self.additional_responses = [] if additional_responses is None else additional_responses
 
     @property
     def text(self):
         return self.content
 
     def __str__(self):
-        return f"{self.role}: {self.content};" + \
-                "\n".join([str(thinking_response) for thinking_response in self.thinking_responses]) + "\n" + \
-                "\n".join([str(function_call) for function_call in self.function_calls]) + "\n\n" + \
-                "\n".join([str(function_response) for function_response in self.function_responses]) + \
-                "\n".join([str(additional_response) for additional_response in self.additional_responses])
+        return (
+            f"{self.role}: {self.content};"
+            + "\n".join(str(thinking_response) for thinking_response in self.thinking_responses)
+            + "\n"
+            + "\n".join(str(function_call) for function_call in self.function_calls)
+            + "\n\n"
+            + "\n".join(str(function_response) for function_response in self.function_responses)
+            + "\n".join(str(additional_response) for additional_response in self.additional_responses)
+        )
+
 
 class Conversation:
     def __init__(
@@ -243,288 +265,204 @@ class Conversation:
         messages: List[Message] | None = None,
         system_prompt: str | None = None,
     ):
-        """
-        Initializes a Conversation instance.
-
-        Parameters:
-        ----------
-        messages : List[Message], optional
-            A list of Message objects representing the conversation history. If not provided, 
-            an empty list is created by default.
-        
-        system_prompt : str, optional
-            A string representing the system prompt for the conversation. If not provided, it defaults to None.
-        
-        Attributes:
-        ----------
-        messages : List[Message]
-            Stores the messages of the conversation.
-        
-        model_config : ModelConfig
-            An instance of `ModelConfig` that manages model-specific configurations.
-        
-        system_prompt : str or None
-            The initial system prompt used in the conversation.
-        """
-
         self.messages = list(messages) if messages is not None else []
-        #self.model_config = ModelConfig()
         self.system_prompt = system_prompt
 
     def __str__(self):
-        return "\n".join([str(message) for message in self.messages])
+        return "\n".join(str(message) for message in self.messages)
 
     def clear(self):
         self.messages.clear()
 
-    @property
-    def usage_total(self) -> Dict:
-        total_usage = {
+    @staticmethod
+    def _empty_usage() -> Dict[str, int]:
+        return {
             "prompt_tokens": 0,
             "completion_tokens": 0,
-            "costs": 0
+            "costs": 0,
         }
+
+    @staticmethod
+    def _usage_value(message: Message, key: str) -> Any:
+        if not message.usage:
+            return 0
+
+        value = message.usage.get(key, 0)
+        return 0 if value is None else value
+
+    @property
+    def usage_total(self) -> Dict:
+        total_usage = self._empty_usage()
         for message in self.messages:
-            if message.usage:
-                prompt_tokens = message.usage.get("prompt_tokens", 0)
-                completion_tokens = message.usage.get("completion_tokens", 0)
-                costs = message.usage.get("costs", 0)
-                
-                total_usage["prompt_tokens"] += 0 if prompt_tokens is None else prompt_tokens
-                total_usage["completion_tokens"] += 0 if completion_tokens is None else completion_tokens
-                total_usage["costs"] += 0 if costs is None else costs
+            total_usage["prompt_tokens"] += self._usage_value(message, "prompt_tokens")
+            total_usage["completion_tokens"] += self._usage_value(message, "completion_tokens")
+            total_usage["costs"] += self._usage_value(message, "costs")
         return total_usage
 
     @property
     def usage_last(self) -> Dict:
         if self.messages and self.messages[-1].usage:
             return self.messages[-1].usage
-        return {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "costs": 0
-        }
-        
+        return self._empty_usage()
+
     @property
     def previous_response_id_for_openai(self):
-        assistant_messages = [message for message in self.messages if message.role == "assistant"]
-        if assistant_messages:
-            return assistant_messages[-1].id
-        else:
-            return None
-        
-    def save_to_json(self) -> Dict:
-        """
-        Serialize the conversation to a JSON-compatible dictionary.
-        
-        Returns:
-        -------
-        Dict
-            A dictionary representation of the conversation that can be serialized to JSON.
-        """
-        # Convert conversation to a serializable dictionary
-        data = {
-            'system_prompt': self.system_prompt,
-            'messages': []
-        }
-        
-        for message in self.messages:
-            message_data = {
-                'role': message.role,
-                'content': message.content,
-                'timestamp': message.timestamp.isoformat(),
-                'usage': message.usage,
-                'thinking_responses': [
-                    {'content': tr.content, 'id': tr.id}
-                    for tr in message.thinking_responses
-                ],
-                'function_calls': [
-                    {
-                        'id': fc.id,
-                        'name': fc.name,
-                        'arguments': fc.arguments
-                    }
-                    for fc in message.function_calls
-                ],
-                'function_responses': [
-                    {
-                        'name': fr.name,
-                        'id': fr.id,
-                        'response': fr.response,
-                        'files': self._serialize_files(fr.files)
-                    }
-                    for fr in message.function_responses
-                ],
-                'files': self._serialize_files(message.files)
-            }
-            data['messages'].append(message_data)
-        
-        return data
-        
-    def _serialize_files(self, files: List[BaseFile]) -> List[Dict]:
-        """
-        Helper method to serialize different types of files.
-        
-        Parameters:
-        ----------
-        files : List[BaseFile]
-            List of file objects to serialize
-            
-        Returns:
-        -------
-        List[Dict]
-            List of serialized file dictionaries
-        """
-        serialized_files = []
-        
-        for file in files:
-            file_data = {
-                'name': file.name,
-                'type': type(file).__name__
-            }
+        for message in reversed(self.messages):
+            if message.role == "assistant":
+                return message.id
+        return None
 
-            # Handle different file types
-            if isinstance(file, TextDocumentFile):
-                file_data['text'] = file.text
-                
-            elif isinstance(file, PDFDocumentFile):
-                file_data['base64'] = file.base64
-                file_data['text'] = file.text
-                file_data['number_of_pages'] = file.number_of_pages
-                
-            elif isinstance(file, ExcelDocumentFile):
-                file_data['base64'] = file.base64
-                file_data['text'] = file.text
-                
-            elif isinstance(file, ImageFile):
-                file_data['base64'] = file.base64
-                file_data['extension'] = file.extension
-                
-            elif isinstance(file, AudioFile):
-                file_data['base64'] = file.base64
-                file_data['extension'] = file.extension
-                
-            elif isinstance(file, VideoFile):
-                if hasattr(file, 'base64') and file.base64:
-                    file_data['base64'] = file.base64
-                file_data['extension'] = file.extension
-                
-            elif isinstance(file, MediaFile):
-                file_data['base64'] = file.base64
-                file_data['extension'] = file.extension
-            
-            serialized_files.append(file_data)
-            
-        return serialized_files
+    def save_to_json(self) -> Dict:
+        return {
+            "system_prompt": self.system_prompt,
+            "messages": [self._serialize_message(message) for message in self.messages],
+        }
 
     @classmethod
-    def read_from_json(cls, data:Dict) -> 'Conversation':
-        """
-        Read a conversation from a JSON-compatible dictionary.
-        
-        Parameters:
-        ----------
-        data : Dict
-            The dictionary containing the serialized conversation.
-            
-        Returns:
-        -------
-        Conversation
-            A new Conversation object loaded from the dictionary.
-        """
-        messages = []
-        for msg_data in data.get('messages', []):
-            # Restore files
-            files = cls._deserialize_files(msg_data.get('files', []))
-            
-            # Restore thinking responses
-            thinking_responses = [
-                ThinkingResponse(content=tr_data['content'], id=tr_data.get('id'))
-                for tr_data in msg_data.get('thinking_responses', [])
-            ]
-            
-            # Restore function calls
-            function_calls = [
-                FunctionCall(id=fc_data['id'], name=fc_data['name'], arguments=fc_data['arguments'])
-                for fc_data in msg_data.get('function_calls', [])
-            ]
-            
-            # Restore function responses
-            function_responses = []
-            for fr_data in msg_data.get('function_responses', []):
-                fr = FunctionResponse(name=fr_data['name'], response=fr_data['response'], id=fr_data.get('id'))
-                
-                # Restore files in function responses
-                fr.files = cls._deserialize_files(fr_data.get('files', []))
-                function_responses.append(fr)
-            
-            # Create message
-            message = Message(
-                role=msg_data['role'],
-                content=msg_data['content'],
-                thinking_responses=thinking_responses,
-                usage=msg_data.get('usage'),
-                files=files,
-                function_calls=function_calls,
-                function_responses=function_responses
+    def _serialize_message(cls, message: Message) -> Dict:
+        return {
+            "role": message.role,
+            "content": message.content,
+            "timestamp": message.timestamp.isoformat(),
+            "usage": message.usage,
+            "thinking_responses": [
+                {"content": thinking_response.content, "id": thinking_response.id}
+                for thinking_response in message.thinking_responses
+            ],
+            "function_calls": [
+                {
+                    "id": function_call.id,
+                    "name": function_call.name,
+                    "arguments": function_call.arguments,
+                }
+                for function_call in message.function_calls
+            ],
+            "function_responses": [
+                {
+                    "name": function_response.name,
+                    "id": function_response.id,
+                    "response": function_response.response,
+                    "files": cls._serialize_files(function_response.files),
+                }
+                for function_response in message.function_responses
+            ],
+            "files": cls._serialize_files(message.files),
+        }
+
+    @classmethod
+    def _serialize_files(cls, files: List[BaseFile]) -> List[Dict]:
+        return [cls._serialize_file(file) for file in files]
+
+    @staticmethod
+    def _serialize_file(file: BaseFile) -> Dict[str, Any]:
+        file_data = {
+            "name": file.name,
+            "type": type(file).__name__,
+        }
+
+        if isinstance(file, TextDocumentFile):
+            file_data["text"] = file.text
+        elif isinstance(file, PDFDocumentFile):
+            file_data["base64"] = file.base64
+            file_data["text"] = file.text
+            file_data["number_of_pages"] = file.number_of_pages
+        elif isinstance(file, ExcelDocumentFile):
+            file_data["base64"] = file.base64
+            file_data["text"] = file.text
+        elif isinstance(file, VideoFile):
+            if hasattr(file, "base64") and file.base64:
+                file_data["base64"] = file.base64
+            file_data["extension"] = file.extension
+        elif isinstance(file, (ImageFile, AudioFile, MediaFile)):
+            file_data["base64"] = file.base64
+            file_data["extension"] = file.extension
+
+        return file_data
+
+    @classmethod
+    def read_from_json(cls, data: Dict) -> "Conversation":
+        messages = [cls._deserialize_message(message_data) for message_data in data.get("messages", [])]
+        return cls(messages=messages, system_prompt=data.get("system_prompt"))
+
+    @classmethod
+    def _deserialize_message(cls, message_data: Dict) -> Message:
+        message = Message(
+            role=message_data["role"],
+            content=message_data["content"],
+            thinking_responses=[
+                ThinkingResponse(content=thinking_data["content"], id=thinking_data.get("id"))
+                for thinking_data in message_data.get("thinking_responses", [])
+            ],
+            usage=message_data.get("usage"),
+            files=cls._deserialize_files(message_data.get("files", [])),
+            function_calls=[
+                FunctionCall(
+                    id=function_call["id"],
+                    name=function_call["name"],
+                    arguments=function_call["arguments"],
+                )
+                for function_call in message_data.get("function_calls", [])
+            ],
+            function_responses=cls._deserialize_function_responses(
+                message_data.get("function_responses", [])
+            ),
+        )
+
+        if "timestamp" in message_data:
+            message.timestamp = datetime.fromisoformat(message_data["timestamp"])
+
+        return message
+
+    @classmethod
+    def _deserialize_function_responses(
+        cls,
+        function_response_data: List[Dict],
+    ) -> List[FunctionResponse]:
+        function_responses = []
+        for response_data in function_response_data:
+            function_response = FunctionResponse(
+                name=response_data["name"],
+                response=response_data["response"],
+                id=response_data.get("id"),
             )
-            
-            # Restore timestamp
-            if 'timestamp' in msg_data:
-                message.timestamp = datetime.fromisoformat(msg_data['timestamp'])
-            
-            messages.append(message)
-        
-        return cls(messages=messages, system_prompt=data.get('system_prompt'))
-        
+            function_response.files = cls._deserialize_files(response_data.get("files", []))
+            function_responses.append(function_response)
+        return function_responses
+
     @classmethod
     def _deserialize_files(cls, file_data_list: List[Dict]) -> List[BaseFile]:
-        """
-        Helper method to deserialize different types of files.
-        
-        Parameters:
-        ----------
-        file_data_list : List[Dict]
-            List of serialized file dictionaries
-            
-        Returns:
-        -------
-        List[BaseFile]
-            List of reconstructed file objects
-        """
         files = []
-        
         for file_data in file_data_list:
-            if 'type' not in file_data or 'name' not in file_data:
-                continue
-                
-            file_type = file_data['type']
-            file_name = file_data['name']
-            
-            if file_type == 'TextDocumentFile' and 'text' in file_data:
-                files.append(TextDocumentFile(text=file_data['text'], name=file_name))
-                
-            elif file_type == 'ImageFile' and file_data.get('base64'):
-                files.append(ImageFile.from_base64(file_data['base64'], file_name))
-                
-            elif file_type == 'PDFDocumentFile' and file_data.get('base64'):
-                pdf_bytes = base64.b64decode(file_data['base64'])
-                files.append(PDFDocumentFile.from_bytes(pdf_bytes, file_name))
-                
-            elif file_type == 'AudioFile' and file_data.get('base64'):
-                audio_bytes = base64.b64decode(file_data['base64'])
-                files.append(AudioFile.from_bytes(audio_bytes, file_name))
-                
-            elif file_type == 'ExcelDocumentFile' and file_data.get('base64'):
-                excel_bytes = base64.b64decode(file_data['base64'])
-                files.append(ExcelDocumentFile.from_bytes(excel_bytes, file_name))
-                
-            elif file_type == 'VideoFile' and file_data.get('base64'):
-                video_bytes = base64.b64decode(file_data['base64'])
-                files.append(MediaFile.from_bytes(video_bytes, file_name))
-                
-            elif file_type == 'MediaFile' and file_data.get('base64'):
-                media_bytes = base64.b64decode(file_data['base64'])
-                files.append(MediaFile.from_bytes(media_bytes, file_name))
-                
+            file = cls._deserialize_file(file_data)
+            if file is not None:
+                files.append(file)
         return files
+
+    @staticmethod
+    def _decode_base64_file(file_data: Dict) -> bytes:
+        return base64.b64decode(file_data["base64"])
+
+    @classmethod
+    def _deserialize_file(cls, file_data: Dict) -> BaseFile | None:
+        if "type" not in file_data or "name" not in file_data:
+            return None
+
+        file_type = file_data["type"]
+        file_name = file_data["name"]
+
+        if file_type == "TextDocumentFile" and "text" in file_data:
+            return TextDocumentFile(text=file_data["text"], name=file_name)
+        if file_type == "ImageFile" and file_data.get("base64"):
+            return ImageFile.from_base64(file_data["base64"], file_name)
+        if file_type == "PDFDocumentFile" and file_data.get("base64"):
+            return PDFDocumentFile.from_bytes(cls._decode_base64_file(file_data), file_name)
+        if file_type == "AudioFile" and file_data.get("base64"):
+            return AudioFile.from_bytes(cls._decode_base64_file(file_data), file_name)
+        if file_type == "ExcelDocumentFile" and file_data.get("base64"):
+            return ExcelDocumentFile.from_bytes(cls._decode_base64_file(file_data), file_name)
+        if file_type == "VideoFile" and file_data.get("base64"):
+            return MediaFile.from_bytes(cls._decode_base64_file(file_data), file_name)
+        if file_type == "MediaFile" and file_data.get("base64"):
+            return MediaFile.from_bytes(cls._decode_base64_file(file_data), file_name)
+
+        return None

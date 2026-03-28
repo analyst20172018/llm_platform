@@ -1,9 +1,10 @@
 import copy
 from abc import ABC, abstractmethod
-from typing import ClassVar, Literal, Dict, Any
-from pydantic import BaseModel, Field
-import subprocess
+from typing import Any, Dict, Literal
+
+from pydantic import BaseModel
 from xai_sdk.chat import tool
+
 
 class BaseTool(ABC):
     """Abstract base class for tools."""
@@ -22,59 +23,41 @@ class BaseTool(ABC):
         return self.__class__.__name__
 
     @classmethod
-    def _convert_type_names(cls, type_name: str) -> str:
-        type_names_convertor = {
-            "str": "string",
-            "int": "integer",
-            "float": "number",
-            "bool": "boolean",
-            "list": "array",
-            "dict": "object",
-        }
-
-        return type_names_convertor.get(type_name, type_name)
-
-    @classmethod
     def clean_schema(cls, data: Any) -> Any:
-        """
-        Recursively remove any "title" keys and any "required": true
-        entries from the schema.
-        """
-        if isinstance(data, dict):
-            # Remove the "title" key if it exists
-            data.pop("title", None)
+        """Recursively remove unsupported metadata from provider schemas."""
+        if isinstance(data, list):
+            return [cls.clean_schema(item) for item in data]
 
-            # Remove the "required": true from individual properties
-            # (but do NOT remove the top-level "required" array if present)
-            if "properties" in data:
-                for prop_name, prop_data in data["properties"].items():
-                    prop_data.pop("required", None)  # removes "required": true
-                    prop_data.pop("title", None)     # removes any "title" in each property
-                    # Recursively clean nested dictionaries or lists under each property
-                    cls.clean_schema(prop_data)
+        if not isinstance(data, dict):
+            return data
 
-                # Keep required entries aligned with the remaining property names.
-                # The "properties" dict is a field-name map, so its keys are real names
-                # (e.g. a field literally named "title"), not schema metadata.
-                if isinstance(data.get("required"), list):
-                    property_names = set(data["properties"].keys())
-                    data["required"] = [
-                        name for name in data["required"] if name in property_names
-                    ]
+        cleaned = dict(data)
+        cleaned.pop("title", None)
 
-            # Recursively clean other nested objects
-            for key, value in list(data.items()):
-                if key == "properties":
-                    continue
-                if isinstance(value, (dict, list)):
-                    data[key] = cls.clean_schema(value)
+        properties = cleaned.get("properties")
+        if isinstance(properties, dict):
+            cleaned_properties = {}
+            for property_name, property_data in properties.items():
+                if isinstance(property_data, dict):
+                    property_data = dict(property_data)
+                    property_data.pop("required", None)
+                    property_data.pop("title", None)
+                cleaned_properties[property_name] = cls.clean_schema(property_data)
+            cleaned["properties"] = cleaned_properties
 
-        elif isinstance(data, list):
-            # Clean each item in the list
-            for i in range(len(data)):
-                data[i] = cls.clean_schema(data[i])
+            if isinstance(cleaned.get("required"), list):
+                property_names = set(cleaned_properties.keys())
+                cleaned["required"] = [
+                    name for name in cleaned["required"] if name in property_names
+                ]
 
-        return data
+        for key, value in list(cleaned.items()):
+            if key == "properties":
+                continue
+            if isinstance(value, (dict, list)):
+                cleaned[key] = cls.clean_schema(value)
+
+        return cleaned
 
     @classmethod
     def resolve_schema_for_google(cls, schema: Dict) -> Dict:
@@ -83,14 +66,9 @@ class BaseTool(ABC):
 
         Gemini does not support $ref/$defs, anyOf, exclusiveMinimum,
         exclusiveMaximum, or additionalProperties.
-        This method:
-          - Inlines all $ref references (recursively)
-          - Drops the $defs section
-          - Flattens anyOf: [T, {type: null}] to just T (preserving description/default)
-          - Removes exclusiveMinimum / exclusiveMaximum / additionalProperties keywords
         """
         schema = copy.deepcopy(schema)
-        defs = schema.pop("$defs", {})
+        definitions = schema.pop("$defs", {})
 
         def resolve(node: Any) -> Any:
             if isinstance(node, list):
@@ -98,29 +76,31 @@ class BaseTool(ABC):
             if not isinstance(node, dict):
                 return node
 
-            # Inline $ref
             if "$ref" in node:
-                ref_key = node["$ref"].split("/")[-1]
-                return resolve(copy.deepcopy(defs.get(ref_key, {})))
+                reference_key = node["$ref"].split("/")[-1]
+                return resolve(copy.deepcopy(definitions.get(reference_key, {})))
 
-            # Flatten Optional[T]: anyOf: [T, {type: "null"}]
             if "anyOf" in node:
-                non_null = [x for x in node["anyOf"] if x != {"type": "null"}]
-                if len(non_null) == 1:
-                    resolved = resolve(non_null[0])
-                    resolved = dict(resolved)
+                non_null_variants = [
+                    item for item in node["anyOf"] if item != {"type": "null"}
+                ]
+                if len(non_null_variants) == 1:
+                    resolved = dict(resolve(non_null_variants[0]))
                     for key in ("description", "default"):
                         if key in node and key not in resolved:
                             resolved[key] = node[key]
                     return resolved
 
-            # Recurse, dropping unsupported keywords
             result = {}
-            for k, v in node.items():
-                if k in ("$defs", "exclusiveMinimum", "exclusiveMaximum",
-                         "additionalProperties"):
+            for key, value in node.items():
+                if key in (
+                    "$defs",
+                    "exclusiveMinimum",
+                    "exclusiveMaximum",
+                    "additionalProperties",
+                ):
                     continue
-                result[k] = resolve(v)
+                result[key] = resolve(value)
             return result
 
         return resolve(schema)
@@ -130,31 +110,36 @@ class BaseTool(ABC):
         input_model = cls.InputModel
         if not issubclass(input_model, BaseModel):
             raise ValueError("InputModel must be a Pydantic BaseModel")
+
         schema = input_model.model_json_schema()
-        if provider == 'openai':
+        cleaned_schema = cls.clean_schema(schema)
+
+        if provider == "openai":
             return {
-                'name': cls.__name__,
-                'description': cls.__doc__,
-                'parameters': cls.clean_schema(schema)
+                "name": cls.__name__,
+                "description": cls.__doc__,
+                "parameters": cleaned_schema,
             }
-        elif provider == 'google':
+
+        if provider == "google":
             return {
                 "name": cls.__name__,
                 "description": cls.__doc__,
                 "parameters": cls.clean_schema(cls.resolve_schema_for_google(schema)),
             }
-        elif provider == 'anthropic':
+
+        if provider == "anthropic":
             return {
-                'name': cls.__name__,
-                'description': cls.__doc__,
-                'input_schema': cls.clean_schema(schema)
+                "name": cls.__name__,
+                "description": cls.__doc__,
+                "input_schema": cleaned_schema,
             }
-        elif provider == 'grok':
+
+        if provider == "grok":
             return tool(
-                name = cls.__name__,
-                description = cls.__doc__,
-                parameters=cls.clean_schema(schema),
+                name=cls.__name__,
+                description=cls.__doc__,
+                parameters=cleaned_schema,
             )
-        else:
-            raise NotImplementedError
-        
+
+        raise NotImplementedError

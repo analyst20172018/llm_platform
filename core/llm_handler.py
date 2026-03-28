@@ -1,25 +1,43 @@
-from llm_platform.adapters.openai_adapter import OpenAIAdapter
-from llm_platform.adapters.openai_image_adapter import OpenAIImageAdapter
-from llm_platform.adapters.openai_old_adapter import OpenAIOldAdapter
+import os
+from typing import Any, BinaryIO, Callable, Dict, List, Union
+
+import tiktoken
+from loguru import logger
+
 from llm_platform.adapters.anthropic_adapter import AnthropicAdapter
-from llm_platform.adapters.openrouter_adapter import OpenRouterAdapter
-from llm_platform.adapters.speechmatics_adapter import SpeechmaticsAdapter
 from llm_platform.adapters.assemblyai_adapter import AssemblyAIAdapter
+from llm_platform.adapters.deepseek_adapter import DeepSeekAdapter
+from llm_platform.adapters.elevenlabs_adapter import ElevenLabsAdapter
 from llm_platform.adapters.google_adapter import GoogleAdapter
 from llm_platform.adapters.grok_adapter import GrokAdapter
 from llm_platform.adapters.grok_image_adapter import GrokImageAdapter
-from llm_platform.adapters.deepseek_adapter import DeepSeekAdapter
-from llm_platform.adapters.elevenlabs_adapter import ElevenLabsAdapter
 from llm_platform.adapters.mistral_adapter import MistralAdapter
-from llm_platform.services.conversation import Conversation, Message
-from llm_platform.services.files import BaseFile, DocumentFile, TextDocumentFile, PDFDocumentFile, ExcelDocumentFile, MediaFile, ImageFile, AudioFile, VideoFile
-from llm_platform.tools.base import BaseTool
+from llm_platform.adapters.openai_adapter import OpenAIAdapter
+from llm_platform.adapters.openai_image_adapter import OpenAIImageAdapter
+from llm_platform.adapters.openai_old_adapter import OpenAIOldAdapter
+from llm_platform.adapters.openrouter_adapter import OpenRouterAdapter
+from llm_platform.adapters.speechmatics_adapter import SpeechmaticsAdapter
 from llm_platform.helpers.model_config import ModelConfig
+from llm_platform.services.conversation import Conversation, Message
+from llm_platform.services.files import BaseFile, ImageFile, PDFDocumentFile
+from llm_platform.tools.base import BaseTool
 from llm_platform.types import AdditionalParameters
-from loguru import logger
-import tiktoken
-import os
-from typing import Any, BinaryIO, Callable, Dict, List, Tuple, Union
+
+ADAPTER_CLASSES = {
+    "OpenAIAdapter": OpenAIAdapter,
+    "OpenAIImageAdapter": OpenAIImageAdapter,
+    "AnthropicAdapter": AnthropicAdapter,
+    "OpenRouterAdapter": OpenRouterAdapter,
+    "SpeechmaticsAdapter": SpeechmaticsAdapter,
+    "ElevenLabsAdapter": ElevenLabsAdapter,
+    "AssemblyAIAdapter": AssemblyAIAdapter,
+    "GoogleAdapter": GoogleAdapter,
+    "GrokAdapter": GrokAdapter,
+    "GrokImageAdapter": GrokImageAdapter,
+    "DeepSeekAdapter": DeepSeekAdapter,
+    "MistralAdapter": MistralAdapter,
+    "OpenAIOldAdapter": OpenAIOldAdapter,
+}
 
 class APIHandler:
     """
@@ -87,21 +105,7 @@ class APIHandler:
             ValueError: If the specified adapter is not supported.
         """
         if adapter_name not in self.adapters:
-            adapter_class = {
-                "OpenAIAdapter": OpenAIAdapter,
-                "OpenAIImageAdapter": OpenAIImageAdapter,
-                "AnthropicAdapter": AnthropicAdapter,
-                "OpenRouterAdapter": OpenRouterAdapter,
-                "SpeechmaticsAdapter": SpeechmaticsAdapter,
-                "ElevenLabsAdapter": ElevenLabsAdapter,
-                "AssemblyAIAdapter": AssemblyAIAdapter,
-                "GoogleAdapter": GoogleAdapter,
-                "GrokAdapter": GrokAdapter,
-                "GrokImageAdapter": GrokImageAdapter,
-                "DeepSeekAdapter": DeepSeekAdapter,
-                "MistralAdapter": MistralAdapter,
-                "OpenAIOldAdapter": OpenAIOldAdapter,
-            }.get(adapter_name)
+            adapter_class = ADAPTER_CLASSES.get(adapter_name)
 
             if adapter_class is None:
                 raise ValueError(f"Adapter {adapter_name} is not supported")
@@ -151,37 +155,17 @@ class APIHandler:
         allowed.update({"response_modalities"})
         return allowed
 
-    def _prepare_additional_parameters(
-        self,
-        model: str,
+    @staticmethod
+    def _request_root_key(request_key: str | None) -> str | None:
+        if not request_key:
+            return None
+        return str(request_key).split(".")[0]
+
+    @staticmethod
+    def _merge_additional_parameters(
         additional_parameters: AdditionalParameters | None,
-        **kwargs,
-    ) -> Dict:
-        """
-            - It takes whatever the caller passed in additional_parameters and merges in any deprecated **kwargs (with a warning).
-            - It looks up the model in models_config.yaml and applies defaults for that model’s extra parameters (only when send_default is true), including max_tokens.
-            - It remaps “friendly” parameter names into nested provider formats using request_key (e.g. reasoning_effort → reasoning.effort, max_tokens → max_output_tokens), and drops empty values while doing so.
-            - It removes parameters marked include_in_request: false.
-            - It filters out anything the model doesn’t support, logging a warning for each unsupported key.
-
-            Concrete example
-                If a model defines:
-
-                reasoning_effort:
-                    type: enum
-                    default: none
-                    request_key: reasoning.effort
-
-                and you pass:
-
-                additional_parameters={"reasoning_effort": "high"}
-
-                _prepare_additional_parameters will turn that into:
-
-                {"reasoning": {"effort": "high"}}
-
-                and only send it if the model allows it.
-        """
+        kwargs: Dict[str, Any],
+    ) -> Dict[str, Any]:
         merged: Dict[str, Any] = {}
         if additional_parameters:
             merged.update(additional_parameters)
@@ -191,55 +175,99 @@ class APIHandler:
             for key, value in kwargs.items():
                 merged.setdefault(key, value)
 
-        model_object = self.model_config[model] if model else None
-        if model_object:
-            for name, definition in model_object.parameter_definitions().items():
-                if not definition.get("send_default", True):
-                    continue
-                if name in merged:
-                    continue
-                request_key = definition.get("request_key")
-                if request_key:
-                    root_key = str(request_key).split(".")[0]
-                    if root_key in merged:
-                        continue
-                if "default" in definition and definition["default"] is not None:
-                    merged[name] = definition["default"]
-
-            for name, definition in model_object.parameter_definitions().items():
-                request_key = definition.get("request_key")
-                if request_key and name in merged:
-                    value = merged.pop(name)
-                    if value is None or value == "":
-                        continue
-                    self._set_nested_parameter(merged, request_key, value)
-
-            for name, definition in model_object.parameter_definitions().items():
-                if not definition.get("include_in_request", True):
-                    merged.pop(name, None)
-
-            allowed = self._allowed_parameter_keys(model_object)
-            if allowed:
-                filtered: Dict[str, Any] = {}
-                for key, value in merged.items():
-                    if key in allowed:
-                        filtered[key] = value
-                    else:
-                        logger.warning(
-                            f"Model {model} does not support parameter '{key}'. Ignoring the parameter."
-                        )
-                merged = filtered
-
         return merged
 
-    def request(self, 
-                model: str, 
-                prompt: str, 
-                functions: Union[List[BaseTool], List[Callable]] = None, 
-                files: List[BaseFile]=[],
-                tool_output_callback: Callable=None,
-                additional_parameters: AdditionalParameters | None = None,
-                **kwargs) -> str:
+    def _apply_parameter_defaults(self, merged: Dict[str, Any], model_object: Any) -> None:
+        for name, definition in model_object.parameter_definitions().items():
+            if not definition.get("send_default", True):
+                continue
+            if name in merged:
+                continue
+
+            root_key = self._request_root_key(definition.get("request_key"))
+            if root_key and root_key in merged:
+                continue
+
+            default_value = definition.get("default")
+            if default_value is not None:
+                merged[name] = default_value
+
+    def _apply_request_key_mappings(self, merged: Dict[str, Any], model_object: Any) -> None:
+        for name, definition in model_object.parameter_definitions().items():
+            request_key = definition.get("request_key")
+            if not request_key or name not in merged:
+                continue
+
+            value = merged.pop(name)
+            if value is None or value == "":
+                continue
+
+            self._set_nested_parameter(merged, request_key, value)
+
+    @staticmethod
+    def _remove_excluded_parameters(merged: Dict[str, Any], model_object: Any) -> None:
+        for name, definition in model_object.parameter_definitions().items():
+            if not definition.get("include_in_request", True):
+                merged.pop(name, None)
+
+    def _filter_allowed_parameters(
+        self,
+        model: str,
+        merged: Dict[str, Any],
+        model_object: Any,
+    ) -> Dict[str, Any]:
+        allowed = self._allowed_parameter_keys(model_object)
+        if not allowed:
+            return merged
+
+        filtered: Dict[str, Any] = {}
+        for key, value in merged.items():
+            if key in allowed:
+                filtered[key] = value
+            else:
+                logger.warning(
+                    f"Model {model} does not support parameter '{key}'. Ignoring the parameter."
+                )
+        return filtered
+
+    def _append_user_message(self, prompt: str, files: List[BaseFile] | None) -> None:
+        self.the_conversation.messages.append(
+            Message(
+                role="user",
+                content=prompt,
+                usage=None,
+                files=[] if files is None else files,
+            )
+        )
+
+    def _prepare_additional_parameters(
+        self,
+        model: str,
+        additional_parameters: AdditionalParameters | None,
+        **kwargs,
+    ) -> Dict:
+        """Normalize request parameters against the selected model definition."""
+        merged = self._merge_additional_parameters(additional_parameters, kwargs)
+
+        model_object = self.model_config[model] if model else None
+        if not model_object:
+            return merged
+
+        self._apply_parameter_defaults(merged, model_object)
+        self._apply_request_key_mappings(merged, model_object)
+        self._remove_excluded_parameters(merged, model_object)
+        return self._filter_allowed_parameters(model, merged, model_object)
+
+    def request(
+        self,
+        model: str,
+        prompt: str,
+        functions: Union[List[BaseTool], List[Callable]] = None,
+        files: List[BaseFile] | None = None,
+        tool_output_callback: Callable = None,
+        additional_parameters: AdditionalParameters | None = None,
+        **kwargs,
+    ) -> str:
         """
             Send a single prompt to a language model and receive the assistant’s answer.
 
@@ -315,12 +343,7 @@ class APIHandler:
             conversational context to the model until ``Conversation.clear()`` is
             invoked.
             """
-        # Add prompt to the conversation
-        message = Message(role="user", 
-                          content=prompt, 
-                          usage=None, 
-                          files=files)
-        self.the_conversation.messages.append(message)
+        self._append_user_message(prompt, files)
 
         normalized_parameters = self._prepare_additional_parameters(
             model,
@@ -335,14 +358,16 @@ class APIHandler:
             additional_parameters=normalized_parameters,
         )
         
-    async def request_async(self, 
-                model: str, 
-                prompt: str, 
-                functions: Union[List[BaseTool], List[Callable]] = None, 
-                files: List[BaseFile]=[],
-                tool_output_callback: Callable=None,
-                additional_parameters: AdditionalParameters | None = None,
-                **kwargs) -> str:
+    async def request_async(
+        self,
+        model: str,
+        prompt: str,
+        functions: Union[List[BaseTool], List[Callable]] = None,
+        files: List[BaseFile] | None = None,
+        tool_output_callback: Callable = None,
+        additional_parameters: AdditionalParameters | None = None,
+        **kwargs,
+    ) -> str:
         """
         Make a request to the language model.
 
@@ -358,12 +383,7 @@ class APIHandler:
         if not prompt:
             raise ValueError("Prompt cannot be empty")
         
-        # Add prompt to the conversation
-        message = Message(role="user", 
-                          content=prompt, 
-                          usage=None, 
-                          files=files)
-        self.the_conversation.messages.append(message)
+        self._append_user_message(prompt, files)
 
         normalized_parameters = self._prepare_additional_parameters(
             model,
@@ -493,7 +513,7 @@ class APIHandler:
         )
         return response
 
-    @staticmethod 
+    @staticmethod
     def calculate_tokens(text) -> Dict[str, int]:
         """
         Calculate the number of tokens in the given text.
@@ -506,45 +526,44 @@ class APIHandler:
         """
         encoding = tiktoken.get_encoding("cl100k_base")
         num_tokens = len(encoding.encode(text))
-        return {'bytes': len(text),
-                  'tokens': num_tokens}
+        return {"bytes": len(text), "tokens": num_tokens}
     
-    def voice_to_text(self, audio_file: BinaryIO, audio_format: str, provider: str='openai', **kwargs):
-        assert provider in ['openai', 'speechmatics', 'elevenlabs'], f"Provider {provider} is not supported. I understand only 'openai' or 'speechmatics' or 'elevenlabs' as providers."
-        
-        if provider.lower() == 'openai':
-            adapter =  self._lazy_initialization_of_adapter('OpenAIAdapter')
-            response_format = kwargs.get('response_format', 'text') 
-            language = kwargs.get('language', 'en')
-            model = kwargs.get('model', 'whisper-1')
-            transcript = adapter.voice_to_text(audio_file, response_format, language, model=model)
-            return transcript
-        
-        elif provider.lower() == 'speechmatics':
-            adapter =  self._lazy_initialization_of_adapter('SpeechmaticsAdapter')
-            language = kwargs.get('language', 'en')
-            transcription_config = kwargs.get('transcription_config', None)
-            transcript = adapter.voice_to_text(('audio_file.'+audio_format, audio_file), language, transcription_config)
-            return transcript
-        
-        elif provider.lower() == 'elevenlabs':
-            adapter =  self._lazy_initialization_of_adapter('ElevenLabsAdapter')
-            language = kwargs.get('language', 'eng')
-            diarized = kwargs.get('diarized', True)
-            transcript = adapter.voice_to_text(audio_file, audio_format, language, diarized)
-            return transcript
-        
-        else: 
-            raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'speechmatics' as providers. ")
+    def voice_to_text(self, audio_file: BinaryIO, audio_format: str, provider: str = 'openai', **kwargs):
+        normalized_provider = provider.lower()
+        supported_providers = ["openai", "speechmatics", "elevenlabs"]
+        assert normalized_provider in supported_providers, (
+            f"Provider {provider} is not supported. "
+            "I understand only 'openai' or 'speechmatics' or 'elevenlabs' as providers."
+        )
 
-    def voice_file_to_text(self, audio_file_name: str, provider: str='openai', **kwargs):
-        # Get file type
-        filename, file_extension = os.path.splitext(audio_file_name)
+        if normalized_provider == "openai":
+            adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
+            response_format = kwargs.get("response_format", "text")
+            language = kwargs.get("language", "en")
+            model = kwargs.get("model", "whisper-1")
+            return adapter.voice_to_text(audio_file, response_format, language, model=model)
+
+        if normalized_provider == "speechmatics":
+            adapter = self._lazy_initialization_of_adapter("SpeechmaticsAdapter")
+            language = kwargs.get("language", "en")
+            transcription_config = kwargs.get("transcription_config")
+            return adapter.voice_to_text(
+                (f"audio_file.{audio_format}", audio_file),
+                language,
+                transcription_config,
+            )
+
+        adapter = self._lazy_initialization_of_adapter("ElevenLabsAdapter")
+        language = kwargs.get("language", "eng")
+        diarized = kwargs.get("diarized", True)
+        return adapter.voice_to_text(audio_file, audio_format, language, diarized)
+
+    def voice_file_to_text(self, audio_file_name: str, provider: str = 'openai', **kwargs):
+        _, file_extension = os.path.splitext(audio_file_name)
         file_extension = file_extension.lower().replace(".", "")
 
         with open(audio_file_name, 'rb') as audio_file:
-            transcript = self.voice_to_text(audio_file, file_extension, provider, **kwargs)
-            return transcript
+            return self.voice_to_text(audio_file, file_extension, provider, **kwargs)
 
     def generate_image(self, prompt: str, provider: str='openai', n=1, **kwargs):
         """
@@ -583,20 +602,17 @@ class APIHandler:
         Raises:
             ValueError: If the specified provider is not supported.
         """
-        if provider.lower() == 'openai':
+        normalized_provider = provider.lower()
+        if normalized_provider == 'openai':
             adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
-            image_url = adapter.generate_image(prompt, n, **kwargs)
-            return image_url
-        elif provider.lower() == 'google':
+            return adapter.generate_image(prompt, n, **kwargs)
+        if normalized_provider == 'google':
             adapter = self._lazy_initialization_of_adapter("GoogleAdapter")
-            images = adapter.generate_image(prompt, n, **kwargs)
-            return images
-        elif provider.lower() == 'grok':
+            return adapter.generate_image(prompt, n, **kwargs)
+        if normalized_provider == 'grok':
             adapter = self._lazy_initialization_of_adapter("GrokAdapter")
-            images = adapter.generate_image(prompt, n, **kwargs) # returns List[ImageFile]
-            return images
-        else: 
-            raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'google' as providers. ")
+            return adapter.generate_image(prompt, n, **kwargs)
+        raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'google' as providers. ")
         
     async def generate_video(self, prompt: str, provider: str='google', **kwargs):
         """
@@ -619,16 +635,14 @@ class APIHandler:
         Raises:
             ValueError: If the specified provider is not supported.
         """
-        if provider.lower() == 'google':
+        normalized_provider = provider.lower()
+        if normalized_provider == 'google':
             adapter = self._lazy_initialization_of_adapter("GoogleAdapter")
-            videos = adapter.generate_video(prompt, **kwargs)
-            return videos
-        elif provider.lower() == 'openai':
+            return adapter.generate_video(prompt, **kwargs)
+        if normalized_provider == 'openai':
             adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
-            videos = await adapter.generate_video(prompt, **kwargs)
-            return videos
-        else: 
-            raise ValueError(f"Provider {provider} is not supported. I understand only 'google' as provider.")
+            return await adapter.generate_video(prompt, **kwargs)
+        raise ValueError(f"Provider {provider} is not supported. I understand only 'google' as provider.")
         
     def edit_image(self, prompt: str, provider: str='openai', images=List[ImageFile], n=1, **kwargs):
         """
@@ -652,14 +666,8 @@ class APIHandler:
         """
         if provider.lower() == 'openai':
             adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
-            image_url = adapter.edit_image(prompt, images, n, **kwargs)
-            return image_url
-        else: 
-            raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' as providers. ")
+            return adapter.edit_image(prompt, images, n, **kwargs)
+        raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' as providers. ")
 
     def get_models(self, adapter_name: str) -> List[str]:
-
-        adapter = self._lazy_initialization_of_adapter(adapter_name)
-
-        models = adapter.get_models()
-        return models
+        return self._lazy_initialization_of_adapter(adapter_name).get_models()

@@ -23,6 +23,7 @@ class AdditionalParameters(TypedDict, total=False):
     max_tokens: int  # hard cap on response tokens
     reasoning: ReasoningParameters  # reasoning/effort tuning
     text: TextParameters  # text verbosity tuning
+    agent_count: int # parameter for Grok Multi Agent model
     # Parameters for Elevenlabs STT
     language: str  # STT language code (e.g. "en")
     diarized: bool  # STT diarization on/off
