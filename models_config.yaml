@@ -300,6 +300,94 @@ models:
       function_calling: *param_function_calling
     visible: false
 
+  - name: gpt-4o-transcribe
+    display_name: GPT-4o Transcribe
+    adapter: OpenAIAdapter
+    pricing:
+      input: 6 # USD/1M audio input tokens
+      output: 10 # USD/1M output tokens
+    context_window: 16_000
+    inputs:
+      - audio
+    outputs:
+      - text
+    additional_parameters:
+      response_format:
+        type: enum
+        options: [json]
+        default: json
+        ui: hidden
+        label: Response Format
+      language:
+        type: string
+        default: en
+        ui: input
+        label: Language
+      transcription_prompt:
+        type: string
+        default: null
+        ui: input
+        label: Transcription Prompt
+        request_key: prompt
+      include_logprobs:
+        type: boolean
+        default: false
+        ui: toggle
+        label: Include Logprobs
+      temperature:
+        type: float
+        default: null
+        ui: input
+        label: Temperature
+    background_mode: true
+    visible: true
+
+  - name: gpt-4o-transcribe-diarize
+    display_name: GPT-4o Transcribe Diarize
+    adapter: OpenAIAdapter
+    pricing:
+      input: 6 # USD/1M audio input tokens
+      output: 10 # USD/1M output tokens
+    context_window: 16_000
+    inputs:
+      - audio
+    outputs:
+      - text
+    additional_parameters:
+      response_format:
+        type: enum
+        options: [diarized_json, json, text]
+        default: diarized_json
+        ui: select
+        label: Response Format
+      language:
+        type: string
+        default: en
+        ui: input
+        label: Language
+      chunking_strategy:
+        type: string
+        default: auto
+        ui: input
+        label: Chunking Strategy
+      known_speaker_names:
+        type: array
+        default: null
+        ui: input
+        label: Known Speaker Names
+      known_speaker_references:
+        type: array
+        default: null
+        ui: input
+        label: Known Speaker References
+      temperature:
+        type: float
+        default: null
+        ui: input
+        label: Temperature
+    background_mode: true
+    visible: true
+
   - name: o3-deep-research
     display_name: o3-deep-research 💰
     adapter: OpenAIAdapter

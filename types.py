@@ -12,6 +12,7 @@ class TextParameters(TypedDict, total=False):
 
 class AdditionalParameters(TypedDict, total=False):
     response_modalities: List[str]  # e.g. ["text", "image", "audio"]
+    response_format: str  # output format for STT or other endpoint-specific responses
     web_search: bool  # allow integrated web search when supported
     url_context: bool  # enable URL context tool (Gemini)
     code_execution: bool  # allow code execution tool when supported
@@ -29,6 +30,11 @@ class AdditionalParameters(TypedDict, total=False):
     diarized: bool  # STT diarization on/off
     tag_audio_events: bool  # STT audio event tagging
     num_speakers: int  # STT speaker count hint
+    transcription_prompt: str  # OpenAI STT prompt passed to the transcription endpoint
+    include_logprobs: bool  # OpenAI STT logprobs include switch
+    chunking_strategy: Any  # OpenAI STT chunking strategy ("auto" or a VAD config object)
+    known_speaker_names: List[str]  # OpenAI diarization speaker labels
+    known_speaker_references: List[str]  # OpenAI diarization data URLs for speaker references
     # Parameters for OpenAI image models
     size: str  # image size (OpenAI image models)
     background: str  # image background (OpenAI image models)

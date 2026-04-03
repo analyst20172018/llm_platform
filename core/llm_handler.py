@@ -538,10 +538,22 @@ class APIHandler:
 
         if normalized_provider == "openai":
             adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
-            response_format = kwargs.get("response_format", "text")
-            language = kwargs.get("language", "en")
-            model = kwargs.get("model", "whisper-1")
-            return adapter.voice_to_text(audio_file, response_format, language, model=model)
+            openai_kwargs = dict(kwargs)
+            model = openai_kwargs.pop("model", "whisper-1")
+            language = openai_kwargs.pop("language", "en")
+            default_response_format = "text"
+            if model in {"gpt-4o-transcribe", "gpt-4o-mini-transcribe"}:
+                default_response_format = "json"
+            elif model == "gpt-4o-transcribe-diarize":
+                default_response_format = "diarized_json"
+            response_format = openai_kwargs.pop("response_format", default_response_format)
+            return adapter.voice_to_text(
+                audio_file,
+                response_format,
+                language,
+                model=model,
+                **openai_kwargs,
+            )
 
         if normalized_provider == "speechmatics":
             adapter = self._lazy_initialization_of_adapter("SpeechmaticsAdapter")

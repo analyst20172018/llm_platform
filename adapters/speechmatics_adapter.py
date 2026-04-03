@@ -1,6 +1,6 @@
 from .adapter_base import AdapterBase
 import os
-from typing import List, Tuple, Dict, BinaryIO, Callable, Union, Tuple, Optional
+from typing import List, Tuple, BinaryIO, Callable
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import AudioFile
 from loguru import logger
@@ -11,8 +11,11 @@ class SpeechmaticsAdapter(AdapterBase):
     def __init__(self):
         super().__init__()  
         self.api_key = os.getenv("SPEECHMATICS_API_KEY")
-        from speechmatics.models import ConnectionSettings
         from speechmatics.batch_client import BatchClient
+        from speechmatics.models import ConnectionSettings
+
+        self.batch_client_class = BatchClient
+        self.connection_settings_class = ConnectionSettings
 
     def convert_conversation_history_to_adapter_format(self, the_conversation: Conversation):
         raise NotImplementedError("Not implemented yet")
@@ -22,7 +25,7 @@ class SpeechmaticsAdapter(AdapterBase):
             audio_file should be a tuple (file name, bytes)
         """
 
-        settings = ConnectionSettings(
+        settings = self.connection_settings_class(
             url="https://asr.api.speechmatics.com/v2",
             auth_token=self.api_key,
         )
@@ -43,7 +46,7 @@ class SpeechmaticsAdapter(AdapterBase):
         }
 
         # Open the client using a context manager
-        with BatchClient(settings) as client:
+        with self.batch_client_class(settings) as client:
             try:
                 job_id = client.submit_job(
                     #audio=PATH_TO_FILE,

@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-02-20
+Version: 2026-04-03
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -125,8 +125,8 @@ File: `services/files.py`
 File: `helpers/model_config.py`, config in `models_config.yaml`
 
 ### 6.1 Current catalog summary
-- Total models: 27
-- Visible models: 20
+- Total models: 30
+- Visible models: 23
 - Adapter families: 13
 
 Models are grouped by `adapter`, with metadata:
@@ -153,6 +153,7 @@ Models are grouped by `adapter`, with metadata:
   - Responses API based chat flow
   - Sync + async request methods
   - Tool calling with recursive loop
+  - Model-routed speech-to-text path for `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize` via OpenAI's `/v1/audio/transcriptions` endpoint
   - Supports `web_search`, `code_execution`, structured output parsing, reasoning/text parameter pass-through
   - Supports file citations retrieval from container files
 - `AnthropicAdapter`
@@ -207,7 +208,7 @@ Currently implemented async LLM paths:
 Other adapters are sync-only from the `APIHandler` perspective.
 
 ## 8. Multimodal behavior by adapter (implemented)
-- OpenAI: text, image, audio, document inputs; image generation/editing; video generation; STT
+- OpenAI: text, image, audio, document inputs; image generation/editing; video generation; legacy `voice_to_text(...)`; model-routed STT via `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize`
 - Anthropic: text/image/document; no STT
 - Google: text/image/audio/document/video inputs; image generation; video generation
 - Grok: text/image/document in chat; image generation/editing (separate image adapter)
