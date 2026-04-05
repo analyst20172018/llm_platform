@@ -329,11 +329,6 @@ models:
         ui: input
         label: Transcription Prompt
         request_key: prompt
-      include_logprobs:
-        type: boolean
-        default: false
-        ui: toggle
-        label: Include Logprobs
       temperature:
         type: float
         default: null
@@ -365,21 +360,6 @@ models:
         default: en
         ui: input
         label: Language
-      chunking_strategy:
-        type: string
-        default: auto
-        ui: input
-        label: Chunking Strategy
-      known_speaker_names:
-        type: array
-        default: null
-        ui: input
-        label: Known Speaker Names
-      known_speaker_references:
-        type: array
-        default: null
-        ui: input
-        label: Known Speaker References
       temperature:
         type: float
         default: null

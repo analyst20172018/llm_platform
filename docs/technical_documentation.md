@@ -154,6 +154,7 @@ Models are grouped by `adapter`, with metadata:
   - Sync + async request methods
   - Tool calling with recursive loop
   - Model-routed speech-to-text path for `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize` via OpenAI's `/v1/audio/transcriptions` endpoint
+  - For `gpt-4o-transcribe-diarize`, the adapter hardcodes `chunking_strategy="auto"` and does not expose manual chunking or known-speaker reference parameters in the library surface
   - Supports `web_search`, `code_execution`, structured output parsing, reasoning/text parameter pass-through
   - Supports file citations retrieval from container files
 - `AnthropicAdapter`

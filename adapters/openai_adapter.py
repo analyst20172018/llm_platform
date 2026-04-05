@@ -48,6 +48,7 @@ IMAGE_MODEL = "gpt-image-1"
 GPT4O_TRANSCRIBE = "gpt-4o-transcribe"
 GPT4O_MINI_TRANSCRIBE = "gpt-4o-mini-transcribe"
 GPT4O_TRANSCRIBE_DIARIZE = "gpt-4o-transcribe-diarize"
+GPT4O_TRANSCRIBE_DIARIZE_CHUNKING_STRATEGY = "auto"
 OPENAI_TRANSCRIPTION_MODELS = {
     WHISPER_1,
     GPT4O_TRANSCRIBE,
@@ -221,29 +222,17 @@ class OpenAIAdapter(AdapterBase):
             parameters["language"] = language
         if additional_parameters.get("temperature") is not None:
             parameters["temperature"] = additional_parameters["temperature"]
-        if chunking_strategy := additional_parameters.get("chunking_strategy"):
-            parameters["chunking_strategy"] = chunking_strategy
 
         prompt = additional_parameters.get("prompt")
-        include_logprobs = bool(additional_parameters.get("include_logprobs"))
-        known_speaker_names = additional_parameters.get("known_speaker_names")
-        known_speaker_references = additional_parameters.get("known_speaker_references")
 
         if model == GPT4O_TRANSCRIBE_DIARIZE:
             if prompt:
                 raise ValueError("The gpt-4o-transcribe-diarize model does not support prompt.")
-            if include_logprobs:
-                raise ValueError("The gpt-4o-transcribe-diarize model does not support logprobs.")
-            if known_speaker_names:
-                parameters["known_speaker_names"] = known_speaker_names
-            if known_speaker_references:
-                parameters["known_speaker_references"] = known_speaker_references
+            parameters["chunking_strategy"] = GPT4O_TRANSCRIBE_DIARIZE_CHUNKING_STRATEGY
             return parameters
 
         if prompt:
             parameters["prompt"] = prompt
-        if include_logprobs:
-            parameters["include"] = ["logprobs"]
 
         return parameters
 

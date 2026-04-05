@@ -125,16 +125,15 @@ curl --request POST \\
 The [API Reference](https://developers.openai.com/api/docs/api-reference/audio) includes the full list of available parameters.
 
 `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` support `json` or `text`
-  responses and allow prompts and logprobs. `gpt-4o-transcribe-diarize` adds
-  speaker labels but requires `chunking_strategy` when your audio is longer than
-  30 seconds (`"auto"` is recommended) and does not support prompts, logprobs,
-  or `timestamp_granularities[]`.
+  responses and allow prompts. In this library, `include_logprobs` is not
+  exposed. `gpt-4o-transcribe-diarize` adds speaker labels and the adapter
+  always sends `chunking_strategy="auto"` internally; manual chunking and known
+  speaker reference parameters are not exposed by this library. The diarization
+  model also does not support prompts or `timestamp_granularities[]`.
 
 ### Speaker diarization
 
-`gpt-4o-transcribe-diarize` produces speaker-aware transcripts. Request the `diarized_json` response format to receive an array of segments with `speaker`, `start`, and `end` metadata. Set `chunking_strategy` (either `"auto"` or a Voice Activity Detection configuration) so that the service can split the audio into segments; this is required when the input is longer than 30 seconds.
-
-You can optionally supply up to four short audio references with `known_speaker_names[]` and `known_speaker_references[]` to map segments onto known speakers. Provide reference clips between 2–10 seconds in any input format supported by the main audio upload; encode them as [data URLs](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URLs) when using multipart form data.
+`gpt-4o-transcribe-diarize` produces speaker-aware transcripts. Request the `diarized_json` response format to receive an array of segments with `speaker`, `start`, and `end` metadata. This library always sends `chunking_strategy="auto"` to the OpenAI transcription endpoint for this model, which keeps diarization enabled for longer inputs without exposing chunking controls at the library boundary.
 
 Diarize a meeting recording
 
@@ -144,17 +143,10 @@ import OpenAI from "openai";
 
 const openai = new OpenAI();
 
-const agentRef = fs.readFileSync("agent.wav").toString("base64");
-
 const transcript = await openai.audio.transcriptions.create({
   file: fs.createReadStream("meeting.wav"),
   model: "gpt-4o-transcribe-diarize",
   response_format: "diarized_json",
-  chunking_strategy: "auto",
-  extra_body: {
-    known_speaker_names: ["agent"],
-    known_speaker_references: ["data:audio/wav;base64," + agentRef],
-  },
 });
 
 for (const segment of transcript.segments) {
@@ -163,25 +155,15 @@ for (const segment of transcript.segments) {
 ```
 
 ```python
-import base64
 from openai import OpenAI
 
 client = OpenAI()
-
-def to_data_url(path: str) -> str:
-    with open(path, "rb") as fh:
-        return "data:audio/wav;base64," + base64.b64encode(fh.read()).decode("utf-8")
 
 with open("meeting.wav", "rb") as audio_file:
     transcript = client.audio.transcriptions.create(
         model="gpt-4o-transcribe-diarize",
         file=audio_file,
         response_format="diarized_json",
-        chunking_strategy="auto",
-        extra_body={
-            "known_speaker_names": ["agent"],
-            "known_speaker_references": [to_data_url("agent.wav")],
-        },
     )
 
 for segment in transcript.segments:
@@ -195,10 +177,7 @@ curl --request POST \\
   --header 'Content-Type: multipart/form-data' \\
   --form file=@/path/to/file/meeting.wav \\
   --form model=gpt-4o-transcribe-diarize \\
-  --form response_format=diarized_json \\
-  --form chunking_strategy=auto \\
-  --form 'known_speaker_names[]=agent' \\
-  --form 'known_speaker_references[]=data:audio/wav;base64,AAA...'
+  --form response_format=diarized_json
 ```
 
 
@@ -475,7 +454,7 @@ curl --request POST \\
 
 You will receive a stream of `transcript.text.delta` events as soon as the model is done transcribing that part of the audio, followed by a `transcript.text.done` event when the transcription is complete that includes the full transcript. When using `response_format="diarized_json"`, the stream also emits `transcript.text.segment` events with speaker labels each time a segment is finalized.
 
-Additionally, you can use the `include[]` parameter to include `logprobs` in the response to get the log probabilities of the tokens in the transcription. These can be helpful to determine how confident the model is in the transcription of that particular part of the transcript.
+The underlying OpenAI API can include transcription `logprobs`, but this library does not expose that option for these GPT-4o transcription models.
 
 Streamed transcription is not supported in `whisper-1`.
 
@@ -506,8 +485,7 @@ Below is an example payload for setting up a transcription session:
   },
   "input_audio_noise_reduction": {
     "type": "near_field"
-  },
-  "include": ["item.input_audio_transcription.logprobs"]
+  }
 }
 ```
 
