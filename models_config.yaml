@@ -73,8 +73,8 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [low, medium, high]
-        default: none
+        options: [low, medium, high, max]
+        default: low
         ui: select
         label: Reasoning
         request_key: reasoning.effort
@@ -103,7 +103,7 @@ models:
       reasoning_effort:
         type: enum
         options: [low, medium, high, max]
-        default: high
+        default: low
         ui: select
         label: Reasoning
         request_key: reasoning.effort

@@ -488,9 +488,9 @@ class AnthropicAdapter(AdapterBase):
         output_config = {}
 
         if model in ["claude-opus-4-6", "claude-sonnet-4-6"]:
-            request_kwargs['thinking'] = {"type": "adaptive"}
-            reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "high")
+            reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", None)
             if reasoning_effort:
+                request_kwargs['thinking'] = {"type": "adaptive"}
                 output_config["effort"] = reasoning_effort
         else:
             reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", "none")
