@@ -79,8 +79,8 @@ models:
         label: Reasoning
         request_key: reasoning.effort
 
-  - name: claude-opus-4-6
-    display_name: Claude Opus 4.6 💰
+  - name: claude-opus-4-7
+    display_name: Claude Opus 4.7 💰
     adapter: AnthropicAdapter
     pricing:
       input: 5 # USD/1M tokens
@@ -102,7 +102,7 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [low, medium, high, max]
+        options: [low, medium, high, xhigh, max]
         default: low
         ui: select
         label: Reasoning
