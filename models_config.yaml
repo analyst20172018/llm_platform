@@ -173,41 +173,6 @@ models:
         request_key: text.verbosity
     visible: true
 
-  - name: gpt-5.3-codex
-    display_name: GPT-5.3-Codex
-    adapter: OpenAIAdapter
-    pricing:
-      input: 1.75 # USD/1M tokens
-      output: 14 # USD/1M tokens
-    context_window: 400_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_output_tokens
-        default: 128000
-      web_search: *param_web_search
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      reasoning_effort:
-        type: enum
-        options: [low, medium, high, xhigh]
-        default: none
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
-      verbosity:
-        type: enum
-        options: [medium]
-        default: medium
-        ui: select
-        label: Verbosity
-        request_key: text.verbosity
-    visible: true
-
   - name: gpt-5.4-mini
     display_name: GPT-5.4 mini
     adapter: OpenAIAdapter
@@ -727,6 +692,40 @@ models:
         default: 4
         ui: select
         label: Agent Count
+    visible: true
+
+  - name: grok-stt
+    display_name: Grok Speech to Text
+    adapter: GrokAdapter
+    pricing:
+      input: 0.10 # USD/hr audio (REST STT)
+      output: 0
+    context_window: 16_000
+    inputs:
+      - audio
+    outputs:
+      - text
+    additional_parameters:
+      language:
+        type: string
+        default: en
+        ui: input
+        label: Language
+      format:
+        type: boolean
+        default: false
+        ui: toggle
+        label: Text Formatting
+      diarize:
+        type: boolean
+        default: false
+        ui: toggle
+        label: Speaker Diarization
+      multichannel:
+        type: boolean
+        default: false
+        ui: toggle
+        label: Multichannel
     visible: true
 
   - name: grok-imagine-image

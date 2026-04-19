@@ -125,8 +125,8 @@ File: `services/files.py`
 File: `helpers/model_config.py`, config in `models_config.yaml`
 
 ### 6.1 Current catalog summary
-- Total models: 30
-- Visible models: 23
+- Total models: 31
+- Visible models: 24
 - Adapter families: 13
 
 Models are grouped by `adapter`, with metadata:
@@ -172,6 +172,8 @@ Models are grouped by `adapter`, with metadata:
   - Sync chat with optional tool execution loop
   - Supports web search and code execution tools in xAI SDK
   - Supports structured output through xAI SDK `response_format` for both standard requests and Grok 4 tool-enabled requests
+  - Model-routed speech-to-text path for `grok-stt` via xAI's `/v1/stt` REST endpoint
+  - Formats diarized output into speaker-labeled transcript blocks and multichannel output into per-channel sections
 - `MistralAdapter`
   - Sync chat, recursive function-calling, OCR mode, and audio transcription mode
 - `OpenAIOldAdapter`
@@ -212,7 +214,7 @@ Other adapters are sync-only from the `APIHandler` perspective.
 - OpenAI: text, image, audio, document inputs; image generation/editing; video generation; legacy `voice_to_text(...)`; model-routed STT via `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize`
 - Anthropic: text/image/document; no STT
 - Google: text/image/audio/document/video inputs; image generation; video generation
-- Grok: text/image/document in chat; image generation/editing (separate image adapter)
+- Grok: text/image/document in chat; model-routed STT via `grok-stt`; image generation/editing (separate image adapter)
 - Mistral: text/image/document chat + OCR + STT
 - DeepSeek/OpenRouter: text + image/document conversion (OpenAI-compatible payload)
 - Speechmatics/ElevenLabs/AssemblyAI: STT-only workflows

@@ -25,8 +25,14 @@ class AdditionalParameters(TypedDict, total=False):
     reasoning: ReasoningParameters  # reasoning/effort tuning
     text: TextParameters  # text verbosity tuning
     agent_count: int # parameter for Grok Multi Agent model
-    # Parameters for Elevenlabs STT
+    # Parameters for STT providers
     language: str  # STT language code (e.g. "en")
+    format: bool  # enable STT text formatting / inverse text normalization
+    audio_format: str  # raw audio encoding hint (e.g. "pcm", "mulaw", "alaw")
+    sample_rate: int  # raw audio sample rate in Hz
+    multichannel: bool  # transcribe each audio channel independently
+    channels: int  # channel count hint for multichannel raw audio
+    diarize: bool  # STT diarization on/off
     diarized: bool  # STT diarization on/off
     tag_audio_events: bool  # STT audio event tagging
     num_speakers: int  # STT speaker count hint
