@@ -132,7 +132,6 @@ handler.request(
 handler.request(
     model="gemini-2.0-pro",
     prompt="Translate that email into Spanish and cite your sources if you used any.",
-    additional_parameters={"citations_enabled": True}
 )
 ```
 Conversation history is preserved and normalised automatically, even as providers change.
@@ -241,8 +240,7 @@ Override or extend the catalog by editing the YAML file or supplying environment
 - Before committing, ensure `models_config.yaml` and any documentation reflect new adapters, tools, or configuration switches.
 
 ## Documentation
-- `documentation/blueprint.md` – System roadmap and architectural reference.
-- `docs/` – Deeper dives into subsystems (adapters, tools, governance, etc.).
+- `docs/technical_documentation.md` – System roadmap and architectural reference.
 - `AGENTS.md` – Guidance on conversational agent behaviours and templates.
 
 ## Contributing
