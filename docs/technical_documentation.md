@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-04-03
+Version: 2026-04-21
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -125,8 +125,8 @@ File: `services/files.py`
 File: `helpers/model_config.py`, config in `models_config.yaml`
 
 ### 6.1 Current catalog summary
-- Total models: 31
-- Visible models: 24
+- Total models: 32
+- Visible models: 25
 - Adapter families: 13
 
 Models are grouped by `adapter`, with metadata:
@@ -137,6 +137,7 @@ Models are grouped by `adapter`, with metadata:
 - `visible`
 - `additional_parameters` schema (including request defaults such as `max_tokens`)
 - optional `background_mode`
+- optional `agent_type` for Google agent routing, currently `deep_research`
 
 ### 6.2 Parameter schema capabilities
 `Model` normalizes `additional_parameters` and supports:
@@ -168,6 +169,8 @@ Models are grouped by `adapter`, with metadata:
   - Sync request loop with tool execution
   - Supports function calling for `BaseTool` tools
   - Supports `web_search`, `url_context`, `code_execution`, structured output schema shaping, reasoning config
+  - Routes Gemini models marked with both `background_mode: true` and `agent_type: deep_research` through the Interactions API (`client.interactions.create/get`) with `background=True` and `store=True`, polling until completion and returning the final cited report as a standard `Message`
+  - Supports Deep Research text/image/PDF/audio/video inputs from the latest user message
 - `GrokAdapter`
   - Sync chat with optional tool execution loop
   - Supports web search and code execution tools in xAI SDK
@@ -213,7 +216,7 @@ Other adapters are sync-only from the `APIHandler` perspective.
 ## 8. Multimodal behavior by adapter (implemented)
 - OpenAI: text, image, audio, document inputs; image generation/editing; video generation; legacy `voice_to_text(...)`; model-routed STT via `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize`
 - Anthropic: text/image/document; no STT
-- Google: text/image/audio/document/video inputs; image generation; video generation
+- Google: text/image/audio/document/video inputs; image generation; video generation; Gemini Deep Research agents through background Interactions API calls
 - Grok: text/image/document in chat; model-routed STT via `grok-stt`; image generation/editing (separate image adapter)
 - Mistral: text/image/document chat + OCR + STT
 - DeepSeek/OpenRouter: text + image/document conversion (OpenAI-compatible payload)
@@ -299,6 +302,14 @@ From `requirements.txt`:
 2. STT adapter validates input and optional language/diarization parameters.
 3. Adapter submits job/polls or performs direct transcription call.
 4. Assistant message returns transcript text.
+
+### 14.4 Gemini Deep Research flow
+1. Client calls a model such as `deep-research-preview-04-2026` or `deep-research-max-preview-04-2026`.
+2. `models_config.yaml` marks the model with `background_mode: true` and `agent_type: deep_research`, so `GoogleAdapter` uses the Gemini Interactions API instead of `models.generate_content`.
+3. The latest user message is converted into Interactions input; the conversation system prompt is prepended to the text input because Deep Research agents do not support `system_instruction`.
+4. Images, PDFs, audio, and video are sent as inline base64 content while Office/text documents are converted to text content.
+5. The adapter starts the interaction with `agent=<model>`, `background=True`, and `store=True`; it does not send `generation_config` because Gemini agents require agent-specific configuration through `agent_config`.
+6. Completed outputs are parsed into a standard assistant `Message`; text outputs become message content, image outputs become `ImageFile` attachments, citation annotations become `additional_responses`, and interaction usage is mapped to the usual usage keys.
 
 ## 15. Extending the platform
 

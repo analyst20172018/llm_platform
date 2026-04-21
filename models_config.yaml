@@ -475,6 +475,46 @@ models:
         request_key: reasoning.effort
     visible: true
 
+  - name: deep-research-preview-04-2026
+    display_name: Gemini Deep Research
+    adapter: GoogleAdapter
+    pricing:
+      input: 4 # USD/1M tokens; agent pricing also includes tool usage
+      output: 18 # USD/1M tokens; agent pricing also includes tool usage
+    context_window: 1_048_576
+    inputs:
+      - text
+      - image
+      - pdf
+      - audio
+      - video
+    outputs:
+      - text
+      - image
+    agent_type: deep_research
+    background_mode: true
+    visible: true
+
+  - name: deep-research-max-preview-04-2026
+    display_name: Gemini Deep Research Max 💰
+    adapter: GoogleAdapter
+    pricing:
+      input: 4 # USD/1M tokens; agent pricing also includes tool usage
+      output: 18 # USD/1M tokens; agent pricing also includes tool usage
+    context_window: 1_048_576
+    inputs:
+      - text
+      - image
+      - pdf
+      - audio
+      - video
+    outputs:
+      - text
+      - image
+    agent_type: deep_research
+    background_mode: true
+    visible: true
+
   - name: gemini-3-pro-image-preview
     display_name: Gemini 3 Pro Image 🍌
     adapter: GoogleAdapter

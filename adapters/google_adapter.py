@@ -1,11 +1,9 @@
 import json
 import os
 import time
-import uuid
 from io import BytesIO
 from typing import Callable, Dict, List, Tuple
 from enum import Enum
-from xmlrpc import client
 from loguru import logger
 
 from google.genai import types
@@ -37,6 +35,7 @@ class GoogleAdapter(AdapterBase):
     GEMINI_ROLE_MAPPING = {'user': 'user', 'assistant': 'model'}
     REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000, 'low': 4_000, 'dynamic': -1}
     VEO_MODEL = 'veo-3.1-generate-preview'
+    DEEP_RESEARCH_POLL_INTERVAL_SECONDS = 10
 
     def __init__(self):
         super().__init__()
@@ -124,6 +123,232 @@ class GoogleAdapter(AdapterBase):
                 if response_parts:
                     history.append(types.Content(role="user", parts=response_parts))
         return history
+
+    @staticmethod
+    def _file_mime_type(file: BaseFile) -> str:
+        extension = file.extension
+        if isinstance(file, ImageFile):
+            return f"image/{extension}"
+        if isinstance(file, AudioFile):
+            return "audio/mp3"
+        if isinstance(file, VideoFile):
+            if extension == "3gp":
+                return "video/3gpp"
+            if extension == "mpg":
+                return "video/mpeg"
+            return f"video/{extension}"
+        if isinstance(file, PDFDocumentFile):
+            return "application/pdf"
+        return "text/plain"
+
+    def _convert_file_to_interaction_content(self, file: BaseFile) -> Dict:
+        if isinstance(file, ImageFile):
+            return {
+                "type": "image",
+                "data": file.base64,
+                "mime_type": self._file_mime_type(file),
+            }
+        if isinstance(file, AudioFile):
+            return {
+                "type": "audio",
+                "data": file.base64,
+                "mime_type": self._file_mime_type(file),
+            }
+        if isinstance(file, VideoFile):
+            return {
+                "type": "video",
+                "data": file.base64,
+                "mime_type": self._file_mime_type(file),
+            }
+        if isinstance(file, PDFDocumentFile):
+            return {
+                "type": "document",
+                "data": file.base64,
+                "mime_type": self._file_mime_type(file),
+            }
+        if isinstance(file, (TextDocumentFile, ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
+            return {
+                "type": "text",
+                "text": f'<document name="{file.name}">{file.text}</document>',
+            }
+
+        raise TypeError(f"Unsupported file type for Gemini Deep Research: {type(file).__name__}")
+
+    def _convert_conversation_to_interaction_input(self, conversation: Conversation) -> str | List[Dict]:
+        user_messages = [message for message in conversation.messages if message.role == "user"]
+        if not user_messages:
+            return ""
+
+        latest_message = user_messages[-1]
+        text_input = latest_message.content
+        if conversation.system_prompt:
+            text_input = (
+                f"System instructions:\n{conversation.system_prompt}\n\n"
+                f"User request:\n{text_input}"
+            )
+
+        if not latest_message.files:
+            return text_input
+
+        interaction_input: List[Dict] = []
+        if text_input:
+            interaction_input.append({"type": "text", "text": text_input})
+
+        for file in latest_message.files:
+            interaction_input.append(self._convert_file_to_interaction_content(file))
+
+        return interaction_input
+
+    def _prepare_interaction_tools(self, additional_parameters: AdditionalParameters) -> List[Dict]:
+        return []
+
+    def _create_deep_research_interaction(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        additional_parameters: AdditionalParameters,
+    ):
+        interaction_params = {
+            "input": self._convert_conversation_to_interaction_input(the_conversation),
+            "agent": model,
+            "background": True,
+            "store": True,
+        }
+
+        if tools := self._prepare_interaction_tools(additional_parameters):
+            interaction_params["tools"] = tools
+
+        agent_config = dict(additional_parameters.get("agent_config") or {})
+        if agent_config:
+            agent_config.setdefault("type", "deep-research")
+            interaction_params["agent_config"] = agent_config
+
+        return self.client.interactions.create(**interaction_params)
+
+    def _poll_deep_research_interaction(self, interaction):
+        while getattr(interaction, "status", None) in {"queued", "in_progress"}:
+            time.sleep(self.DEEP_RESEARCH_POLL_INTERVAL_SECONDS)
+            interaction = self.client.interactions.get(interaction.id)
+
+        return interaction
+
+    @staticmethod
+    def _format_interaction_annotation(annotation) -> str | None:
+        annotation_type = getattr(annotation, "type", "")
+        if annotation_type == "url_citation":
+            url = getattr(annotation, "url", None)
+            if not url:
+                return None
+            title = getattr(annotation, "title", None) or url
+            return f"Citation: {title} - {url}"
+        if annotation_type == "file_citation":
+            file_name = getattr(annotation, "file_name", None)
+            source = getattr(annotation, "source", None) or getattr(annotation, "document_uri", None)
+            if not file_name and not source:
+                return None
+            if file_name and source:
+                return f"File citation: {file_name} - {source}"
+            return f"File citation: {file_name or source}"
+        if annotation_type == "place_citation":
+            name = getattr(annotation, "name", None)
+            url = getattr(annotation, "url", None)
+            if name and url:
+                return f"Place citation: {name} - {url}"
+            return f"Place citation: {name or url}" if name or url else None
+        return None
+
+    @staticmethod
+    def _extension_from_mime_type(mime_type: str | None, default: str) -> str:
+        if not mime_type or "/" not in mime_type:
+            return default
+        extension = mime_type.split("/", 1)[1]
+        return "jpg" if extension == "jpeg" else extension
+
+    def _extract_interaction_outputs(
+        self,
+        outputs: List,
+    ) -> Tuple[str, List[MediaFile], List[str]]:
+        text_parts = []
+        files = []
+        additional_responses = []
+        for output in outputs or []:
+            output_type = getattr(output, "type", "")
+
+            if output_type == "image" and getattr(output, "data", None):
+                extension = self._extension_from_mime_type(
+                    getattr(output, "mime_type", None),
+                    "png",
+                )
+                files.append(ImageFile.from_base64(
+                    base64_str=output.data,
+                    file_name=f"image_{len(files)}.{extension}",
+                ))
+                continue
+
+            if output_type != "text":
+                continue
+
+            if text := getattr(output, "text", None):
+                text_parts.append(text)
+
+            for annotation in getattr(output, "annotations", []) or []:
+                formatted_annotation = self._format_interaction_annotation(annotation)
+                if formatted_annotation:
+                    additional_responses.append(formatted_annotation)
+
+        return "\n\n".join(text_parts).strip(), files, additional_responses
+
+    def _parse_deep_research_interaction(self, interaction, model_name: str) -> Message:
+        if getattr(interaction, "status", None) != "completed":
+            error = getattr(interaction, "error", None)
+            raise RuntimeError(
+                f"Gemini Deep Research interaction {interaction.id} ended with "
+                f"status '{interaction.status}'. {error or ''}".strip()
+            )
+
+        text_content, files, additional_responses = self._extract_interaction_outputs(
+            getattr(interaction, "outputs", []) or []
+        )
+
+        usage_metadata = getattr(interaction, "usage", None)
+        usage = {
+            "model": model_name,
+            "prompt_tokens": getattr(usage_metadata, "total_input_tokens", None),
+            "completion_tokens": getattr(usage_metadata, "total_output_tokens", None),
+            "total_tokens": getattr(usage_metadata, "total_tokens", None),
+        }
+
+        return Message(
+            id=interaction.id,
+            role="assistant",
+            content=text_content,
+            usage=usage,
+            files=files,
+            additional_responses=additional_responses,
+        )
+
+    def _request_deep_research(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[BaseTool],
+        additional_parameters: AdditionalParameters,
+    ) -> Message:
+        if functions:
+            logger.warning("Gemini Deep Research agents do not support custom function tools.")
+
+        interaction = self._create_deep_research_interaction(
+            model=model,
+            the_conversation=the_conversation,
+            additional_parameters=additional_parameters,
+        )
+        interaction = self._poll_deep_research_interaction(interaction)
+        assistant_message = self._parse_deep_research_interaction(
+            interaction=interaction,
+            model_name=model,
+        )
+        the_conversation.messages.append(assistant_message)
+        return assistant_message
 
     def _prepare_generation_config(
         self,
@@ -303,6 +528,19 @@ class GoogleAdapter(AdapterBase):
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
             for key, value in kwargs.items():
                 additional_parameters.setdefault(key, value)
+
+        model_object = self.model_config[model]
+        if (
+            model_object
+            and model_object["background_mode"]
+            and model_object["agent_type"] == "deep_research"
+        ):
+            return self._request_deep_research(
+                model=model,
+                the_conversation=the_conversation,
+                functions=functions,
+                additional_parameters=additional_parameters,
+            )
 
         function_declarations = [
             func.to_params(provider="google")
