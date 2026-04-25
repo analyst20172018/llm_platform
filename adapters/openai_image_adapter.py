@@ -141,6 +141,7 @@ class OpenAIImageAdapter:
 
         # If there are no image files in the last message, then we will generate a new image
         else:
+            parameters["moderation"] = "low" # this assignment is here, because `moderation` parameter may not be set for `client.images.edit`
             result = self.client.images.generate(**parameters)
 
         output_format = getattr(result, "output_format", "png")

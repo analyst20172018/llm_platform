@@ -137,12 +137,12 @@ models:
     visible: false
 
 
-  - name: gpt-5.4
-    display_name: GPT-5.4 👍
+  - name: gpt-5.5
+    display_name: GPT-5.5 👍
     adapter: OpenAIAdapter
     pricing:
-      input: 2.5 # USD/1M tokens
-      output: 15 # USD/1M tokens
+      input: 5 # USD/1M tokens
+      output: 30 # USD/1M tokens
     context_window: 1_050_000
     inputs:
       - text
@@ -361,8 +361,8 @@ models:
     background_mode: true
     visible: true
 
-  - name: gpt-5.4-pro
-    display_name: GPT-5.4 pro 💰💰💰
+  - name: gpt-5.5-pro
+    display_name: GPT-5.5 pro 💰💰💰
     adapter: OpenAIAdapter
     pricing:
       input: 30 # USD/1M tokens
@@ -378,6 +378,7 @@ models:
         <<: *param_max_output_tokens
         default: 128000
       function_calling: *param_function_calling
+      structured_output: *param_structured_output
       reasoning_effort:
         type: enum
         options: [high]
@@ -388,8 +389,8 @@ models:
     background_mode: true
     visible: false
 
-  - name: gpt-image-1.5
-    display_name: GPT Image 1.5
+  - name: gpt-image-2-2026-04-21
+    display_name: GPT Image 2
     adapter: OpenAIImageAdapter
     pricing:
       input: 5 # USD/1M tokens
@@ -399,13 +400,12 @@ models:
       - text
       - image
     outputs:
-      - text
       - image
     additional_parameters:
       image_output: *param_image_output
       size:
         type: enum
-        options: ["auto", "1024x1024", "1536x1024", "1024x1536"]
+        options: ["auto", "1024x1024", "1536x1024", "1024x1536", "2048x2048", "2048x1152", "1152x2048", "3840x2160", "2160x3840"]
         default: "auto"
         ui: select
         label: Size
@@ -804,13 +804,13 @@ models:
     visible: true
 
 
-  - name: deepseek-chat
-    display_name: DeepSeek Chat
+  - name: deepseek-v4-flash
+    display_name: DeepSeek-V4-Flash
     adapter: DeepSeekAdapter
     pricing:
-      input: 0.56 # USD/1M tokens
-      output: 1.68 # USD/1M tokens
-    context_window: 128_000
+      input: 0.14 # USD/1M tokens
+      output: 0.28 # USD/1M tokens
+    context_window: 1_000_000
     inputs:
       - text
       - image
@@ -819,16 +819,16 @@ models:
     additional_parameters:
       max_tokens:
         <<: *param_max_tokens
-        default: 8000
+        default: 384_000
     visible: true
 
-  - name: deepseek-reasoner
-    display_name: DeepSeek Reasoner
+  - name: deepseek-v4-pro
+    display_name: DeepSeek-V4-Pro
     adapter: DeepSeekAdapter
     pricing:
-      input: 0.56 # USD/1M tokens
-      output: 1.68 # USD/1M tokens
-    context_window: 128_000
+      input: 1.74 # USD/1M tokens
+      output: 3.48 # USD/1M tokens
+    context_window: 1_000_000
     inputs:
       - text
       - image
@@ -837,7 +837,7 @@ models:
     additional_parameters:
       max_tokens:
         <<: *param_max_tokens
-        default: 64000
+        default: 384_000
 
 
   - name: meta-llama/llama-4-maverick
