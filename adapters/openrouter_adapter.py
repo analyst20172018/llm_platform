@@ -171,10 +171,7 @@ class OpenRouterAdapter(AdapterBase):
         
         return message
 
-    def voice_to_text(self, audio_file):
-        raise NotImplementedError("OpenRoute does not support voice to text")
-
-    def request_llm_with_functions(self, model: str, 
+    def request_llm_with_functions(self, model: str,
                                    the_conversation: Conversation, 
                                    functions: List[Callable], 
                                    tool_output_callback: Callable=None,

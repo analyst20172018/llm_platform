@@ -967,43 +967,6 @@ class OpenAIAdapter(AdapterBase):
             model, the_conversation, functions, tool_output_callback, additional_parameters
         )
 
-    def voice_to_text(
-        self,
-        audio_file,
-        response_format: str | None = None,
-        language: str = "en",
-        model: str = GPT4O_TRANSCRIBE,
-        **kwargs,
-    ):
-        """
-        Transcribes an audio file using OpenAI's audio transcription endpoint.
-
-        Args:
-            audio_file: The audio file object to transcribe.
-            response_format: The desired output format for the selected model.
-            language: The language of the audio in ISO-639-1 format.
-            model: The transcription model to use.
-
-        Returns:
-            The raw transcription result returned by the OpenAI SDK.
-        """
-        if model not in OPENAI_TRANSCRIPTION_MODELS:
-            raise ValueError(f"Invalid model. Must be one of {sorted(OPENAI_TRANSCRIPTION_MODELS)}")
-
-        additional_parameters = {
-            "language": language,
-            **kwargs,
-        }
-        if response_format is not None:
-            additional_parameters["response_format"] = response_format
-
-        parameters = self._create_transcription_parameters(
-            model=model,
-            audio_file=audio_file,
-            additional_parameters=additional_parameters,
-        )
-        return self.client.audio.transcriptions.create(**parameters)
-
     def _convert_func_to_tool(self, func: Callable) -> Dict:
         """Converts a Python function to an OpenAI tool definition using inspection."""
         sig = inspect.signature(func)

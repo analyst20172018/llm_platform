@@ -420,27 +420,5 @@ class MistralAdapter(AdapterBase):
 
         return final_response
     
-    def voice_to_text(self, audio_file: AudioFile) -> str:
-
-        chat_response = self.client.chat.complete(
-            model="voxtral-small-latest",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_audio",
-                        "input_audio": audio_file.base64,
-                    },
-                    {
-                        "type": "text",
-                        "text": "Transcribe the audio to text."
-                    },
-                ]
-            }],
-        )
-
-        # Print the content of the response
-        print(chat_response.choices[0].message.content)
-
     def get_models(self) -> List[str]:
         raise NotImplementedError("Not implemented yet")

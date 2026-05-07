@@ -210,9 +210,6 @@ class OpenAIOldAdapter(AdapterBase):
         return message
 
 
-    def voice_to_text(self, audio_file):
-        raise NotImplementedError("OpenRoute does not support voice to text")
-
     def _convert_func_to_tool(self, func: Callable) -> Dict:
         # Get function signature
         sig = inspect.signature(func)

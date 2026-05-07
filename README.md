@@ -188,16 +188,23 @@ response = handler.request(
 Adapters translate tool schemas and invocations for each provider (OpenAI tool calls, Anthropic tool use, Gemini function calling, etc.). Tool outputs are appended to the conversation and optionally streamed through `tool_output_callback`.
 
 ## Speech and Audio
+Speech-to-text is invoked through `handler.request(...)` by selecting a transcription-capable model and passing a single `AudioFile` in `files`. The model entry in `models_config.yaml` routes the call to the matching adapter (`SpeechmaticsAdapter`, `ElevenLabsAdapter`, `AssemblyAIAdapter`, or model-routed STT inside `OpenAIAdapter` / `GrokAdapter`).
+
 ```python
-with open("customer_call.mp3", "rb") as audio:
-    transcript = handler.voice_to_text(audio, audio_format="mp3", provider="speechmatics")
+from llm_platform.services.files import AudioFile
+
+audio = AudioFile.from_path("customer_call.mp3")
+transcript = handler.request(
+    model="speechmatics",
+    prompt="",
+    files=[audio],
+).content
 
 follow_up = handler.request(
     model="gpt-4o",
     prompt=f"Summarise this call and flag any action items: {transcript}",
 )
 ```
-Use `voice_file_to_text(path)` for convenience when working with local files. Speech-to-text currently supports OpenAI and Speechmatics providers.
 
 ## Image Generation
 Image generation is exposed through `handler.request(...)` by selecting an image-capable model (e.g. `gpt-image-2-2026-04-21`). The model entry in `models_config.yaml` routes the call to the matching image adapter (`OpenAIImageAdapter`, `GrokImageAdapter`, etc.).

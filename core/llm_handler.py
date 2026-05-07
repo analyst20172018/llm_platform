@@ -1,5 +1,4 @@
-import os
-from typing import Any, BinaryIO, Callable, Dict, List, Union
+from typing import Any, Callable, Dict, List, Union
 
 import tiktoken
 from loguru import logger
@@ -42,7 +41,7 @@ ADAPTER_CLASSES = {
 class APIHandler:
     """
     APIHandler is a class that handles interactions with various language model adapters.
-    It provides methods for making synchronous and asynchronous requests to language models, converting voice to text,
+    It provides methods for making synchronous and asynchronous requests to language models
     and retrieving available models.
     
     Attributes:
@@ -67,10 +66,6 @@ class APIHandler:
             Asynchronously makes a request to the language model using the appropriate adapter.
         calculate_tokens(text: str) -> Dict[str, int]:
             Calculates the number of tokens in the given text.
-        voice_to_text(audio_file: BinaryIO, audio_format: str, provider: str = 'openai', **kwargs) -> str:
-            Converts voice to text using the specified provider.
-        voice_file_to_text(audio_file_name: str, provider: str = 'openai', **kwargs) -> str:
-            Converts a voice file to text using the specified provider.
         get_models(adapter_name: str) -> List[str]:
             Retrieves the available models for the specified adapter.
     """
@@ -527,54 +522,5 @@ class APIHandler:
         num_tokens = len(encoding.encode(text))
         return {"bytes": len(text), "tokens": num_tokens}
     
-    def voice_to_text(self, audio_file: BinaryIO, audio_format: str, provider: str = 'openai', **kwargs):
-        normalized_provider = provider.lower()
-        supported_providers = ["openai", "speechmatics", "elevenlabs"]
-        assert normalized_provider in supported_providers, (
-            f"Provider {provider} is not supported. "
-            "I understand only 'openai' or 'speechmatics' or 'elevenlabs' as providers."
-        )
-
-        if normalized_provider == "openai":
-            adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
-            openai_kwargs = dict(kwargs)
-            model = openai_kwargs.pop("model", "whisper-1")
-            language = openai_kwargs.pop("language", "en")
-            default_response_format = "text"
-            if model in {"gpt-4o-transcribe", "gpt-4o-mini-transcribe"}:
-                default_response_format = "json"
-            elif model == "gpt-4o-transcribe-diarize":
-                default_response_format = "diarized_json"
-            response_format = openai_kwargs.pop("response_format", default_response_format)
-            return adapter.voice_to_text(
-                audio_file,
-                response_format,
-                language,
-                model=model,
-                **openai_kwargs,
-            )
-
-        if normalized_provider == "speechmatics":
-            adapter = self._lazy_initialization_of_adapter("SpeechmaticsAdapter")
-            language = kwargs.get("language", "en")
-            transcription_config = kwargs.get("transcription_config")
-            return adapter.voice_to_text(
-                (f"audio_file.{audio_format}", audio_file),
-                language,
-                transcription_config,
-            )
-
-        adapter = self._lazy_initialization_of_adapter("ElevenLabsAdapter")
-        language = kwargs.get("language", "eng")
-        diarized = kwargs.get("diarized", True)
-        return adapter.voice_to_text(audio_file, audio_format, language, diarized)
-
-    def voice_file_to_text(self, audio_file_name: str, provider: str = 'openai', **kwargs):
-        _, file_extension = os.path.splitext(audio_file_name)
-        file_extension = file_extension.lower().replace(".", "")
-
-        with open(audio_file_name, 'rb') as audio_file:
-            return self.voice_to_text(audio_file, file_extension, provider, **kwargs)
-
     def get_models(self, adapter_name: str) -> List[str]:
         return self._lazy_initialization_of_adapter(adapter_name).get_models()

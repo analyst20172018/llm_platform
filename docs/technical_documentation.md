@@ -41,17 +41,16 @@ File: `core/llm_handler.py`
 - Conversation state ownership (`self.the_conversation`)
 - Parameter normalization (`_prepare_additional_parameters`)
 - Sync and async request routing
-- Convenience APIs for STT, image generation, and image editing
 
 ### 3.2 Public API
 - `request(model, prompt, functions=None, files=[], tool_output_callback=None, additional_parameters=None, **kwargs) -> Message`
 - `request_async(...) -> Message`
 - `request_llm(...) -> Message` (internal/public dispatch, no user-message append)
 - `request_llm_async(...) -> Message`
-- `voice_to_text(audio_file, audio_format, provider='openai', **kwargs)`
-- `voice_file_to_text(audio_file_name, provider='openai', **kwargs)`
 - `get_models(adapter_name) -> List[str]`
 - `calculate_tokens(text) -> {'bytes': int, 'tokens': int}` (tiktoken `cl100k_base`)
+
+STT, image generation, and image editing are dispatched through `request(...)` by choosing an appropriate model; the YAML model registry routes to the matching adapter.
 
 ### 3.3 Adapter resolution
 Adapter class is selected by model's `adapter` in `models_config.yaml` and instantiated on demand.
@@ -210,7 +209,7 @@ Currently implemented async LLM paths:
 Other adapters are sync-only from the `APIHandler` perspective.
 
 ## 8. Multimodal behavior by adapter (implemented)
-- OpenAI: text, image, audio, document inputs; image generation/editing; legacy `voice_to_text(...)`; model-routed STT via `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize`
+- OpenAI: text, image, audio, document inputs; image generation/editing; model-routed STT via `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize`
 - Anthropic: text/image/document; no STT
 - Google: text/image/audio/document/video inputs; image generation; Gemini Deep Research agents through background Interactions API calls
 - Grok: text/image/document in chat; model-routed STT via `grok-stt`; image generation/editing (separate image adapter)

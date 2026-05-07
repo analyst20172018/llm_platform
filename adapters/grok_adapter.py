@@ -651,29 +651,6 @@ class GrokAdapter(AdapterBase):
             additional_parameters=additional_parameters,
         )
 
-    def voice_to_text(
-        self,
-        audio_file,
-        audio_format: str | None = None,
-        language: str | None = None,
-        diarize: bool = False,
-        **kwargs,
-    ):
-        additional_parameters = dict(kwargs)
-
-        if audio_format:
-            additional_parameters.setdefault("audio_format", audio_format)
-        if language:
-            additional_parameters.setdefault("language", language)
-        if diarize is not None:
-            additional_parameters.setdefault("diarize", diarize)
-
-        response_payload = self._transcribe_audio(
-            audio_file=audio_file,
-            additional_parameters=additional_parameters,
-        )
-        return self._format_transcription_response(response_payload, additional_parameters)
-
     def _convert_func_to_tool(self, func: Callable) -> Dict:
         sig = inspect.signature(func)
 

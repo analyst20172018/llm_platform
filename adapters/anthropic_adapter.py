@@ -250,9 +250,6 @@ class AnthropicAdapter(AdapterBase):
         the_conversation.messages.append(response_message)
         return response_message
 
-    def voice_to_text(self, audio_file):
-        raise NotImplementedError("Anthropic does not support voice-to-text functionality.")
-
     def get_models(self) -> List[str]:
         """
         Returns a list of known Anthropic models.
