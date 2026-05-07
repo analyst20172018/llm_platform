@@ -674,25 +674,6 @@ class GrokAdapter(AdapterBase):
         )
         return self._format_transcription_response(response_payload, additional_parameters)
 
-    def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
-        """Generates images based on the provided prompt using the old grok-2-image model.
-        The current functionality to generate image is in the package `adapters/grok_image_adapter.py`
-        This old method can be removed later.
-        """
-        response = self.client.image.sample_batch(
-            model="grok-2-image",
-            prompt=prompt,
-            n=n,
-            image_format="base64",
-        )
-
-        output_images = [
-            ImageFile.from_bytes(file_bytes=image_data.image, file_name="image.png")
-            for image_data in response
-        ]
-
-        return output_images
-
     def _convert_func_to_tool(self, func: Callable) -> Dict:
         sig = inspect.signature(func)
 

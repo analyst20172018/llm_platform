@@ -71,7 +71,6 @@ class APIHandler:
             Converts voice to text using the specified provider.
         voice_file_to_text(audio_file_name: str, provider: str = 'openai', **kwargs) -> str:
             Converts a voice file to text using the specified provider.
-        generate_image(prompt: str, provider: str = 'openai', n: int = 1, **kwargs) -> Union[str, List[str]]:
         get_models(adapter_name: str) -> List[str]:
             Retrieves the available models for the specified adapter.
     """
@@ -577,55 +576,6 @@ class APIHandler:
         with open(audio_file_name, 'rb') as audio_file:
             return self.voice_to_text(audio_file, file_extension, provider, **kwargs)
 
-    def generate_image(self, prompt: str, provider: str='openai', n=1, **kwargs):
-        """
-        Generates an image based on the given prompt using the specified provider.
-
-        Args:
-            prompt (str): A textual description of the desired image content.
-            provider (str, optional): The image generation provider to use. 
-                Supported values are 'openai' and 'google'. Defaults to 'openai'.
-            n (int, optional): The number of images to generate. Defaults to 1.
-            **kwargs: Additional parameters specific to the chosen provider.
-
-        Keyword Arguments:
-            For the OpenAI adapter:
-                - size (str, optional): Supported values are '1024x1024', '1024x1536', '1536x1024', 'auto'.
-                - quality (str, optional): Supported values are 'low', 'medium', 'high', 'auto'.
-                - moderation (str, optional): Supported values are 'low', 'auto'
-
-            For the Google adapter:
-                - negative_prompt (str, optional): A description of what to omit in the generated image.
-                - number_of_images (int, optional): The number of images to generate, from 1 to 4. Defaults to 4.
-                - aspect_ratio (str, optional): Supported values are '1:1', '3:4', '4:3', '9:16', and '16:9'. Defaults to '1:1'.
-                - safety_filter_level (str, optional): Supported values are:
-                    - 'block_low_and_above'
-                    - 'block_medium_and_above'
-                    - 'block_only_high'
-                - person_generation (str, optional): Supported values are:
-                    - 'dont_allow': Block generation of images of people.
-                    - 'allow_adult': Allow generation of adult images but block children.
-                - quality (str, optional): Supported values are 'low', 'medium', 'high', 'auto'.
-                    Converts by adapter into proper `model` and `image_size`.
-
-        Returns:
-            list or str: The generated image(s) URL(s) or list of images, depending on the provider.
-
-        Raises:
-            ValueError: If the specified provider is not supported.
-        """
-        normalized_provider = provider.lower()
-        if normalized_provider == 'openai':
-            adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
-            return adapter.generate_image(prompt, n, **kwargs)
-        if normalized_provider == 'google':
-            adapter = self._lazy_initialization_of_adapter("GoogleAdapter")
-            return adapter.generate_image(prompt, n, **kwargs)
-        if normalized_provider == 'grok':
-            adapter = self._lazy_initialization_of_adapter("GrokAdapter")
-            return adapter.generate_image(prompt, n, **kwargs)
-        raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' or 'google' as providers. ")
-        
     async def generate_video(self, prompt: str, provider: str='google', **kwargs):
         """
         Generates an video based on the given prompt using the specified provider.
@@ -655,31 +605,6 @@ class APIHandler:
             adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
             return await adapter.generate_video(prompt, **kwargs)
         raise ValueError(f"Provider {provider} is not supported. I understand only 'google' as provider.")
-        
-    def edit_image(self, prompt: str, provider: str='openai', images=List[ImageFile], n=1, **kwargs):
-        """
-        Edits an image based on the given prompt using the specified provider. 
-        Now works only with OpenAI.
-
-        Args:
-            prompt (str): A textual description of the desired image content.
-            provider (str, optional): The image generation provider to use. 
-                Supported values is 'openai'.
-            n (int, optional): The number of images to generate. Defaults to 1.
-            **kwargs: Additional parameters specific to the chosen provider.
-
-        Keyword Arguments:
-            For the OpenAI adapter:
-                - size (str, optional): Supported values are '1024x1024', '1024x1536', '1536x1024', 'auto'.
-                - quality (str, optional): Supported values are 'low', 'medium', 'high', 'auto'.
-                - moderation (str, optional): Supported values are 'low', 'auto'
-                - input_fidelity (str, optional): Supported values are 'low', 'high'. The default value is `low`.
-                     Input fidelity, which allows you to better preserve details from the input images in the output.
-        """
-        if provider.lower() == 'openai':
-            adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
-            return adapter.edit_image(prompt, images, n, **kwargs)
-        raise ValueError(f"Provider {provider} is not supported. I understand only 'openai' as providers. ")
 
     def get_models(self, adapter_name: str) -> List[str]:
         return self._lazy_initialization_of_adapter(adapter_name).get_models()

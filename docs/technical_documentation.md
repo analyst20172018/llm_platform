@@ -50,9 +50,7 @@ File: `core/llm_handler.py`
 - `request_llm_async(...) -> Message`
 - `voice_to_text(audio_file, audio_format, provider='openai', **kwargs)`
 - `voice_file_to_text(audio_file_name, provider='openai', **kwargs)`
-- `generate_image(prompt, provider='openai', n=1, **kwargs)`
 - `generate_video(prompt, provider='google', **kwargs)`
-- `edit_image(prompt, provider='openai', images=..., n=1, **kwargs)`
 - `get_models(adapter_name) -> List[str]`
 - `calculate_tokens(text) -> {'bytes': int, 'tokens': int}` (tiktoken `cl100k_base`)
 

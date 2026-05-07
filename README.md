@@ -200,15 +200,15 @@ follow_up = handler.request(
 Use `voice_file_to_text(path)` for convenience when working with local files. Speech-to-text currently supports OpenAI and Speechmatics providers.
 
 ## Image Generation
+Image generation is exposed through `handler.request(...)` by selecting an image-capable model (e.g. `gpt-image-2-2026-04-21`). The model entry in `models_config.yaml` routes the call to the matching image adapter (`OpenAIImageAdapter`, `GrokImageAdapter`, etc.).
+
 ```python
-image_urls = handler.generate_image(
+result = handler.request(
+    model="gpt-image-2-2026-04-21",
     prompt="A cyberpunk cityscape with neon reflections after rain",
-    provider="openai",
-    n=1,
-    size="1024x1024",
+    additional_parameters={"size": "1024x1024"},
 )
 ```
-Switch `provider="google"` to target Gemini image generation. Returned assets mirror the provider’s native format (URL, base64, or binary).
 
 ## Model Configuration
 `models_config.yaml` contains the canonical registry of supported models. Each entry defines:

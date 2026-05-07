@@ -5,7 +5,7 @@ Adapter for interacting with the OpenAI API.
 This module provides a class, OpenAIAdapter, that conforms to the AdapterBase
 interface and handles the specifics of formatting requests and parsing responses
 for the OpenAI platform. It supports standard chat completions, function calling,
-image generation, and audio transcription.
+and audio transcription.
 """
 
 import asyncio
@@ -44,7 +44,6 @@ CODE_INTERPRETER_CALL_TYPE = "code_interpreter_call"
 
 # Constants for transcription models
 WHISPER_1 = "whisper-1"
-IMAGE_MODEL = "gpt-image-1"
 GPT4O_TRANSCRIBE = "gpt-4o-transcribe"
 GPT4O_MINI_TRANSCRIBE = "gpt-4o-mini-transcribe"
 GPT4O_TRANSCRIBE_DIARIZE = "gpt-4o-transcribe-diarize"
@@ -967,69 +966,6 @@ class OpenAIAdapter(AdapterBase):
         return await self.request_llm_with_functions_async(
             model, the_conversation, functions, tool_output_callback, additional_parameters
         )
-
-    def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
-        """
-        Old method, which generates images from a text prompt using gpt-image-1.
-        The current functionality to generate image is in the package adapters/openai_image_adapter.py
-        This old method can be removed later.
-
-        Args:
-            prompt: The text description of the desired image(s).
-            n: The number of images to generate.
-            **kwargs: Additional parameters for the OpenAI API like 'size', 'quality', etc.
-
-        Returns:
-            A list of ImageFile objects.
-        """
-        # Start with default parameters
-        params = {
-            "size": "1024x1536",
-            "quality": "high",
-            "output_format": "png",
-        }
-
-        # Update the defaults with any user-provided kwargs
-        # This allows users to override 'size', 'quality', etc.
-        params.update(kwargs)
-
-        response = self.client.images.generate(
-            model=IMAGE_MODEL,
-            prompt=prompt,
-            n=n,
-            **params,  # Unpack the combined parameters
-        )
-
-        return [
-            ImageFile.from_base64(base64_str=img.b64_json, file_name=f"generated_image_{i}.png")
-            for i, img in enumerate(response.data)
-        ]
-
-    def edit_image(self, prompt: str, images: List[ImageFile], n: int = 1, **kwargs) -> List[ImageFile]:
-        """
-        Edits existing images based on a text prompt.
-
-        Args:
-            prompt: The text description of the edits to make.
-            images: A list of ImageFile objects to edit.
-            n: The number of edited versions to generate per input image.
-            **kwargs: Additional parameters like 'size'.
-
-        Returns:
-            A list of the edited ImageFile objects.
-        """
-        response = self.client.images.edit(
-            model=IMAGE_MODEL,
-            prompt=prompt,
-            image=[image.bytes_io for image in images],
-            n=n,
-            size=kwargs.pop("size", "1024x1536"),
-            **kwargs,
-        )
-        return [
-            ImageFile.from_base64(base64_str=img.b64_json, file_name=f"edited_image_{i}.png")
-            for i, img in enumerate(response.data)
-        ]
 
     async def generate_video(self, prompt: str, model: str, seconds: str = '12', size: str = "1280x720", **kwargs) -> List[VideoFile]:
         """

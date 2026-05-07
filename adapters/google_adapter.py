@@ -3,7 +3,6 @@ import os
 import time
 from io import BytesIO
 from typing import Callable, Dict, List, Tuple
-from enum import Enum
 from loguru import logger
 
 from google.genai import types
@@ -14,18 +13,10 @@ from llm_platform.services.conversation import (Conversation, FunctionCall,
                                                 ThinkingResponse)
 from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          TextDocumentFile, PDFDocumentFile,
-                                         ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
+                                         ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile,
                                          MediaFile, ImageFile, VideoFile)
 from llm_platform.tools.base import BaseTool
 from llm_platform.types import AdditionalParameters
-
-class ImagenModel(Enum):
-    STANDARD = "imagen-4.0-generate-001"
-    ULTRA = "imagen-4.0-ultra-generate-001"
-
-class ImagenImageSize(Enum):
-    _1K = "1K"
-    _2K = "2K"
 
 class GoogleAdapter(AdapterBase):
     """
@@ -605,58 +596,7 @@ class GoogleAdapter(AdapterBase):
             )
         ]
 
-    def generate_image(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
-        """Generates images using the Imagen model."""
-
-        # Define the model and image size based on quality
-        quality = kwargs.pop('quality', 'high')
-        if quality == 'high':
-            model_name = ImagenModel.ULTRA.value
-            image_size = ImagenImageSize._2K.value
-        elif quality == 'medium':
-            model_name = ImagenModel.STANDARD.value
-            image_size = ImagenImageSize._2K.value
-        elif quality == 'low':
-            model_name = ImagenModel.STANDARD.value
-            image_size = ImagenImageSize._1K.value
-        else:
-            model_name = ImagenModel.ULTRA.value
-            image_size = ImagenImageSize._2K.value
-
-        response = self.client.models.generate_images(
-            model=model_name,
-            prompt=prompt,
-            #config=types.GenerateImagesConfig(
-            config=dict(
-                number_of_images=n, 
-                image_size=image_size,
-                **kwargs
-            ),
-        )
-        return [
-            ImageFile.from_bytes(
-                file_bytes=img.image.image_bytes,
-                file_name=f"generated_image_{i}.webp"
-            )
-            for i, img in enumerate(response.generated_images)
-        ]
-
-    async def generate_image_async(self, prompt: str, n: int = 1, **kwargs) -> List[ImageFile]:
-        """Asynchronously generates images using the Imagen model."""
-        response = await self.client.aio.models.generate_images(
-            model=self.IMAGEN_MODEL,
-            prompt=prompt,
-            config=types.GenerateImagesConfig(number_of_images=n, **kwargs)
-        )
-        return [
-            ImageFile.from_bytes(
-                file_bytes=img.image.image_bytes,
-                file_name=f"generated_image_{i}.webp"
-            )
-            for i, img in enumerate(response.generated_images)
-        ]
-
-    def generate_video(self, 
+    def generate_video(self,
                        prompt: str, 
                        model: str = VEO_MODEL,
                        aspect_ratio: str = "16:9",                  # "16:9" (default, 720p & 1080p), "9:16"(720p & 1080p)

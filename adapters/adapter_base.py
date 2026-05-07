@@ -56,8 +56,4 @@ class AdapterBase(ABC):
                                        tool_output_callback: Callable=None,
                                        **kwargs):
         pass
-
-    @abstractmethod
-    async def generate_image_async(self, prompt: str, size: str, quality:str, n=1):
-        pass
     """
