@@ -268,7 +268,7 @@ From `requirements.txt`:
 1. Env-var naming inconsistency between docs and implementation (`GOOGLE_GEMINI_API_KEY` vs `GOOGLE_API_KEY`, `XAI_API_KEY` vs `GROK_API_KEY`, `ELEVEN_API_KEY` vs `ELEVENLABS_API_KEY`).
 2. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral, not in DeepSeek/OpenRouter).
 3. Mutable default arguments exist in `Message` initializer (`[]` defaults), which is a Python risk pattern.
-4. Adapter base contract is not uniformly inherited by all specialized adapters (`OpenAIImageAdapter`, `GrokImageAdapter`, `ElevenLabsAdapter`, `AssemblyAIAdapter`).
+4. `AdapterBase` is intentionally limited to chat-LLM adapters; speech-only and image-only adapters (`OpenAIImageAdapter`, `GrokImageAdapter`, `ElevenLabsAdapter`, `AssemblyAIAdapter`, `SpeechmaticsAdapter`) are standalone classes since the chat contract (`request_llm_with_functions`, conversation conversion) does not fit transcription/image generation.
 5. Legacy and current OpenAI paths coexist (`OpenAIAdapter` and `OpenAIOldAdapter`).
 
 ## 14. Request lifecycle details
@@ -313,7 +313,7 @@ From `requirements.txt`:
 2. Ensure the mapped adapter exists in `APIHandler._lazy_initialization_of_adapter`.
 
 ### 15.2 Add a new adapter
-1. Implement adapter class in `adapters/` (prefer inheriting `AdapterBase`).
+1. Implement adapter class in `adapters/`. Inherit `AdapterBase` for chat-LLM adapters; for transcription or image-generation adapters, define a standalone class (see `ElevenLabsAdapter`, `OpenAIImageAdapter`).
 2. Implement at least `request_llm` and conversation conversion.
 3. Add adapter mapping in `APIHandler` lazy-init map.
 4. Add model entries in `models_config.yaml`.

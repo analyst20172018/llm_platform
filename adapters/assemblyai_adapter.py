@@ -1,6 +1,6 @@
-from .adapter_base import AdapterBase
 import os
 from typing import List, Tuple, Dict, BinaryIO, Callable, Union, Tuple, Optional
+from dotenv import load_dotenv
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import AudioFile
 from loguru import logger
@@ -12,9 +12,9 @@ import time
 MODEL_NAMES = ["universal-3-pro", "universal-2"]
 
 class AssemblyAIAdapter:
-    
+
     def __init__(self):
-        super().__init__()
+        load_dotenv()
         aai.settings.api_key = os.getenv("ASSEMBLYAI_API_KEY")
 
     def voice_to_text(self, audio_file: AudioFile, additional_parameters: Dict) -> str:

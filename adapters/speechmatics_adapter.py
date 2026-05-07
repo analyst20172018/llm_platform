@@ -1,24 +1,21 @@
-from .adapter_base import AdapterBase
 import os
 from typing import List, Tuple, BinaryIO, Callable
+from dotenv import load_dotenv
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import AudioFile
 from loguru import logger
 from llm_platform.types import AdditionalParameters
 
-class SpeechmaticsAdapter(AdapterBase):
-    
+class SpeechmaticsAdapter:
+
     def __init__(self):
-        super().__init__()  
+        load_dotenv()
         self.api_key = os.getenv("SPEECHMATICS_API_KEY")
         from speechmatics.batch_client import BatchClient
         from speechmatics.models import ConnectionSettings
 
         self.batch_client_class = BatchClient
         self.connection_settings_class = ConnectionSettings
-
-    def convert_conversation_history_to_adapter_format(self, the_conversation: Conversation):
-        raise NotImplementedError("Not implemented yet")
 
     def voice_to_text(self, audio_file: Tuple[str, BinaryIO], language: str="en"):
         """
@@ -112,11 +109,3 @@ class SpeechmaticsAdapter(AdapterBase):
         
         return message
 
-    def request_llm_with_functions(self, 
-                                   model: str, 
-                                   the_conversation: Conversation, 
-                                   functions: List[Callable],
-                                   tool_output_callback: Callable=None, 
-                                   additional_parameters: AdditionalParameters | None = None,
-                                   **kwargs):
-        raise NotImplementedError("Not implemented yet")
