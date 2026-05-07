@@ -66,8 +66,6 @@ class APIHandler:
             Asynchronously makes a request to the language model using the appropriate adapter.
         calculate_tokens(text: str) -> Dict[str, int]:
             Calculates the number of tokens in the given text.
-        get_models(adapter_name: str) -> List[str]:
-            Retrieves the available models for the specified adapter.
     """
     
     def __init__(self, system_prompt: str = "You are a helpful assistant"):
@@ -521,6 +519,3 @@ class APIHandler:
         encoding = tiktoken.get_encoding("cl100k_base")
         num_tokens = len(encoding.encode(text))
         return {"bytes": len(text), "tokens": num_tokens}
-    
-    def get_models(self, adapter_name: str) -> List[str]:
-        return self._lazy_initialization_of_adapter(adapter_name).get_models()

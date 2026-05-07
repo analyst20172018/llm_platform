@@ -1019,13 +1019,3 @@ class OpenAIAdapter(AdapterBase):
         else:
             raise TypeError("func must be either a BaseTool instance or a callable function")
         return tool
-
-    def get_models(self) -> List[str]:
-        """
-        Retrieves a list of available model IDs from OpenAI.
-
-        Returns:
-            A list of string identifiers for the available models.
-        """
-        models = self.client.models.list()
-        return [model.id for model in models.data]

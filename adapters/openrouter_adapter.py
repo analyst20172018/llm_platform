@@ -178,8 +178,3 @@ class OpenRouterAdapter(AdapterBase):
                                    additional_parameters: AdditionalParameters | None = None,
                                    **kwargs):
         raise NotImplementedError("Not implemented yet")
-
-    def get_models(self) -> List[str]:
-        NotImplementedError("Not implemented yet")
-
-    

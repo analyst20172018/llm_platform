@@ -250,14 +250,6 @@ class AnthropicAdapter(AdapterBase):
         the_conversation.messages.append(response_message)
         return response_message
 
-    def get_models(self) -> List[str]:
-        """
-        Returns a list of known Anthropic models.
-        Note: Anthropic does not provide a public API endpoint to list models,
-        so this list is maintained manually.
-        """
-        raise NotImplementedError("Anthropic does not provide a public API to list models. Use known models instead.")
-
     # --- Private Helper Methods for LLM Requests ---
 
     def _parse_non_streaming_response(self, response) -> ClaudeStreamProcessor:

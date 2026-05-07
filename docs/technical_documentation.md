@@ -47,7 +47,6 @@ File: `core/llm_handler.py`
 - `request_async(...) -> Message`
 - `request_llm(...) -> Message` (internal/public dispatch, no user-message append)
 - `request_llm_async(...) -> Message`
-- `get_models(adapter_name) -> List[str]`
 - `calculate_tokens(text) -> {'bytes': int, 'tokens': int}` (tiktoken `cl100k_base`)
 
 STT, image generation, and image editing are dispatched through `request(...)` by choosing an appropriate model; the YAML model registry routes to the matching adapter.
@@ -267,11 +266,10 @@ From `requirements.txt`:
 
 ## 13. Known implementation gaps and inconsistencies
 1. Env-var naming inconsistency between docs and implementation (`GOOGLE_GEMINI_API_KEY` vs `GOOGLE_API_KEY`, `XAI_API_KEY` vs `GROK_API_KEY`, `ELEVEN_API_KEY` vs `ELEVENLABS_API_KEY`).
-2. Some `get_models()` methods are incomplete or missing `return` of `NotImplemented` in older adapters.
-3. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral, not in DeepSeek/OpenRouter).
-4. Mutable default arguments exist in `Message` initializer (`[]` defaults), which is a Python risk pattern.
-5. Adapter base contract is not uniformly inherited by all specialized adapters (`OpenAIImageAdapter`, `GrokImageAdapter`, `ElevenLabsAdapter`, `AssemblyAIAdapter`).
-6. Legacy and current OpenAI paths coexist (`OpenAIAdapter` and `OpenAIOldAdapter`).
+2. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral, not in DeepSeek/OpenRouter).
+3. Mutable default arguments exist in `Message` initializer (`[]` defaults), which is a Python risk pattern.
+4. Adapter base contract is not uniformly inherited by all specialized adapters (`OpenAIImageAdapter`, `GrokImageAdapter`, `ElevenLabsAdapter`, `AssemblyAIAdapter`).
+5. Legacy and current OpenAI paths coexist (`OpenAIAdapter` and `OpenAIOldAdapter`).
 
 ## 14. Request lifecycle details
 

@@ -5,7 +5,11 @@
       "Bash(pip show:*)",
       "Bash(ls:*)",
       "WebSearch",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(git config *)",
+      "Bash(git diff *)",
+      "Bash(git checkout *)",
+      "Bash(git push *)"
     ]
   }
 }

@@ -702,6 +702,3 @@ class GrokAdapter(AdapterBase):
             raise TypeError("func must be either a BaseTool or a function")
 
         return tool_definition
-
-    def get_models(self) -> List[str]:
-        raise NotImplementedError("Not implemented yet")

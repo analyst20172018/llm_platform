@@ -370,9 +370,3 @@ class OpenAIOldAdapter(AdapterBase):
                                                          **kwargs)
         
         return final_response
-
-
-    def get_models(self) -> List[str]:
-        NotImplementedError("Not implemented yet")
-
-    

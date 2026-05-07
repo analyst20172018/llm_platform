@@ -594,10 +594,6 @@ class GoogleAdapter(AdapterBase):
             )
         ]
 
-    def get_models(self) -> List[str]:
-        """Retrieves a list of available models."""
-        return [m.name for m in self.client.models.list()]
-    
     def request_llm_with_functions(self,
                                    model: str, 
                                    config: types.GenerateContentConfig,

@@ -419,6 +419,3 @@ class MistralAdapter(AdapterBase):
         final_response = self.request_llm_with_functions(model, the_conversation, functions, tool_output_callback=tool_output_callback, **kwargs)
 
         return final_response
-    
-    def get_models(self) -> List[str]:
-        raise NotImplementedError("Not implemented yet")
