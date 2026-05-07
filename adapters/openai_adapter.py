@@ -967,44 +967,6 @@ class OpenAIAdapter(AdapterBase):
             model, the_conversation, functions, tool_output_callback, additional_parameters
         )
 
-    async def generate_video(self, prompt: str, model: str, seconds: str = '12', size: str = "1280x720", **kwargs) -> List[VideoFile]:
-        """
-        Generates a short video clip by invoking OpenAI's video API, polls until completion,
-        downloads the binary stream, and wraps the result in a VideoFile.
-
-        Args:
-            prompt: Natural-language description of the video to create.
-            model: OpenAI video model identifier to execute the request.
-            seconds: Desired duration of the generated clip in seconds.
-            size: Output resolution expressed as WIDTHxHEIGHT.
-                - sora-2 supports 
-                    * Portrait: 720x1280 Landscape: 1280x720
-                - sora-2-pro supports 
-                    * Portrait: 720x1280 Landscape: 1280x720
-                    * Portrait: 1024x1792 Landscape: 1792x1024
-            **kwargs: Additional parameters forwarded to the video creation call.
-
-        Returns:
-            A list containing the generated VideoFile object once the job completes.
-        """
-        
-        video = await self.async_client.videos.create_and_poll(
-            model=model,
-            prompt=prompt,
-            seconds=seconds,
-            size=size,
-            **kwargs,
-        )
-
-        if video.status == "completed":
-            logger.info(f"Video successfully completed: {video}")
-        else:
-            logger.error(f"Video creation failed. Status: {video.status}")
-
-        content = await self.async_client.videos.download_content(video.id, variant="video")
-        #await content.write_to_file("video.mp4")
-        return [VideoFile.from_bytes(content, file_name="generated_video.mp4")]
-
     def voice_to_text(
         self,
         audio_file,

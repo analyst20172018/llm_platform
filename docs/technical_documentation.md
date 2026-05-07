@@ -41,7 +41,7 @@ File: `core/llm_handler.py`
 - Conversation state ownership (`self.the_conversation`)
 - Parameter normalization (`_prepare_additional_parameters`)
 - Sync and async request routing
-- Convenience APIs for STT, image generation, video generation, and image editing
+- Convenience APIs for STT, image generation, and image editing
 
 ### 3.2 Public API
 - `request(model, prompt, functions=None, files=[], tool_output_callback=None, additional_parameters=None, **kwargs) -> Message`
@@ -50,7 +50,6 @@ File: `core/llm_handler.py`
 - `request_llm_async(...) -> Message`
 - `voice_to_text(audio_file, audio_format, provider='openai', **kwargs)`
 - `voice_file_to_text(audio_file_name, provider='openai', **kwargs)`
-- `generate_video(prompt, provider='google', **kwargs)`
 - `get_models(adapter_name) -> List[str]`
 - `calculate_tokens(text) -> {'bytes': int, 'tokens': int}` (tiktoken `cl100k_base`)
 
@@ -207,14 +206,13 @@ Currently implemented async LLM paths:
 - `APIHandler.request_async`
 - `OpenAIAdapter.request_llm_async`
 - `OpenAIAdapter.request_llm_with_functions_async`
-- `OpenAIAdapter.generate_video`
 
 Other adapters are sync-only from the `APIHandler` perspective.
 
 ## 8. Multimodal behavior by adapter (implemented)
-- OpenAI: text, image, audio, document inputs; image generation/editing; video generation; legacy `voice_to_text(...)`; model-routed STT via `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize`
+- OpenAI: text, image, audio, document inputs; image generation/editing; legacy `voice_to_text(...)`; model-routed STT via `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize`
 - Anthropic: text/image/document; no STT
-- Google: text/image/audio/document/video inputs; image generation; video generation; Gemini Deep Research agents through background Interactions API calls
+- Google: text/image/audio/document/video inputs; image generation; Gemini Deep Research agents through background Interactions API calls
 - Grok: text/image/document in chat; model-routed STT via `grok-stt`; image generation/editing (separate image adapter)
 - Mistral: text/image/document chat + OCR + STT
 - DeepSeek/OpenRouter: text + image/document conversion (OpenAI-compatible payload)

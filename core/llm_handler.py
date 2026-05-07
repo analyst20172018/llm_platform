@@ -41,9 +41,9 @@ ADAPTER_CLASSES = {
 
 class APIHandler:
     """
-    APIHandler is a class that handles interactions with various language model adapters. 
-    It provides methods for making synchronous and asynchronous requests to language models, converting voice to text, 
-    generating images, and retrieving available models.
+    APIHandler is a class that handles interactions with various language model adapters.
+    It provides methods for making synchronous and asynchronous requests to language models, converting voice to text,
+    and retrieving available models.
     
     Attributes:
         adapters (Dict[str, Any]): A dictionary to store initialized adapters.
@@ -575,36 +575,6 @@ class APIHandler:
 
         with open(audio_file_name, 'rb') as audio_file:
             return self.voice_to_text(audio_file, file_extension, provider, **kwargs)
-
-    async def generate_video(self, prompt: str, provider: str='google', **kwargs):
-        """
-        Generates an video based on the given prompt using the specified provider.
-
-        Args:
-            prompt (str): A textual description of the desired image content.
-            provider (str, optional): The image generation provider to use. 
-                Supported value is 'google'.
-            n (int, optional): The number of videos to generate. Defaults to 1.
-            **kwargs: Additional parameters specific to the chosen provider.
-
-        Keyword Arguments:
-            For the Google adapter:
-                - negative_prompt (str, optional): A description of what to omit in the generated video.
-
-        Returns:
-            list or str: The generated image(s) URL(s) or list of images, depending on the provider.
-
-        Raises:
-            ValueError: If the specified provider is not supported.
-        """
-        normalized_provider = provider.lower()
-        if normalized_provider == 'google':
-            adapter = self._lazy_initialization_of_adapter("GoogleAdapter")
-            return adapter.generate_video(prompt, **kwargs)
-        if normalized_provider == 'openai':
-            adapter = self._lazy_initialization_of_adapter("OpenAIAdapter")
-            return await adapter.generate_video(prompt, **kwargs)
-        raise ValueError(f"Provider {provider} is not supported. I understand only 'google' as provider.")
 
     def get_models(self, adapter_name: str) -> List[str]:
         return self._lazy_initialization_of_adapter(adapter_name).get_models()

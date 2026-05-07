@@ -1,7 +1,6 @@
 import json
 import os
 import time
-from io import BytesIO
 from typing import Callable, Dict, List, Tuple
 from loguru import logger
 
@@ -25,7 +24,6 @@ class GoogleAdapter(AdapterBase):
     # Class-level constants for configuration and mapping
     GEMINI_ROLE_MAPPING = {'user': 'user', 'assistant': 'model'}
     REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000, 'low': 4_000, 'dynamic': -1}
-    VEO_MODEL = 'veo-3.1-generate-preview'
     DEEP_RESEARCH_POLL_INTERVAL_SECONDS = 10
 
     def __init__(self):
@@ -595,84 +593,6 @@ class GoogleAdapter(AdapterBase):
                 types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
             )
         ]
-
-    def generate_video(self,
-                       prompt: str, 
-                       model: str = VEO_MODEL,
-                       aspect_ratio: str = "16:9",                  # "16:9" (default, 720p & 1080p), "9:16"(720p & 1080p)
-                       person_generation: str = "allow_all",        # Text-to-video & Extension: "allow_all" only; Image-to-video, Interpolation, & Reference images: "allow_adult" only
-                       resolution: str = "1080p",                   # "720p" (default), "1080p" (only supports 8s duration and 16:9) 
-                       duration_seconds: int = 8,                   # "4", "6", "8". Must be "8" when using extension or interpolation (supports both 16:9 and 9:16), and when using referenceImages (only supports 16:9)
-                       negative_prompt: str = None,
-                       image: ImageFile = None,                     # An initial image to animate.
-                       number_of_videos: int = 1,                   # Number of videos to generate. Default is 1, max is 4.
-                       #generate_audio: bool = True,                 # Whether to generate audio with the video. Default is True. NOT SUPPORTED
-                       seed: int = None,                            # Random seed for generation. Default is None (random).
-                       lastFrame: ImageFile = None,                 # The final image for an interpolation video to transition. Must be used in combination with the image parameter.
-                       video: VideoFile = None,                     # Video to be used for video extension (only support resolution: 720p, up to 20 times)
-                       reference_images: List[ImageFile] = None,    # Up to three images to be used as style and content references.
-                    ) -> List[VideoFile]:
-        """Generates videos using the Veo model."""
-        params = {
-            "model": model, 
-            "prompt": prompt,
-        }
-        if image:
-            params["image"] = types.Image(image_bytes=image.file_bytes, mime_type=f"image/{image.extension}")
-            if person_generation != "allow_adult":
-                logger.warning("When using 'image' parameter, 'person_generation' must be set to 'allow_adult'. Overriding.")
-                person_generation = "allow_adult"
-
-        if video:
-            params["source"] = types.Video(video_bytes=video.file_bytes, mime_type=f"video/{video.extension}") # Use `source` instead of `video`
-            if duration_seconds != 8:
-                logger.warning("When using 'video' parameter, 'duration_seconds' must be set to 8. Overriding.")
-                duration_seconds = 8
-            if resolution != "720p":
-                logger.warning("When using 'video' parameter, 'resolution' must be set to '720p'. Overriding.")
-                resolution = "720p"
-
-        config = types.GenerateVideosConfig(
-            number_of_videos=number_of_videos,
-            aspect_ratio=aspect_ratio,
-            duration_seconds=duration_seconds,
-            resolution=resolution,
-            person_generation=person_generation,
-            #generate_audio=generate_audio,
-        )
-        if negative_prompt:
-            config.negative_prompt = negative_prompt
-        if seed:
-            config.seed = seed
-        if reference_images:
-            if len(reference_images) > 3:
-                raise ValueError("A maximum of 3 reference images can be provided.")
-            config.reference_images = [
-                types.Image(image_bytes=img.file_bytes, mime_type=f"image/{img.extension}")
-                for img in reference_images
-            ]
-        if lastFrame:
-            if not image:
-                raise ValueError("The 'lastFrame' parameter requires the 'image' parameter to be set.")
-            config.last_frame = types.Image(image_bytes=lastFrame.file_bytes, mime_type=f"image/{lastFrame.extension}")
-        params["config"] = config
-
-        operation = self.client.models.generate_videos(**params)
-
-        while not operation.done:
-            time.sleep(20)  # Polling interval
-            operation = self.client.operations.get(operation)
-
-        video_files = []
-        for i, generated_video in enumerate(operation.response.generated_videos):
-            self.client.files.download(file=generated_video.video)
-            buffer = BytesIO(generated_video.video.video_bytes)
-            buffer.seek(0)
-            video_files.append(VideoFile.from_bytes(
-                file_bytes=buffer.read(),
-                file_name=f"generated_video_{i}.mp4"
-            ))
-        return video_files
 
     def get_models(self) -> List[str]:
         """Retrieves a list of available models."""
