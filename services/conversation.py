@@ -312,6 +312,15 @@ class Conversation:
                 return message.id
         return None
 
+    @property
+    def previous_interaction_id_for_google(self):
+        """Most recent assistant message id, used as Gemini Interactions API
+        ``previous_interaction_id`` to chain server-side conversation state."""
+        for message in reversed(self.messages):
+            if message.role == "assistant" and message.id:
+                return message.id
+        return None
+
     def save_to_json(self) -> Dict:
         return {
             "system_prompt": self.system_prompt,

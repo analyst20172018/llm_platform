@@ -144,6 +144,20 @@ class GoogleAdapter(AdapterBase):
         ``_build_input_from_conversation``."""
         return self._build_input_from_conversation(the_conversation)
 
+    def _build_input_from_latest_user_message(self, conversation: Conversation) -> List[Dict]:
+        """Builds an Interactions ``step_list`` containing only the latest
+        ``user`` message. Used for follow-up calls that chain to a prior
+        interaction via ``previous_interaction_id`` — the server already holds
+        the earlier turns, so re-sending them would duplicate context."""
+        latest_user = next(
+            (m for m in reversed(conversation.messages) if m.role == "user"),
+            None,
+        )
+        if latest_user is None:
+            return []
+        content = self._content_items_for_message(latest_user)
+        return [{"type": "user_input", "content": content}] if content else []
+
     def _build_input_from_conversation(self, conversation: Conversation) -> List[Dict]:
         """
         Builds the ``step_list`` input array consumed by
@@ -608,8 +622,14 @@ class GoogleAdapter(AdapterBase):
         """
         Sends a request to the Gemini Interactions API, handling chat,
         multimodal input, tool calling, structured output, and image generation.
-        Function-calling round-trips inside a single user turn use
-        ``previous_interaction_id`` chaining.
+
+        Server-side conversation state is reused across turns via
+        ``previous_interaction_id``: on the first turn the full conversation is
+        sent and the returned ``interaction.id`` is stored on the assistant
+        ``Message``; on every subsequent turn (and on every function-calling
+        round-trip inside a turn) only the new ``user_input`` / new
+        ``function_result`` entries are sent, chained to the prior interaction
+        id so the server retrieves the rest of the history.
         """
         functions = functions or []
         additional_parameters = additional_parameters or {}
@@ -639,12 +659,24 @@ class GoogleAdapter(AdapterBase):
             additional_parameters=additional_parameters,
         )
 
-        # Initial call: full conversation history as input.
-        input_items = self._build_input_from_conversation(the_conversation)
-        interaction = self.client.interactions.create(
-            input=input_items,
-            **base_kwargs,
-        )
+        # Server-side conversation state: if a prior assistant message in this
+        # conversation has an interaction id, chain to it via
+        # ``previous_interaction_id`` and send only the new user_input.
+        # Otherwise (first turn), send the full history.
+        prev_interaction_id = the_conversation.previous_interaction_id_for_google
+        if prev_interaction_id:
+            input_items = self._build_input_from_latest_user_message(the_conversation)
+            interaction = self.client.interactions.create(
+                input=input_items,
+                previous_interaction_id=prev_interaction_id,
+                **base_kwargs,
+            )
+        else:
+            input_items = self._build_input_from_conversation(the_conversation)
+            interaction = self.client.interactions.create(
+                input=input_items,
+                **base_kwargs,
+            )
 
         while True:
             assistant_message = self._parse_interaction_response(interaction, model)
