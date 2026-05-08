@@ -11,7 +11,9 @@
       "Bash(git checkout *)",
       "Bash(git push *)",
       "WebFetch(domain:ai.google.dev)",
-      "Bash(/mnt/c/Programs/llm_platform/.venv/bin/python -c ' *)"
+      "Bash(/mnt/c/Programs/llm_platform/.venv/bin/python -c ' *)",
+      "Bash(/mnt/c/Programs/llm_platform/.venv/bin/python -c \"import google.genai as g; print\\(g.__version__\\)\")",
+      "Bash(/mnt/c/Programs/llm_platform/.venv/bin/python -c \"import google.genai as g; print\\('version:', g.__version__\\)\")"
     ]
   }
 }

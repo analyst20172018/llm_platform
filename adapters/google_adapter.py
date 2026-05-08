@@ -146,24 +146,25 @@ class GoogleAdapter(AdapterBase):
 
     def _build_input_from_conversation(self, conversation: Conversation) -> List[Dict]:
         """
-        Builds the heterogeneous ``input`` array consumed by
-        ``client.interactions.create``. Plain user/assistant exchanges become
-        Turn objects (``{"role": ..., "content": [...]}``); prior tool
-        round-trips are emitted as top-level ``function_call`` and
-        ``function_result`` entries between turns.
+        Builds the ``step_list`` input array consumed by
+        ``client.interactions.create``. Every entry is a typed Step:
+        ``user_input`` / ``model_output`` for plain exchanges, and
+        ``function_call`` / ``function_result`` for prior tool round-trips.
+        Role-keyed Turn objects (``{"role": ..., "content": [...]}``) are the
+        legacy ``turn_list`` shape and are rejected by the new API.
         """
         input_items: List[Dict] = []
         for message in conversation.messages:
             if message.role == "user":
                 content = self._content_items_for_message(message)
                 if content:
-                    input_items.append({"role": "user", "content": content})
+                    input_items.append({"type": "user_input", "content": content})
                 continue
 
             if message.role == "assistant":
                 content = self._content_items_for_message(message)
                 if content:
-                    input_items.append({"role": "model", "content": content})
+                    input_items.append({"type": "model_output", "content": content})
                 for fc in (message.function_calls or []):
                     entry = {
                         "type": "function_call",
@@ -240,6 +241,16 @@ class GoogleAdapter(AdapterBase):
                 cfg["thinking_budget"] = self.REASONING_EFFORT_MAP.get(effort, 0)
             cfg["thinking_summaries"] = "auto"
 
+        # Image generation: aspect_ratio + resolution belong inside generation_config.image_config.
+        if "image" in (additional_parameters.get("response_modalities") or []):
+            aspect_ratio = additional_parameters.get("aspect_ratio")
+            resolution = additional_parameters.get("resolution")
+            if aspect_ratio and resolution:
+                cfg["image_config"] = {
+                    "aspect_ratio": aspect_ratio,
+                    "image_size": resolution,
+                }
+
         # Forward any unrecognized keys verbatim (matches legacy behavior).
         for key, value in additional_parameters.items():
             if key in self._RESERVED_PARAM_KEYS:
@@ -248,35 +259,36 @@ class GoogleAdapter(AdapterBase):
 
         return cfg
 
-    def _build_response_format(self, additional_parameters: AdditionalParameters):
-        # Image-generation modality: aspect_ratio + resolution → image response_format.
-        if "image" in (additional_parameters.get("response_modalities") or []):
-            aspect_ratio = additional_parameters.get("aspect_ratio")
-            resolution = additional_parameters.get("resolution")
-            if aspect_ratio and resolution:
-                return {
-                    "image": {
-                        "aspect_ratio": aspect_ratio,
-                        "image_size": resolution,
-                    }
-                }
+    def _build_structured_output(
+        self,
+        additional_parameters: AdditionalParameters,
+    ) -> Dict | None:
+        """Returns the polymorphic ``response_format`` body for structured
+        output, or None.
 
-        # Structured output via Pydantic / JSON schema.
-        if structured_output_class := additional_parameters.get("structured_output"):
-            if hasattr(structured_output_class, "model_json_schema"):
-                raw_schema = structured_output_class.model_json_schema()
-                schema = BaseTool.clean_schema(
-                    BaseTool.resolve_schema_for_google(raw_schema)
-                )
-            else:
-                schema = structured_output_class
-            return {
-                "type": "text",
-                "mime_type": "application/json",
-                "schema": schema,
-            }
-
-        return None
+        We send this via ``extra_body`` rather than as a named kwarg because
+        the installed ``google-genai`` SDK (1.73.x) ships a stale
+        ``TextResponseFormatParam`` schema that aliases ``mime_type`` →
+        ``mimeType`` on the wire, while the new Interactions server expects
+        ``mime_type`` (snake_case) inside the polymorphic dict and
+        ``responseFormat`` (camelCase) at the top level. ``extra_body`` keys
+        are merged verbatim, so we control the exact wire shape.
+        """
+        structured_output_class = additional_parameters.get("structured_output")
+        if not structured_output_class:
+            return None
+        if hasattr(structured_output_class, "model_json_schema"):
+            raw_schema = structured_output_class.model_json_schema()
+            schema = BaseTool.clean_schema(
+                BaseTool.resolve_schema_for_google(raw_schema)
+            )
+        else:
+            schema = structured_output_class
+        return {
+            "type": "text",
+            "mime_type": "application/json",
+            "schema": schema,
+        }
 
     def _build_interaction_kwargs(
         self,
@@ -303,8 +315,8 @@ class GoogleAdapter(AdapterBase):
         if response_modalities := additional_parameters.get("response_modalities"):
             kwargs["response_modalities"] = response_modalities
 
-        if response_format := self._build_response_format(additional_parameters):
-            kwargs["response_format"] = response_format
+        if response_format := self._build_structured_output(additional_parameters):
+            kwargs["extra_body"] = {"response_format": response_format}
 
         return kwargs
 

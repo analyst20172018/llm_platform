@@ -676,8 +676,8 @@ models:
       temperature: *param_temperature_fixed_1
       reasoning_effort:
         type: enum
-        options: [minimal, low, high]
-        default: minimal
+        options: [low, high]
+        default: low
         ui: select
         label: Reasoning
         request_key: reasoning.effort
