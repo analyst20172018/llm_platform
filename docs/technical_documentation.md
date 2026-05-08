@@ -161,10 +161,14 @@ Models are grouped by `adapter`, with metadata:
   - Supports web search, code execution, reasoning controls, structured output (non-streaming)
   - Performs max-token correction against context window
 - `GoogleAdapter`
-  - Sync request loop with tool execution
-  - Supports function calling for `BaseTool` tools
-  - Supports `web_search`, `url_context`, `code_execution`, structured output schema shaping, reasoning config
-  - Routes Gemini models marked with both `background_mode: true` and `agent_type: deep_research` through the Interactions API (`client.interactions.create/get`) with `background=True` and `store=True`, polling until completion and returning the final cited report as a standard `Message`
+  - Built entirely on the Gemini **Interactions API** (`client.interactions.create`); the legacy `client.models.generate_content` surface is no longer used
+  - Conversation history is converted into the heterogeneous Interactions `input` array: user/assistant exchanges become Turn objects (`{"role": "user"|"model", "content": [...]}`) and prior tool round-trips become top-level `function_call` / `function_result` entries
+  - System prompt is sent as the top-level `system_instruction` parameter; tools, system instructions, and `generation_config` are re-supplied on every call (interaction-scoped per the API contract)
+  - Function-calling round-trips inside a single user turn are chained via `previous_interaction_id`; only the new `function_result` entries are sent on follow-up calls
+  - Tools are emitted as plain dicts: `{"type": "function", ...}` for `BaseTool` declarations plus `{"type": "google_search"}`, `{"type": "url_context"}`, `{"type": "code_execution"}` for built-ins
+  - Generation parameters (`temperature`, `max_output_tokens`, `thinking_level` for Gemini 3 / `thinking_budget` otherwise, `thinking_summaries: "auto"`) go inside `generation_config`; structured output uses the polymorphic top-level `response_format={"type": "text", "mime_type": "application/json", "schema": ...}`; image generation uses `response_format={"image": {"aspect_ratio": ..., "image_size": ...}}` together with top-level `response_modalities`
+  - Responses are parsed off `interaction.steps`: `model_output` → text/images/citations, `thought` → `ThinkingResponse`, `function_call` → `FunctionCall`, `code_execution_call` / `code_execution_result` → `additional_responses`
+  - Routes Gemini models marked with both `background_mode: true` and `agent_type: deep_research` to a separate Deep Research path (`agent=<model>`, `background=True`, `store=True`), polled until terminal status and parsed into a standard cited `Message`
   - Supports Deep Research text/image/PDF/audio/video inputs from the latest user message
 - `GrokAdapter`
   - Sync chat with optional tool execution loop
@@ -227,7 +231,7 @@ Files: `tools/base.py` and concrete tools in `tools/*.py`
 `BaseTool.to_params(provider=...)` emits provider-specific tool declarations for:
 - OpenAI
 - Anthropic
-- Google (schema transformed to Gemini-compatible form)
+- Google (schema transformed to Gemini-compatible form; `GoogleAdapter` wraps the resulting dict with `{"type": "function", ...}` to satisfy the Interactions API tools schema)
 - Grok
 
 ### 9.2 Built-in tool modules

@@ -1,10 +1,8 @@
 import json
 import os
 import time
-from typing import Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 from loguru import logger
-
-from google.genai import types
 
 from .adapter_base import AdapterBase
 from llm_platform.services.conversation import (Conversation, FunctionCall,
@@ -17,14 +15,33 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
 from llm_platform.tools.base import BaseTool
 from llm_platform.types import AdditionalParameters
 
+
 class GoogleAdapter(AdapterBase):
     """
-    Adapter for interacting with the Google Gemini API.
+    Adapter for the Gemini API. Built on top of the Interactions API
+    (`client.interactions.create`); the legacy `client.models.generate_content`
+    surface is no longer used.
     """
-    # Class-level constants for configuration and mapping
-    GEMINI_ROLE_MAPPING = {'user': 'user', 'assistant': 'model'}
+
     REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000, 'low': 4_000, 'dynamic': -1}
     DEEP_RESEARCH_POLL_INTERVAL_SECONDS = 10
+    DEEP_RESEARCH_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "incomplete"}
+
+    # Keys consumed directly when building Interactions params; everything else
+    # in additional_parameters is forwarded into generation_config verbatim.
+    _RESERVED_PARAM_KEYS = {
+        "max_output_tokens",
+        "temperature",
+        "reasoning",
+        "response_modalities",
+        "web_search",
+        "url_context",
+        "code_execution",
+        "structured_output",
+        "aspect_ratio",
+        "resolution",
+        "agent_config",
+    }
 
     def __init__(self):
         super().__init__()
@@ -34,84 +51,9 @@ class GoogleAdapter(AdapterBase):
         from google import genai
         self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
 
-    def _convert_file_to_part(self, file: MediaFile, id=None) -> types.Part:
-        """Converts a MediaFile object to a Gemini API Part."""
-        part = None
-        if isinstance(file, ImageFile):
-            part = types.Part.from_bytes(
-                    data=file.file_bytes, 
-                    mime_type=f"image/{file.extension}"
-            )
-        elif isinstance(file, AudioFile):
-            part = types.Part.from_bytes(data=file.file_bytes, mime_type="audio/mp3")
-        elif isinstance(file, (TextDocumentFile, ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
-            text = f'<document name="{file.name}">{file.text}</document>'
-            part = types.Part.from_text(text=text)
-        elif isinstance(file, PDFDocumentFile):
-            # Gemini has limits on direct PDF processing
-            if file.size < 20_000_000 and file.number_of_pages < 3_600:
-                part = types.Part.from_bytes(data=file.bytes, mime_type="application/pdf")
-            else:
-                logger.info(f"PDF '{file.name}' exceeds size/page limits; sending as text.")
-                text = f'<document name="{file.name}">{file.text}</document>'
-                part = types.Part.from_text(text=text)
-        else: 
-            logger.critical(f"Unsupported file type for Gemini: {type(file).__name__}")
-            raise TypeError(f"Unsupported file type for Gemini: {type(file).__name__}")
-        
-        if id:
-            part.thought_signature = id
-
-        return part
-
-    def convert_conversation_history_to_adapter_format(self, conversation: Conversation) -> List[types.Content]:
-        """
-        Converts a Conversation object into the list of Content objects
-        required by the Gemini API.
-        """
-        history = []
-        for message in conversation.messages:
-            try:
-                role = self.GEMINI_ROLE_MAPPING[message.role]
-            except KeyError:
-                # 'function' role messages are generated from assistant responses, not directly mapped.
-                if message.role == 'function':
-                    continue
-                raise ValueError(f"Invalid message role for Gemini: '{message.role}'")
-
-            parts = []
-            if message.content:
-                part = types.Part.from_text(text=message.content)
-                if message.id:
-                    part.thought_signature = message.id
-                parts.append(part)
-
-            if message.files:
-                for file in message.files:
-                    try:
-                        parts.append(self._convert_file_to_part(file, id=message.id))
-                    except TypeError as e:
-                        logger.warning(e)
-
-            if message.function_calls:
-                for fc in message.function_calls:
-                    part = types.Part.from_function_call(name=fc.name, args=json.loads(fc.arguments))
-                    if fc.id:
-                        part.thought_signature = fc.id
-                    parts.append(part)
-
-            if parts:
-                history.append(types.Content(role=role, parts=parts))
-
-            # If an assistant message has function responses, add a subsequent 'function' role message
-            if message.function_responses:
-                response_parts = [
-                    types.Part.from_function_response(name=fr.name, response=fr.response)
-                    for fr in message.function_responses
-                ]
-                if response_parts:
-                    history.append(types.Content(role="user", parts=response_parts))
-        return history
+    # ------------------------------------------------------------------
+    # File / content conversion
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _file_mime_type(file: BaseFile) -> str:
@@ -150,78 +92,225 @@ class GoogleAdapter(AdapterBase):
                 "mime_type": self._file_mime_type(file),
             }
         if isinstance(file, PDFDocumentFile):
+            # Gemini direct-PDF processing is capped at ~20 MB / ~3.6k pages
+            if file.size < 20_000_000 and file.number_of_pages < 3_600:
+                return {
+                    "type": "document",
+                    "data": file.base64,
+                    "mime_type": self._file_mime_type(file),
+                }
+            logger.info(f"PDF '{file.name}' exceeds size/page limits; sending as text.")
             return {
-                "type": "document",
-                "data": file.base64,
-                "mime_type": self._file_mime_type(file),
+                "type": "text",
+                "text": f'<document name="{file.name}">{file.text}</document>',
             }
         if isinstance(file, (TextDocumentFile, ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
             return {
                 "type": "text",
                 "text": f'<document name="{file.name}">{file.text}</document>',
             }
+        raise TypeError(f"Unsupported file type for Gemini Interactions API: {type(file).__name__}")
 
-        raise TypeError(f"Unsupported file type for Gemini Deep Research: {type(file).__name__}")
+    # ------------------------------------------------------------------
+    # Conversation → input array
+    # ------------------------------------------------------------------
 
-    def _convert_conversation_to_interaction_input(self, conversation: Conversation) -> str | List[Dict]:
-        user_messages = [message for message in conversation.messages if message.role == "user"]
-        if not user_messages:
-            return ""
+    def _content_items_for_message(self, message: Message) -> List[Dict]:
+        items: List[Dict] = []
+        if message.content:
+            items.append({"type": "text", "text": message.content})
+        for file in (message.files or []):
+            try:
+                items.append(self._convert_file_to_interaction_content(file))
+            except TypeError as e:
+                logger.warning(e)
+        return items
 
-        latest_message = user_messages[-1]
-        text_input = latest_message.content
-        if conversation.system_prompt:
-            text_input = (
-                f"System instructions:\n{conversation.system_prompt}\n\n"
-                f"User request:\n{text_input}"
-            )
+    @staticmethod
+    def _normalize_function_arguments(arguments: Any) -> Dict:
+        if isinstance(arguments, dict):
+            return arguments
+        if isinstance(arguments, str) and arguments:
+            try:
+                return json.loads(arguments)
+            except json.JSONDecodeError:
+                logger.warning("FunctionCall.arguments is not valid JSON; sending empty dict.")
+        return {}
 
-        if not latest_message.files:
-            return text_input
+    def convert_conversation_history_to_adapter_format(
+        self, the_conversation: Conversation, *args, **kwargs
+    ) -> List[Dict]:
+        """AdapterBase entry point — delegates to the Interactions-specific
+        ``_build_input_from_conversation``."""
+        return self._build_input_from_conversation(the_conversation)
 
-        interaction_input: List[Dict] = []
-        if text_input:
-            interaction_input.append({"type": "text", "text": text_input})
+    def _build_input_from_conversation(self, conversation: Conversation) -> List[Dict]:
+        """
+        Builds the heterogeneous ``input`` array consumed by
+        ``client.interactions.create``. Plain user/assistant exchanges become
+        Turn objects (``{"role": ..., "content": [...]}``); prior tool
+        round-trips are emitted as top-level ``function_call`` and
+        ``function_result`` entries between turns.
+        """
+        input_items: List[Dict] = []
+        for message in conversation.messages:
+            if message.role == "user":
+                content = self._content_items_for_message(message)
+                if content:
+                    input_items.append({"role": "user", "content": content})
+                continue
 
-        for file in latest_message.files:
-            interaction_input.append(self._convert_file_to_interaction_content(file))
+            if message.role == "assistant":
+                content = self._content_items_for_message(message)
+                if content:
+                    input_items.append({"role": "model", "content": content})
+                for fc in (message.function_calls or []):
+                    entry = {
+                        "type": "function_call",
+                        "name": fc.name,
+                        "arguments": self._normalize_function_arguments(fc.arguments),
+                    }
+                    if fc.id:
+                        entry["id"] = fc.id
+                    input_items.append(entry)
+                for fr in (message.function_responses or []):
+                    input_items.append(self._function_result_entry(fr))
+                continue
 
-        return interaction_input
+            if message.role == "function":
+                for fr in (message.function_responses or []):
+                    input_items.append(self._function_result_entry(fr))
+                continue
 
-    def _prepare_interaction_tools(self, additional_parameters: AdditionalParameters) -> List[Dict]:
-        return []
+            raise ValueError(f"Invalid message role for Gemini: '{message.role}'")
+        return input_items
 
-    def _create_deep_research_interaction(
+    @staticmethod
+    def _function_result_entry(fr: FunctionResponse) -> Dict:
+        entry = {
+            "type": "function_result",
+            "name": fr.name,
+            "result": [{"type": "text", "text": json.dumps(fr.response)}],
+        }
+        if fr.id:
+            entry["call_id"] = fr.id
+        return entry
+
+    # ------------------------------------------------------------------
+    # Tools / generation_config / response_format
+    # ------------------------------------------------------------------
+
+    def _build_tools(
+        self,
+        functions: List[BaseTool],
+        additional_parameters: AdditionalParameters,
+    ) -> List[Dict]:
+        tools: List[Dict] = []
+        for func in functions or []:
+            if not isinstance(func, BaseTool):
+                continue
+            decl = func.to_params(provider="google")
+            tools.append({"type": "function", **decl})
+
+        if additional_parameters.get("web_search"):
+            tools.append({"type": "google_search"})
+        if additional_parameters.get("url_context"):
+            tools.append({"type": "url_context"})
+        if additional_parameters.get("code_execution"):
+            tools.append({"type": "code_execution"})
+        return tools
+
+    def _build_generation_config(
+        self,
+        model: str,
+        additional_parameters: AdditionalParameters,
+    ) -> Dict:
+        cfg: Dict[str, Any] = {}
+
+        if "temperature" in additional_parameters:
+            cfg["temperature"] = additional_parameters["temperature"]
+        if "max_output_tokens" in additional_parameters:
+            cfg["max_output_tokens"] = additional_parameters["max_output_tokens"]
+
+        if reasoning := additional_parameters.get("reasoning"):
+            effort = reasoning.get("effort", "none")
+            if "gemini-3" in model:
+                cfg["thinking_level"] = effort
+            else:
+                cfg["thinking_budget"] = self.REASONING_EFFORT_MAP.get(effort, 0)
+            cfg["thinking_summaries"] = "auto"
+
+        # Forward any unrecognized keys verbatim (matches legacy behavior).
+        for key, value in additional_parameters.items():
+            if key in self._RESERVED_PARAM_KEYS:
+                continue
+            cfg[key] = value
+
+        return cfg
+
+    def _build_response_format(self, additional_parameters: AdditionalParameters):
+        # Image-generation modality: aspect_ratio + resolution → image response_format.
+        if "image" in (additional_parameters.get("response_modalities") or []):
+            aspect_ratio = additional_parameters.get("aspect_ratio")
+            resolution = additional_parameters.get("resolution")
+            if aspect_ratio and resolution:
+                return {
+                    "image": {
+                        "aspect_ratio": aspect_ratio,
+                        "image_size": resolution,
+                    }
+                }
+
+        # Structured output via Pydantic / JSON schema.
+        if structured_output_class := additional_parameters.get("structured_output"):
+            if hasattr(structured_output_class, "model_json_schema"):
+                raw_schema = structured_output_class.model_json_schema()
+                schema = BaseTool.clean_schema(
+                    BaseTool.resolve_schema_for_google(raw_schema)
+                )
+            else:
+                schema = structured_output_class
+            return {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": schema,
+            }
+
+        return None
+
+    def _build_interaction_kwargs(
         self,
         model: str,
         the_conversation: Conversation,
+        functions: List[BaseTool],
         additional_parameters: AdditionalParameters,
-    ):
-        interaction_params = {
-            "input": self._convert_conversation_to_interaction_input(the_conversation),
-            "agent": model,
-            "background": True,
-            "store": True,
-        }
+    ) -> Dict:
+        """Assembles the kwargs passed to ``client.interactions.create`` *other
+        than* ``input`` and ``previous_interaction_id``. Stays constant across
+        the function-calling loop (tools/system_instruction/generation_config
+        must be re-supplied on every call per the API contract)."""
+        kwargs: Dict[str, Any] = {"model": model}
 
-        if tools := self._prepare_interaction_tools(additional_parameters):
-            interaction_params["tools"] = tools
+        if the_conversation.system_prompt:
+            kwargs["system_instruction"] = the_conversation.system_prompt
 
-        agent_config = dict(additional_parameters.get("agent_config") or {})
-        if agent_config:
-            agent_config.setdefault("type", "deep-research")
-            interaction_params["agent_config"] = agent_config
+        if tools := self._build_tools(functions, additional_parameters):
+            kwargs["tools"] = tools
 
-        return self.client.interactions.create(**interaction_params)
+        if generation_config := self._build_generation_config(model, additional_parameters):
+            kwargs["generation_config"] = generation_config
 
-    DEEP_RESEARCH_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "incomplete"}
+        if response_modalities := additional_parameters.get("response_modalities"):
+            kwargs["response_modalities"] = response_modalities
 
-    def _poll_deep_research_interaction(self, interaction):
-        while getattr(interaction, "status", None) not in self.DEEP_RESEARCH_TERMINAL_STATUSES:
-            time.sleep(self.DEEP_RESEARCH_POLL_INTERVAL_SECONDS)
-            interaction = self.client.interactions.get(interaction.id)
+        if response_format := self._build_response_format(additional_parameters):
+            kwargs["response_format"] = response_format
 
-        return interaction
+        return kwargs
+
+    # ------------------------------------------------------------------
+    # Response parsing
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _format_interaction_annotation(annotation) -> str | None:
@@ -260,10 +349,10 @@ class GoogleAdapter(AdapterBase):
         steps: List,
     ) -> Tuple[str, List[MediaFile], List[str]]:
         """Walks ``model_output`` steps and pulls text, images, and annotations
-        out of their ``content`` arrays (new May 2026 steps schema)."""
-        text_parts = []
-        files = []
-        additional_responses = []
+        out of their ``content`` arrays (May 2026 steps schema)."""
+        text_parts: List[str] = []
+        files: List[MediaFile] = []
+        additional_responses: List[str] = []
         for step in steps or []:
             if getattr(step, "type", "") != "model_output":
                 continue
@@ -294,6 +383,150 @@ class GoogleAdapter(AdapterBase):
                         additional_responses.append(formatted_annotation)
 
         return "\n\n".join(text_parts).strip(), files, additional_responses
+
+    def _parse_interaction_response(self, interaction, model_name: str) -> Message:
+        """Parses a chat ``Interaction`` (text + tools + thinking + code exec)
+        into a platform ``Message``."""
+        text_parts: List[str] = []
+        thoughts: List[ThinkingResponse] = []
+        files: List[MediaFile] = []
+        function_calls: List[FunctionCall] = []
+        additional_responses: List[str] = []
+
+        for step in getattr(interaction, "steps", []) or []:
+            step_type = getattr(step, "type", "")
+
+            if step_type == "model_output":
+                for item in getattr(step, "content", []) or []:
+                    item_type = getattr(item, "type", "")
+                    if item_type == "text":
+                        if text := getattr(item, "text", None):
+                            text_parts.append(text)
+                        for ann in getattr(item, "annotations", []) or []:
+                            if formatted := self._format_interaction_annotation(ann):
+                                additional_responses.append(formatted)
+                    elif item_type == "image" and getattr(item, "data", None):
+                        extension = self._extension_from_mime_type(
+                            getattr(item, "mime_type", None),
+                            "png",
+                        )
+                        files.append(ImageFile.from_base64(
+                            base64_str=item.data,
+                            file_name=f"image_{len(files)}.{extension}",
+                        ))
+
+            elif step_type == "thought":
+                summary_pieces = []
+                for s in getattr(step, "summary", []) or []:
+                    if t := getattr(s, "text", None):
+                        summary_pieces.append(t)
+                if summary_pieces:
+                    thoughts.append(ThinkingResponse(
+                        content="".join(summary_pieces),
+                        id=getattr(step, "signature", None),
+                    ))
+
+            elif step_type == "function_call":
+                arguments = getattr(step, "arguments", {}) or {}
+                arguments_json = arguments if isinstance(arguments, str) else json.dumps(dict(arguments))
+                function_calls.append(FunctionCall(
+                    id=getattr(step, "id", None),
+                    name=getattr(step, "name", ""),
+                    arguments=arguments_json,
+                ))
+
+            elif step_type == "code_execution_call":
+                code = ""
+                args = getattr(step, "arguments", None)
+                if args is not None:
+                    code = getattr(args, "code", "") or (args.get("code", "") if isinstance(args, dict) else "")
+                if code:
+                    additional_responses.append(f"# Executable code \n{code}")
+
+            elif step_type == "code_execution_result":
+                result = getattr(step, "result", "") or ""
+                if result:
+                    additional_responses.append(f"# Code execution result \n{result}")
+
+        usage_metadata = getattr(interaction, "usage", None)
+        usage = {
+            "model": model_name,
+            "prompt_tokens": getattr(usage_metadata, "total_input_tokens", None),
+            "completion_tokens": getattr(usage_metadata, "total_output_tokens", None),
+            "total_tokens": getattr(usage_metadata, "total_tokens", None),
+        }
+
+        text_content = "".join(text_parts).strip()
+        if not text_content and not function_calls and not files:
+            status = getattr(interaction, "status", None)
+            error = getattr(interaction, "error", None)
+            text_content = f"ERROR. No content in response. status={status} error={error}"
+
+        return Message(
+            id=getattr(interaction, "id", None),
+            role="assistant",
+            content=text_content,
+            thinking_responses=thoughts,
+            files=files,
+            function_calls=function_calls,
+            usage=usage,
+            additional_responses=additional_responses,
+        )
+
+    # ------------------------------------------------------------------
+    # Deep Research path
+    # ------------------------------------------------------------------
+
+    def _convert_conversation_to_interaction_input(self, conversation: Conversation) -> str | List[Dict]:
+        user_messages = [message for message in conversation.messages if message.role == "user"]
+        if not user_messages:
+            return ""
+
+        latest_message = user_messages[-1]
+        text_input = latest_message.content
+        if conversation.system_prompt:
+            text_input = (
+                f"System instructions:\n{conversation.system_prompt}\n\n"
+                f"User request:\n{text_input}"
+            )
+
+        if not latest_message.files:
+            return text_input
+
+        interaction_input: List[Dict] = []
+        if text_input:
+            interaction_input.append({"type": "text", "text": text_input})
+
+        for file in latest_message.files:
+            interaction_input.append(self._convert_file_to_interaction_content(file))
+
+        return interaction_input
+
+    def _create_deep_research_interaction(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        additional_parameters: AdditionalParameters,
+    ):
+        interaction_params = {
+            "input": self._convert_conversation_to_interaction_input(the_conversation),
+            "agent": model,
+            "background": True,
+            "store": True,
+        }
+
+        agent_config = dict(additional_parameters.get("agent_config") or {})
+        if agent_config:
+            agent_config.setdefault("type", "deep-research")
+            interaction_params["agent_config"] = agent_config
+
+        return self.client.interactions.create(**interaction_params)
+
+    def _poll_deep_research_interaction(self, interaction):
+        while getattr(interaction, "status", None) not in self.DEEP_RESEARCH_TERMINAL_STATUSES:
+            time.sleep(self.DEEP_RESEARCH_POLL_INTERVAL_SECONDS)
+            interaction = self.client.interactions.get(interaction.id)
+        return interaction
 
     def _parse_deep_research_interaction(self, interaction, model_name: str) -> Message:
         if getattr(interaction, "status", None) != "completed":
@@ -347,176 +580,24 @@ class GoogleAdapter(AdapterBase):
         the_conversation.messages.append(assistant_message)
         return assistant_message
 
-    def _prepare_generation_config(
-        self,
-        model: str,
-        the_conversation: Conversation,
-        tools: List,
-        additional_parameters: AdditionalParameters,
-    ) -> types.GenerateContentConfig:
-        """Prepares the GenerateContentConfig for a Gemini API call."""
-        config_params = {
-            "tools": tools,
-            "safety_settings": self.safety_settings,
-        }
-
-        if "max_output_tokens" in additional_parameters:
-            config_params["max_output_tokens"] = additional_parameters["max_output_tokens"]
-
-        if "temperature" in additional_parameters:
-            config_params["temperature"] = additional_parameters["temperature"]
-
-        if the_conversation.system_prompt:
-            config_params["system_instruction"] = the_conversation.system_prompt
-
-        # Reasoning effort / Thinking config
-        if reasoning_effort_parameter := additional_parameters.get("reasoning", {}):
-            reasoning_effort = reasoning_effort_parameter.get('effort', 'none')
-            if 'gemini-3' in model:
-                # Gemini 3 introduces new parameter - Thinking level
-                config_params["thinking_config"] = types.ThinkingConfig(
-                    thinking_level=reasoning_effort,
-                    include_thoughts=True
-                )
-            else:
-                # If reasoning effort is not set, then disable thinking, by setting the parameter to 0
-                thinking_budget = self.REASONING_EFFORT_MAP.get(reasoning_effort, 0)
-                config_params["thinking_config"] = types.ThinkingConfig(
-                    thinking_budget=thinking_budget, 
-                    include_thoughts=True
-                )
-
-        if "response_modalities" in additional_parameters:
-            config_params["response_modalities"] = additional_parameters["response_modalities"]
-            if "image" in config_params["response_modalities"]:
-                if (aspect_ratio := additional_parameters.get("aspect_ratio")) and \
-                   (resolution := additional_parameters.get("resolution")):
-                    config_params["image_config"] = types.ImageConfig(
-                        aspect_ratio=aspect_ratio,
-                        image_size=resolution,
-                    )
-
-        if additional_parameters.get("web_search"):
-            config_params["tools"].append(types.Tool(google_search=types.GoogleSearch()))
-        if additional_parameters.get("url_context"):
-            config_params["tools"].append(types.Tool(url_context=types.UrlContext()))
-        if additional_parameters.get("code_execution"):
-            config_params["tools"].append(types.Tool(code_execution=types.ToolCodeExecution))
-
-        # Structured output
-        if structured_output_class := additional_parameters.get("structured_output", None):
-            config_params["response_mime_type"] = "application/json"
-            # If it's a Pydantic model, convert to a Gemini-compatible dict schema
-            if hasattr(structured_output_class, "model_json_schema"):
-                raw_schema = structured_output_class.model_json_schema()
-                config_params["response_schema"] = BaseTool.clean_schema(
-                    BaseTool.resolve_schema_for_google(raw_schema)
-                )
-            else:
-                config_params["response_schema"] = structured_output_class
-
-        reserved_keys = {
-            "max_output_tokens",
-            "temperature",
-            "reasoning",
-            "response_modalities",
-            "web_search",
-            "url_context",
-            "code_execution",
-            "structured_output",
-            "aspect_ratio",
-            "resolution",
-        }
-        for key, value in additional_parameters.items():
-            if key in reserved_keys:
-                continue
-            config_params[key] = value
-
-        return types.GenerateContentConfig(**config_params)
-
-    def _parse_gemini_response(self, response: types.HttpResponse, model_name: str) -> Message:
-        """Parses a Gemini API response candidate into a Message object."""
-        text_content, thoughts, files, function_calls, additional_responses = "", [], [], [], []
-
-        usage_metadata=response.usage_metadata
-
-        if not response.candidates or len(response.candidates) == 0:
-            # Get the block reason from prompt_feedback=GenerateContentResponsePromptFeedback(block_reason=...)
-            if prompt_feedback := getattr(response, 'prompt_feedback', None):
-                block_reason = getattr(prompt_feedback, 'block_reason', '')
-            else:
-                block_reason = ''
-            text_content = f"ERROR. No candidates in response. {block_reason}"
-            thought_signature = None
-
-        else:
-            response_candidate = response.candidates[0]
-
-            if response_candidate.content.parts:
-                for part in response_candidate.content.parts:
-                    
-                    # There is a new thought_signature field in Part since Gemini 3
-                    thought_signature = getattr(part, "thought_signature", None) or None
-
-                    if fc := part.function_call:
-                        function_calls.append(FunctionCall(
-                            id=thought_signature,
-                            name=fc.name,
-                            arguments=json.dumps(dict(fc.args))
-                        ))
-                    elif part.text:
-                        if part.thought:
-                            thoughts.append(ThinkingResponse(content=part.text, id=None))
-                        else:
-                            text_content += part.text
-                    elif part.inline_data and "image" in part.inline_data.mime_type:
-                        
-                        mime_type = part.inline_data.mime_type  # e.g. "image/png"
-                        file_type = mime_type.split("/")[-1]
-                        
-                        files.append(ImageFile.from_bytes(
-                            file_bytes=part.inline_data.data,
-                            file_name=f"image_{len(files)}.{file_type}"
-                        ))
-                    elif part.executable_code:
-                        additional_responses.append("# Executable code \n" + part.executable_code.code)
-                    elif part.code_execution_result:
-                        additional_responses.append("# Code execution result \n" + part.code_execution_result.output)
-            # There are no parts in the candidate in the response
-            else:
-                logger.warning(f"No parts in the response candidate. Finish reason is {response_candidate.finish_reason}")
-                text_content = f"No content in response. Finish reason is {response_candidate.finish_reason}"
-                thought_signature = response.response_id
-
-        usage = {
-            "model": model_name,
-            "prompt_tokens": usage_metadata.prompt_token_count,
-            "completion_tokens": usage_metadata.candidates_token_count,
-            "total_tokens": usage_metadata.total_token_count
-        }
-
-        return Message(
-            id=thought_signature,
-            role="assistant",
-            content=text_content.strip(),
-            thinking_responses=thoughts,
-            files=files,
-            function_calls=function_calls,
-            usage=usage,
-            additional_responses=additional_responses,
-        )
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
 
     def request_llm(
-            self, 
-            model: str, 
-            the_conversation: Conversation, 
+            self,
+            model: str,
+            the_conversation: Conversation,
             functions: List[BaseTool] = None,
             tool_output_callback: Callable = None,
-            additional_parameters: AdditionalParameters | None = None, 
-            **kwargs
+            additional_parameters: AdditionalParameters | None = None,
+            **kwargs,
         ) -> Message:
         """
-        Sends a request to the Gemini LLM, handling standard chat and function calling.
+        Sends a request to the Gemini Interactions API, handling chat,
+        multimodal input, tool calling, structured output, and image generation.
+        Function-calling round-trips inside a single user turn use
+        ``previous_interaction_id`` chaining.
         """
         functions = functions or []
         additional_parameters = additional_parameters or {}
@@ -539,41 +620,35 @@ class GoogleAdapter(AdapterBase):
                 additional_parameters=additional_parameters,
             )
 
-        function_declarations = [
-            func.to_params(provider="google")
-            for func in functions if isinstance(func, BaseTool)
-        ]
-        converted_tools = [types.Tool(function_declarations=function_declarations)] if function_declarations else []
-
-        generation_config = self._prepare_generation_config(
+        base_kwargs = self._build_interaction_kwargs(
             model=model,
             the_conversation=the_conversation,
-            tools=converted_tools,
+            functions=functions,
             additional_parameters=additional_parameters,
         )
 
+        # Initial call: full conversation history as input.
+        input_items = self._build_input_from_conversation(the_conversation)
+        interaction = self.client.interactions.create(
+            input=input_items,
+            **base_kwargs,
+        )
+
         while True:
-            history = self.convert_conversation_history_to_adapter_format(the_conversation)
-
-            response = self.client.models.generate_content(
-                contents=history, model=model, config=generation_config
-            )
-
-            assistant_message = self._parse_gemini_response(
-                response=response, model_name=model
-            )
+            assistant_message = self._parse_interaction_response(interaction, model)
             the_conversation.messages.append(assistant_message)
 
             if not assistant_message.function_calls:
-                return assistant_message  # Final response from the model
+                return assistant_message
 
-            # --- Handle Function Calling ---
+            # --- Execute tools and continue with previous_interaction_id ---
             function_responses = []
             for fc in assistant_message.function_calls:
                 function_to_call = next((f for f in functions if f.__name__ == fc.name), None)
                 if not function_to_call:
                     raise ValueError(f"Function '{fc.name}' not found in provided tools.")
 
+                args: Dict = {}
                 try:
                     args = json.loads(fc.arguments)
                     result = function_to_call(**args)
@@ -586,33 +661,21 @@ class GoogleAdapter(AdapterBase):
                     tool_output_callback(fc.name, args, result)
 
             assistant_message.function_responses = function_responses
-            # Loop will continue, sending the function results back to the model
 
-    @property
-    def safety_settings(self) -> List[types.SafetySetting]:
-        """Returns safety settings to disable all content blocking."""
-        return [
-            types.SafetySetting(category=category, threshold=types.HarmBlockThreshold.BLOCK_NONE)
-            for category in (
-                types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+            result_inputs = [self._function_result_entry(fr) for fr in function_responses]
+            interaction = self.client.interactions.create(
+                input=result_inputs,
+                previous_interaction_id=interaction.id,
+                **base_kwargs,
             )
-        ]
 
     def request_llm_with_functions(self,
-                                   model: str, 
-                                   config: types.GenerateContentConfig,
-                                   the_conversation: Conversation, 
-                                   functions: List[BaseTool]=[], 
-                                   tool_output_callback: Callable=None,
+                                   model: str,
+                                   config: Dict,
+                                   the_conversation: Conversation,
+                                   functions: List[BaseTool] = [],
+                                   tool_output_callback: Callable = None,
                                    additional_parameters: AdditionalParameters | None = None,
-                                   **kwargs
-                                   ): 
-        """
-        Not implemented
-        This method is not implemented in the GoogleAdapter.
-        """
+                                   **kwargs):
+        """Not implemented in GoogleAdapter."""
         raise NotImplementedError("request_llm_with_functions is not implemented in GoogleAdapter.")
