@@ -568,8 +568,8 @@ models:
           value: true
       resolution:
         type: enum
-        options: [1K, 2K, 4K]
-        default: 4K
+        options: [1K, 2K]
+        default: 2K
         ui: select
         label: Resolution
         depends_on:
@@ -608,8 +608,8 @@ models:
           value: true
       resolution:
         type: enum
-        options: [0.5K, 1K, 2K, 4K]
-        default: 4K
+        options: [1K, 2K]
+        default: 2K
         ui: select
         label: Resolution
         depends_on:
