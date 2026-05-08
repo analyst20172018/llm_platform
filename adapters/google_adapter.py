@@ -214,8 +214,10 @@ class GoogleAdapter(AdapterBase):
 
         return self.client.interactions.create(**interaction_params)
 
+    DEEP_RESEARCH_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "incomplete"}
+
     def _poll_deep_research_interaction(self, interaction):
-        while getattr(interaction, "status", None) in {"queued", "in_progress"}:
+        while getattr(interaction, "status", None) not in self.DEEP_RESEARCH_TERMINAL_STATUSES:
             time.sleep(self.DEEP_RESEARCH_POLL_INTERVAL_SECONDS)
             interaction = self.client.interactions.get(interaction.id)
 
@@ -253,37 +255,43 @@ class GoogleAdapter(AdapterBase):
         extension = mime_type.split("/", 1)[1]
         return "jpg" if extension == "jpeg" else extension
 
-    def _extract_interaction_outputs(
+    def _extract_interaction_steps(
         self,
-        outputs: List,
+        steps: List,
     ) -> Tuple[str, List[MediaFile], List[str]]:
+        """Walks ``model_output`` steps and pulls text, images, and annotations
+        out of their ``content`` arrays (new May 2026 steps schema)."""
         text_parts = []
         files = []
         additional_responses = []
-        for output in outputs or []:
-            output_type = getattr(output, "type", "")
-
-            if output_type == "image" and getattr(output, "data", None):
-                extension = self._extension_from_mime_type(
-                    getattr(output, "mime_type", None),
-                    "png",
-                )
-                files.append(ImageFile.from_base64(
-                    base64_str=output.data,
-                    file_name=f"image_{len(files)}.{extension}",
-                ))
+        for step in steps or []:
+            if getattr(step, "type", "") != "model_output":
                 continue
 
-            if output_type != "text":
-                continue
+            for item in getattr(step, "content", []) or []:
+                item_type = getattr(item, "type", "")
 
-            if text := getattr(output, "text", None):
-                text_parts.append(text)
+                if item_type == "image" and getattr(item, "data", None):
+                    extension = self._extension_from_mime_type(
+                        getattr(item, "mime_type", None),
+                        "png",
+                    )
+                    files.append(ImageFile.from_base64(
+                        base64_str=item.data,
+                        file_name=f"image_{len(files)}.{extension}",
+                    ))
+                    continue
 
-            for annotation in getattr(output, "annotations", []) or []:
-                formatted_annotation = self._format_interaction_annotation(annotation)
-                if formatted_annotation:
-                    additional_responses.append(formatted_annotation)
+                if item_type != "text":
+                    continue
+
+                if text := getattr(item, "text", None):
+                    text_parts.append(text)
+
+                for annotation in getattr(item, "annotations", []) or []:
+                    formatted_annotation = self._format_interaction_annotation(annotation)
+                    if formatted_annotation:
+                        additional_responses.append(formatted_annotation)
 
         return "\n\n".join(text_parts).strip(), files, additional_responses
 
@@ -295,8 +303,8 @@ class GoogleAdapter(AdapterBase):
                 f"status '{interaction.status}'. {error or ''}".strip()
             )
 
-        text_content, files, additional_responses = self._extract_interaction_outputs(
-            getattr(interaction, "outputs", []) or []
+        text_content, files, additional_responses = self._extract_interaction_steps(
+            getattr(interaction, "steps", []) or []
         )
 
         usage_metadata = getattr(interaction, "usage", None)

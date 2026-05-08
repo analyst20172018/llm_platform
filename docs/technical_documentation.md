@@ -302,7 +302,8 @@ From `requirements.txt`:
 3. The latest user message is converted into Interactions input; the conversation system prompt is prepended to the text input because Deep Research agents do not support `system_instruction`.
 4. Images, PDFs, audio, and video are sent as inline base64 content while Office/text documents are converted to text content.
 5. The adapter starts the interaction with `agent=<model>`, `background=True`, and `store=True`; it does not send `generation_config` because Gemini agents require agent-specific configuration through `agent_config`.
-6. Completed outputs are parsed into a standard assistant `Message`; text outputs become message content, image outputs become `ImageFile` attachments, citation annotations become `additional_responses`, and interaction usage is mapped to the usual usage keys.
+6. The adapter polls until the interaction reaches a terminal status (`completed`, `failed`, `cancelled`, or `incomplete`).
+7. The completed interaction is parsed using the May 2026 steps schema: the adapter walks `interaction.steps`, picks `model_output` steps, and pulls text / image / annotation items out of each step's `content[]` array. Text content joins into the assistant message body, image content becomes `ImageFile` attachments, citation annotations become `additional_responses`, and `interaction.usage` (`total_input_tokens`, `total_output_tokens`, `total_tokens`) is mapped to the usual usage keys.
 
 ## 15. Extending the platform
 
