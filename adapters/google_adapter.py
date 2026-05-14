@@ -38,6 +38,7 @@ class GoogleAdapter(AdapterBase):
         "url_context",
         "code_execution",
         "structured_output",
+        "image_output",
         "aspect_ratio",
         "resolution",
         "agent_config",
@@ -255,16 +256,6 @@ class GoogleAdapter(AdapterBase):
                 cfg["thinking_budget"] = self.REASONING_EFFORT_MAP.get(effort, 0)
             cfg["thinking_summaries"] = "auto"
 
-        # Image generation: aspect_ratio + resolution belong inside generation_config.image_config.
-        if "image" in (additional_parameters.get("response_modalities") or []):
-            aspect_ratio = additional_parameters.get("aspect_ratio")
-            resolution = additional_parameters.get("resolution")
-            if aspect_ratio and resolution:
-                cfg["image_config"] = {
-                    "aspect_ratio": aspect_ratio,
-                    "image_size": resolution,
-                }
-
         # Forward any unrecognized keys verbatim (matches legacy behavior).
         for key, value in additional_parameters.items():
             if key in self._RESERVED_PARAM_KEYS:
@@ -272,6 +263,22 @@ class GoogleAdapter(AdapterBase):
             cfg[key] = value
 
         return cfg
+
+    @staticmethod
+    def _build_image_response_format(
+        additional_parameters: AdditionalParameters,
+    ) -> Dict | None:
+        """Returns the ``response_format`` body for image generation on the
+        Interactions API, or None. Per the public docs, aspect ratio and
+        resolution are sent here (not inside ``generation_config``)."""
+        if not additional_parameters.get("image_output"):
+            return None
+        response_format: Dict[str, Any] = {"type": "image", "mime_type": "image/jpeg"}
+        if aspect_ratio := additional_parameters.get("aspect_ratio"):
+            response_format["aspect_ratio"] = aspect_ratio
+        if resolution := additional_parameters.get("resolution"):
+            response_format["image_size"] = resolution
+        return response_format
 
     def _build_structured_output(
         self,
@@ -326,10 +333,9 @@ class GoogleAdapter(AdapterBase):
         if generation_config := self._build_generation_config(model, additional_parameters):
             kwargs["generation_config"] = generation_config
 
-        if response_modalities := additional_parameters.get("response_modalities"):
-            kwargs["response_modalities"] = response_modalities
-
-        if response_format := self._build_structured_output(additional_parameters):
+        if image_response_format := self._build_image_response_format(additional_parameters):
+            kwargs["extra_body"] = {"response_format": image_response_format}
+        elif response_format := self._build_structured_output(additional_parameters):
             kwargs["extra_body"] = {"response_format": response_format}
 
         return kwargs

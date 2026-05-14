@@ -556,7 +556,9 @@ models:
         default: 32768
       web_search: *param_web_search
       structured_output: *param_structured_output
-      image_output: *param_image_output
+      image_output:
+        <<: *param_image_output
+        include_in_request: true
       aspect_ratio:
         type: enum
         options: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
@@ -568,8 +570,8 @@ models:
           value: true
       resolution:
         type: enum
-        options: [1K, 2K]
-        default: 2K
+        options: [1K, 2K, 4K]
+        default: 4K
         ui: select
         label: Resolution
         depends_on:
@@ -596,7 +598,9 @@ models:
         default: 32768
       web_search: *param_web_search
       structured_output: *param_structured_output
-      image_output: *param_image_output
+      image_output:
+        <<: *param_image_output
+        include_in_request: true
       aspect_ratio:
         type: enum
         options: ["1:1", "1:4", "4:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "1:8", "8:1", "9:16", "16:9", "21:9"]
@@ -608,8 +612,8 @@ models:
           value: true
       resolution:
         type: enum
-        options: [1K, 2K]
-        default: 2K
+        options: [1K, 2K, 4K]
+        default: 4K
         ui: select
         label: Resolution
         depends_on:
