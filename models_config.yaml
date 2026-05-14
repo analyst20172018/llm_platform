@@ -708,78 +708,13 @@ models:
       structured_output: *param_structured_output
       web_search: *param_web_search
       code_execution: *param_code_execution
-    visible: true
-
-  - name: grok-4.20-0309-reasoning
-    display_name: Grok 4.2 Reasoning
-    adapter: GrokAdapter
-    pricing:
-      input: 2 # USD/1M tokens
-      output: 6 # USD/1M tokens
-    context_window: 256_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_tokens
-        default: 64000
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      web_search: *param_web_search
-      code_execution: *param_code_execution
-    visible: true
-
-  - name: grok-4.20-0309-non-reasoning
-    display_name: Grok 4.2 (Non-Reasoning)
-    adapter: GrokAdapter
-    pricing:
-      input: 2 # USD/1M tokens
-      output: 6 # USD/1M tokens
-    context_window: 2_000_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_tokens
-        default: 64000
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      web_search: *param_web_search
-      code_execution: *param_code_execution
-    visible: true
-
-  - name: grok-4.20-multi-agent-0309
-    display_name: Grok 4.2 Multi Agent
-    adapter: GrokAdapter
-    pricing:
-      input: 2 # USD/1M tokens
-      output: 6 # USD/1M tokens
-    context_window: 2_000_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_tokens
-        default: 64000
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      web_search: *param_web_search
-      code_execution: *param_code_execution
-      agent_count:
+      reasoning_effort:
         type: enum
-        options: [4, 16]
-        default: 4
+        options: [none, low, medium, high]
+        default: low
         ui: select
-        label: Agent Count
+        label: Reasoning
+        request_key: reasoning.effort
     visible: true
 
   - name: grok-stt

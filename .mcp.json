@@ -1,10 +1,6 @@
 {
   "mcpServers": {
-    "gemini-docs": {
-      "type": "http",
-      "url": "https://gemini-api-docs-mcp.dev"
-    },
-    "openai-developers-docs": {
+    "openaiDeveloperDocs": {
       "type": "http",
       "url": "https://developers.openai.com/mcp"
     }
