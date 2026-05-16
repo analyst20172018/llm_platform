@@ -18,8 +18,6 @@ class AdditionalParameters(TypedDict, total=False):
     code_execution: bool  # allow code execution tool when supported
     citations_enabled: bool  # request citations for supported providers
     structured_output: Any  # pydantic model class for schema parsing
-    aspect_ratio: str  # image output aspect ratio (e.g. "1:1")
-    resolution: str  # image output resolution (e.g. "1K", "2K", "4K")
     temperature: float  # sampling temperature
     max_tokens: int  # hard cap on response tokens
     reasoning: ReasoningParameters  # reasoning/effort tuning
@@ -37,11 +35,6 @@ class AdditionalParameters(TypedDict, total=False):
     tag_audio_events: bool  # STT audio event tagging
     num_speakers: int  # STT speaker count hint
     transcription_prompt: str  # OpenAI STT prompt passed to the transcription endpoint
-    # Parameters for OpenAI image models
-    size: str  # image size (OpenAI image models)
-    background: str  # image background (OpenAI image models)
-    quality: str  # image quality (e.g. "low", "medium", "high")
-    output_format: str  # image output format (e.g. "png", "jpg")
     # Additional parameters for AssemblyAI STT
     language_detection: bool  # AssemblyAI language detection on/off
     speakers_expected: int  # AssemblyAI expected speaker count

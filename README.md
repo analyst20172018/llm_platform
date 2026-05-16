@@ -13,7 +13,6 @@
 - [Working with Files](#working-with-files)
 - [Function and Tool Calling](#function-and-tool-calling)
 - [Speech and Audio](#speech-and-audio)
-- [Image Generation](#image-generation)
 - [Model Configuration](#model-configuration)
 - [Extending the Platform](#extending-the-platform)
 - [Development Workflow](#development-workflow)
@@ -36,7 +35,6 @@ Use it to:
 - **Function/tool calling** – Invoke Python callables or custom `BaseTool` implementations from any provider that supports tool use.
 - **Multimodal requests** – Attach text, PDFs, spreadsheets, images, audio, or video in a single prompt.
 - **Voice workflows** – Convert speech to text via OpenAI or Speechmatics and reuse the transcripts immediately.
-- **Image generation** – Produce images with OpenAI or Google using the same interface.
 - **Model catalog** – YAML-driven registry describes pricing, capabilities, and adapter routing for every model.
 - **Provider extensibility** – Drop in new adapters without touching the core request flow.
 
@@ -203,17 +201,6 @@ transcript = handler.request(
 follow_up = handler.request(
     model="gpt-4o",
     prompt=f"Summarise this call and flag any action items: {transcript}",
-)
-```
-
-## Image Generation
-Image generation is exposed through `handler.request(...)` by selecting an image-capable model (e.g. `gpt-image-2-2026-04-21`). The model entry in `models_config.yaml` routes the call to the matching image adapter (`OpenAIImageAdapter`, `GrokImageAdapter`, etc.).
-
-```python
-result = handler.request(
-    model="gpt-image-2-2026-04-21",
-    prompt="A cyberpunk cityscape with neon reflections after rain",
-    additional_parameters={"size": "1024x1024"},
 )
 ```
 

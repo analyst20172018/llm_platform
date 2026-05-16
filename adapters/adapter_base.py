@@ -12,7 +12,7 @@ class AdapterBase(ABC):
 
     Subclasses convert a `Conversation` into the provider's wire format and
     expose `request_llm` plus `request_llm_with_functions` for tool-calling.
-    Speech-only and image-only adapters do not inherit from this class.
+    Speech-only adapters do not inherit from this class.
     """
 
     def __init__(self):

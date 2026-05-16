@@ -9,10 +9,8 @@ from llm_platform.adapters.deepseek_adapter import DeepSeekAdapter
 from llm_platform.adapters.elevenlabs_adapter import ElevenLabsAdapter
 from llm_platform.adapters.google_adapter import GoogleAdapter
 from llm_platform.adapters.grok_adapter import GrokAdapter
-from llm_platform.adapters.grok_image_adapter import GrokImageAdapter
 from llm_platform.adapters.mistral_adapter import MistralAdapter
 from llm_platform.adapters.openai_adapter import OpenAIAdapter
-from llm_platform.adapters.openai_image_adapter import OpenAIImageAdapter
 from llm_platform.adapters.openai_old_adapter import OpenAIOldAdapter
 from llm_platform.adapters.openrouter_adapter import OpenRouterAdapter
 from llm_platform.adapters.speechmatics_adapter import SpeechmaticsAdapter
@@ -24,7 +22,6 @@ from llm_platform.types import AdditionalParameters
 
 ADAPTER_CLASSES = {
     "OpenAIAdapter": OpenAIAdapter,
-    "OpenAIImageAdapter": OpenAIImageAdapter,
     "AnthropicAdapter": AnthropicAdapter,
     "OpenRouterAdapter": OpenRouterAdapter,
     "SpeechmaticsAdapter": SpeechmaticsAdapter,
@@ -32,7 +29,6 @@ ADAPTER_CLASSES = {
     "AssemblyAIAdapter": AssemblyAIAdapter,
     "GoogleAdapter": GoogleAdapter,
     "GrokAdapter": GrokAdapter,
-    "GrokImageAdapter": GrokImageAdapter,
     "DeepSeekAdapter": DeepSeekAdapter,
     "MistralAdapter": MistralAdapter,
     "OpenAIOldAdapter": OpenAIOldAdapter,

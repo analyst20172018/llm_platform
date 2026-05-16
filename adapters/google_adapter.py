@@ -38,9 +38,6 @@ class GoogleAdapter(AdapterBase):
         "url_context",
         "code_execution",
         "structured_output",
-        "image_output",
-        "aspect_ratio",
-        "resolution",
         "agent_config",
     }
 
@@ -264,22 +261,6 @@ class GoogleAdapter(AdapterBase):
 
         return cfg
 
-    @staticmethod
-    def _build_image_response_format(
-        additional_parameters: AdditionalParameters,
-    ) -> Dict | None:
-        """Returns the ``response_format`` body for image generation on the
-        Interactions API, or None. Per the public docs, aspect ratio and
-        resolution are sent here (not inside ``generation_config``)."""
-        if not additional_parameters.get("image_output"):
-            return None
-        response_format: Dict[str, Any] = {"type": "image", "mime_type": "image/jpeg"}
-        if aspect_ratio := additional_parameters.get("aspect_ratio"):
-            response_format["aspect_ratio"] = aspect_ratio
-        if resolution := additional_parameters.get("resolution"):
-            response_format["image_size"] = resolution
-        return response_format
-
     def _build_structured_output(
         self,
         additional_parameters: AdditionalParameters,
@@ -333,9 +314,7 @@ class GoogleAdapter(AdapterBase):
         if generation_config := self._build_generation_config(model, additional_parameters):
             kwargs["generation_config"] = generation_config
 
-        if image_response_format := self._build_image_response_format(additional_parameters):
-            kwargs["extra_body"] = {"response_format": image_response_format}
-        elif response_format := self._build_structured_output(additional_parameters):
+        if response_format := self._build_structured_output(additional_parameters):
             kwargs["extra_body"] = {"response_format": response_format}
 
         return kwargs
@@ -627,7 +606,7 @@ class GoogleAdapter(AdapterBase):
         ) -> Message:
         """
         Sends a request to the Gemini Interactions API, handling chat,
-        multimodal input, tool calling, structured output, and image generation.
+        multimodal input, tool calling, and structured output.
 
         Server-side conversation state is reused across turns via
         ``previous_interaction_id``: on the first turn the full conversation is

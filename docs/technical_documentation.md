@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-04-21
+Version: 2026-05-16
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -9,7 +9,7 @@ This project is a provider-agnostic Python platform for:
 - Tool/function calling during conversations
 - Multimodal input handling (text, images, audio, PDF, Excel, Word, PowerPoint, video)
 - Speech-to-text integrations
-- Image and video generation integrations
+- Provider-specific image, audio, document, and video input handling
 - YAML-driven model routing and parameter governance
 
 This document describes the implementation as it exists now.
@@ -49,16 +49,16 @@ File: `core/llm_handler.py`
 - `request_llm_async(...) -> Message`
 - `calculate_tokens(text) -> {'bytes': int, 'tokens': int}` (tiktoken `cl100k_base`)
 
-STT, image generation, and image editing are dispatched through `request(...)` by choosing an appropriate model; the YAML model registry routes to the matching adapter.
+STT is dispatched through `request(...)` by choosing an appropriate transcription model; the YAML model registry routes to the matching adapter.
 
 ### 3.3 Adapter resolution
 Adapter class is selected by model's `adapter` in `models_config.yaml` and instantiated on demand.
 
 Registered adapter classes include:
-- `OpenAIAdapter`, `OpenAIImageAdapter`, `OpenAIOldAdapter`
+- `OpenAIAdapter`, `OpenAIOldAdapter`
 - `AnthropicAdapter`
 - `GoogleAdapter`
-- `GrokAdapter`, `GrokImageAdapter`
+- `GrokAdapter`
 - `DeepSeekAdapter`
 - `OpenRouterAdapter`
 - `MistralAdapter`
@@ -120,9 +120,9 @@ File: `services/files.py`
 File: `helpers/model_config.py`, config in `models_config.yaml`
 
 ### 6.1 Current catalog summary
-- Total models: 32
-- Visible models: 25
-- Adapter families: 13
+- Total models: 27
+- Visible models: 18
+- Adapter families: 11
 
 Models are grouped by `adapter`, with metadata:
 - `name`, `display_name`
@@ -167,7 +167,7 @@ Models are grouped by `adapter`, with metadata:
   - Server-side conversation state is reused across turns via `previous_interaction_id`. The first turn sends the full converted history; the returned `interaction.id` is stored on the assistant `Message`. On every subsequent turn the adapter resolves the prior id through `Conversation.previous_interaction_id_for_google` and sends only the new `user_input` (mirroring the `previous_response_id_for_openai` pattern used by `OpenAIAdapter`).
   - Function-calling round-trips inside a single user turn use the same `previous_interaction_id` chaining; only the new `function_result` entries are sent on follow-up calls
   - Tools are emitted as plain dicts: `{"type": "function", ...}` for `BaseTool` declarations plus `{"type": "google_search"}`, `{"type": "url_context"}`, `{"type": "code_execution"}` for built-ins
-  - Generation parameters (`temperature`, `max_output_tokens`, `thinking_level` for Gemini 3 / `thinking_budget` otherwise, `thinking_summaries: "auto"`) go inside `generation_config`. Image generation and structured output are both sent through the top-level `response_format` field (the Interactions API polymorphic shape) via `extra_body` to bypass stale SDK serialization: image output uses `{type: "image", mime_type, aspect_ratio, image_size}` and is keyed off the `image_output` flag (with `aspect_ratio` and `resolution` mapped to the API's `aspect_ratio` / `image_size`); structured output uses `{type: "text", mime_type: "application/json", schema}`. The image and structured-output paths are mutually exclusive — image takes precedence when both are requested.
+  - Generation parameters (`temperature`, `max_output_tokens`, `thinking_level` for Gemini 3 / `thinking_budget` otherwise, `thinking_summaries: "auto"`) go inside `generation_config`. Structured output is sent through the top-level `response_format` field (the Interactions API polymorphic shape) via `extra_body` to bypass stale SDK serialization: `{type: "text", mime_type: "application/json", schema}`.
   - Responses are parsed off `interaction.steps`: `model_output` → text/images/citations, `thought` → `ThinkingResponse`, `function_call` → `FunctionCall`, `code_execution_call` / `code_execution_result` → `additional_responses`
   - Routes Gemini models marked with both `background_mode: true` and `agent_type: deep_research` to a separate Deep Research path (`agent=<model>`, `background=True`, `store=True`), polled until terminal status and parsed into a standard cited `Message`
   - Supports Deep Research text/image/PDF/audio/video inputs from the latest user message
@@ -191,12 +191,6 @@ Models are grouped by `adapter`, with metadata:
   - No tool execution implementation (`NotImplemented`)
 
 ### 7.2 Specialized adapters
-- `OpenAIImageAdapter`
-  - Dedicated OpenAI image model adapter
-  - Generates or edits image based on presence of input image files
-- `GrokImageAdapter`
-  - Dedicated xAI image adapter
-  - Generates or edits one image
 - `SpeechmaticsAdapter`
   - Speechmatics batch transcription
 - `ElevenLabsAdapter`
@@ -213,10 +207,10 @@ Currently implemented async LLM paths:
 Other adapters are sync-only from the `APIHandler` perspective.
 
 ## 8. Multimodal behavior by adapter (implemented)
-- OpenAI: text, image, audio, document inputs; image generation/editing; model-routed STT via `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize`
+- OpenAI: text, image, audio, document inputs; model-routed STT via `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize`
 - Anthropic: text/image/document; no STT
-- Google: text/image/audio/document/video inputs; image generation; Gemini Deep Research agents through background Interactions API calls
-- Grok: text/image/document in chat; model-routed STT via `grok-stt`; image generation/editing (separate image adapter)
+- Google: text/image/audio/document/video inputs; Gemini Deep Research agents through background Interactions API calls
+- Grok: text/image/document in chat; model-routed STT via `grok-stt`
 - Mistral: text/image/document chat + OCR + STT
 - DeepSeek/OpenRouter: text + image/document conversion (OpenAI-compatible payload)
 - Speechmatics/ElevenLabs/AssemblyAI: STT-only workflows
@@ -273,7 +267,7 @@ From `requirements.txt`:
 1. Env-var naming inconsistency between docs and implementation (`GOOGLE_GEMINI_API_KEY` vs `GOOGLE_API_KEY`, `XAI_API_KEY` vs `GROK_API_KEY`, `ELEVEN_API_KEY` vs `ELEVENLABS_API_KEY`).
 2. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral, not in DeepSeek/OpenRouter).
 3. Mutable default arguments exist in `Message` initializer (`[]` defaults), which is a Python risk pattern.
-4. `AdapterBase` is intentionally limited to chat-LLM adapters; speech-only and image-only adapters (`OpenAIImageAdapter`, `GrokImageAdapter`, `ElevenLabsAdapter`, `AssemblyAIAdapter`, `SpeechmaticsAdapter`) are standalone classes since the chat contract (`request_llm_with_functions`, conversation conversion) does not fit transcription/image generation.
+4. `AdapterBase` is intentionally limited to chat-LLM adapters; speech-only adapters (`ElevenLabsAdapter`, `AssemblyAIAdapter`, `SpeechmaticsAdapter`) are standalone classes since the chat contract (`request_llm_with_functions`, conversation conversion) does not fit transcription.
 5. Legacy and current OpenAI paths coexist (`OpenAIAdapter` and `OpenAIOldAdapter`).
 
 ## 14. Request lifecycle details
@@ -319,7 +313,7 @@ From `requirements.txt`:
 2. Ensure the mapped adapter exists in `APIHandler._lazy_initialization_of_adapter`.
 
 ### 15.2 Add a new adapter
-1. Implement adapter class in `adapters/`. Inherit `AdapterBase` for chat-LLM adapters; for transcription or image-generation adapters, define a standalone class (see `ElevenLabsAdapter`, `OpenAIImageAdapter`).
+1. Implement adapter class in `adapters/`. Inherit `AdapterBase` for chat-LLM adapters; for transcription adapters, define a standalone class (see `ElevenLabsAdapter`).
 2. Implement at least `request_llm` and conversation conversion.
 3. Add adapter mapping in `APIHandler` lazy-init map.
 4. Add model entries in `models_config.yaml`.

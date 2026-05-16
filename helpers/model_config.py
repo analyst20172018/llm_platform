@@ -5,22 +5,6 @@ from typing import Any, Dict, List
 class Model:
 
     @staticmethod
-    def _as_ratio_string(item) -> str:
-        """Convert YAML-loaded ratio values (including base-60 ints) into colon-separated strings."""
-        if isinstance(item, dict) and len(item) == 1:
-            key, value = next(iter(item.items()))
-            return f"{key}:{value}"
-
-        if isinstance(item, (int, float)):
-            whole = int(item)
-            high, low = divmod(whole, 60)
-            if high == 0:
-                return str(whole)
-            return f"{high}:{low}"
-
-        return str(item)
-
-    @staticmethod
     def _as_string_list(raw_value) -> List[str]:
         if not isinstance(raw_value, list):
             return []
@@ -94,12 +78,7 @@ class Model:
 
             if param_type == "enum":
                 options = normalized_definition.get("options")
-                if name == "aspect_ratio":
-                    normalized_definition["options"] = [
-                        self._as_ratio_string(item) for item in options or [] if item is not None
-                    ]
-                else:
-                    normalized_definition["options"] = self._as_string_list(options)
+                normalized_definition["options"] = self._as_string_list(options)
 
             normalized[name] = normalized_definition
 
@@ -160,20 +139,6 @@ class Model:
     @property
     def verbosity(self) -> List[str]:
         definition = self.get_parameter("verbosity")
-        if definition:
-            return definition.get("options", [])
-        return []
-
-    @property
-    def aspect_ratio(self) -> List[str]:
-        definition = self.get_parameter("aspect_ratio")
-        if definition:
-            return definition.get("options", [])
-        return []
-
-    @property
-    def resolution(self) -> List[str]:
-        definition = self.get_parameter("resolution")
         if definition:
             return definition.get("options", [])
         return []
