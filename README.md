@@ -12,7 +12,6 @@
 - [Core Concepts](#core-concepts)
 - [Working with Files](#working-with-files)
 - [Function and Tool Calling](#function-and-tool-calling)
-- [Speech and Audio](#speech-and-audio)
 - [Model Configuration](#model-configuration)
 - [Extending the Platform](#extending-the-platform)
 - [Development Workflow](#development-workflow)
@@ -21,7 +20,7 @@
 - [License](#license)
 
 ## Overview
-LLM Platform streamlines application development across large language model providers. It wraps the quirks of each vendor SDK (OpenAI, Anthropic, Google Gemini, DeepSeek, Grok, OpenRouter, Speechmatics, ElevenLabs, Mistral, and more) behind a single Python surface. The platform keeps conversation state, negotiates function calls, normalises multimodal payloads, and exposes thoughtful defaults with escape hatches when direct SDK access is required.
+LLM Platform streamlines application development across large language model providers. It wraps the quirks of each vendor SDK (OpenAI, Anthropic, Google Gemini, DeepSeek, Grok, OpenRouter, Mistral, and more) behind a single Python surface. The platform keeps conversation state, negotiates function calls, normalises multimodal payloads, and exposes thoughtful defaults with escape hatches when direct SDK access is required.
 
 Use it to:
 - Prototype and ship LLM-backed product features without committing to a single provider.
@@ -34,7 +33,6 @@ Use it to:
 - **Stateful conversations** – Built-in conversation objects persist history, usage metrics, and tool exchange metadata.
 - **Function/tool calling** – Invoke Python callables or custom `BaseTool` implementations from any provider that supports tool use.
 - **Multimodal requests** – Attach text, PDFs, spreadsheets, images, audio, or video in a single prompt.
-- **Voice workflows** – Convert speech to text via OpenAI or Speechmatics and reuse the transcripts immediately.
 - **Model catalog** – YAML-driven registry describes pricing, capabilities, and adapter routing for every model.
 - **Provider extensibility** – Drop in new adapters without touching the core request flow.
 
@@ -99,8 +97,6 @@ GOOGLE_API_KEY=...
 DEEPSEEK_API_KEY=...
 GROK_API_KEY=...
 OPENROUTER_API_KEY=...
-SPEECHMATICS_API_KEY=...
-ELEVENLABS_API_KEY=...
 MISTRAL_API_KEY=...
 ```
 Only the keys for providers you call are required at runtime.
@@ -184,25 +180,6 @@ response = handler.request(
 )
 ```
 Adapters translate tool schemas and invocations for each provider (OpenAI tool calls, Anthropic tool use, Gemini function calling, etc.). Tool outputs are appended to the conversation and optionally streamed through `tool_output_callback`.
-
-## Speech and Audio
-Speech-to-text is invoked through `handler.request(...)` by selecting a transcription-capable model and passing a single `AudioFile` in `files`. The model entry in `models_config.yaml` routes the call to the matching adapter (`SpeechmaticsAdapter`, `ElevenLabsAdapter`, `AssemblyAIAdapter`, or model-routed STT inside `OpenAIAdapter` / `GrokAdapter`).
-
-```python
-from llm_platform.services.files import AudioFile
-
-audio = AudioFile.from_path("customer_call.mp3")
-transcript = handler.request(
-    model="speechmatics",
-    prompt="",
-    files=[audio],
-).content
-
-follow_up = handler.request(
-    model="gpt-4o",
-    prompt=f"Summarise this call and flag any action items: {transcript}",
-)
-```
 
 ## Model Configuration
 `models_config.yaml` contains the canonical registry of supported models. Each entry defines:

@@ -5,3 +5,7 @@ CLAUDE.md
 .venv/
 notebooks/
 .claude/
+.agents/
+.mcp.json
+.codex
+skills-lock.json

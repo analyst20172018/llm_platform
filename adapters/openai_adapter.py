@@ -4,15 +4,12 @@ Adapter for interacting with the OpenAI API.
 
 This module provides a class, OpenAIAdapter, that conforms to the AdapterBase
 interface and handles the specifics of formatting requests and parsing responses
-for the OpenAI platform. It supports standard chat completions, function calling,
-and audio transcription.
+for the OpenAI platform. It supports standard chat completions and function calling.
 """
 
 import asyncio
-import io
 import inspect
 import json
-from pathlib import Path
 from typing import Callable, Dict, List, Tuple, Union
 from loguru import logger
 import time
@@ -42,24 +39,6 @@ IMAGE_GENERATION_CALL_TYPE = "image_generation_call"
 REASONING_CALL_TYPE = "reasoning"
 CODE_INTERPRETER_CALL_TYPE = "code_interpreter_call"
 
-# Constants for transcription models
-WHISPER_1 = "whisper-1"
-GPT4O_TRANSCRIBE = "gpt-4o-transcribe"
-GPT4O_MINI_TRANSCRIBE = "gpt-4o-mini-transcribe"
-GPT4O_TRANSCRIBE_DIARIZE = "gpt-4o-transcribe-diarize"
-GPT4O_TRANSCRIBE_DIARIZE_CHUNKING_STRATEGY = "auto"
-OPENAI_TRANSCRIPTION_MODELS = {
-    WHISPER_1,
-    GPT4O_TRANSCRIBE,
-    GPT4O_MINI_TRANSCRIBE,
-    GPT4O_TRANSCRIBE_DIARIZE,
-}
-OPENAI_GPT_TRANSCRIPTION_MODELS = {
-    GPT4O_TRANSCRIBE,
-    GPT4O_MINI_TRANSCRIBE,
-}
-TRANSCRIPTION_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
-
 
 class OpenAIAdapter(AdapterBase):
     """
@@ -78,254 +57,6 @@ class OpenAIAdapter(AdapterBase):
         from openai import AsyncOpenAI, OpenAI
         self.client = OpenAI()
         self.async_client = AsyncOpenAI()
-
-    @staticmethod
-    def _is_transcription_model(model: str) -> bool:
-        return model in OPENAI_TRANSCRIPTION_MODELS
-
-    @staticmethod
-    def _default_transcription_response_format(model: str) -> str:
-        if model == GPT4O_TRANSCRIBE_DIARIZE:
-            return "diarized_json"
-        if model in OPENAI_GPT_TRANSCRIPTION_MODELS:
-            return "json"
-        return "text"
-
-    @staticmethod
-    def _allowed_transcription_response_formats(model: str) -> set[str]:
-        if model == WHISPER_1:
-            return {"json", "text", "srt", "verbose_json", "vtt"}
-        if model in OPENAI_GPT_TRANSCRIPTION_MODELS:
-            return {"json"}
-        if model == GPT4O_TRANSCRIBE_DIARIZE:
-            return {"json", "text", "diarized_json"}
-        return set()
-
-    @staticmethod
-    def _format_diarized_transcription(transcription) -> str:
-        segments = getattr(transcription, "segments", None) or []
-        if not segments:
-            return getattr(transcription, "text", "")
-
-        diarized_output = []
-        for segment in segments:
-            speaker = getattr(segment, "speaker", "Speaker")
-            text = getattr(segment, "text", "").strip()
-            if text:
-                diarized_output.append(f"[{speaker}]: {text}")
-
-        if diarized_output:
-            return "\n\n".join(diarized_output)
-        return getattr(transcription, "text", "")
-
-    @staticmethod
-    def _normalize_transcription_usage(model: str, usage_obj) -> Dict:
-        usage = {
-            "model": model,
-            "prompt_tokens": None,
-            "completion_tokens": None,
-        }
-        if usage_obj is None:
-            return usage
-
-        usage_type = getattr(usage_obj, "type", None)
-        usage["usage_type"] = usage_type
-
-        if usage_type == "tokens":
-            input_token_details = getattr(usage_obj, "input_token_details", None)
-            usage.update(
-                {
-                    "prompt_tokens": getattr(usage_obj, "input_tokens", None),
-                    "completion_tokens": getattr(usage_obj, "output_tokens", None),
-                    "total_tokens": getattr(usage_obj, "total_tokens", None),
-                    "audio_input_tokens": getattr(input_token_details, "audio_tokens", None),
-                    "text_input_tokens": getattr(input_token_details, "text_tokens", None),
-                }
-            )
-            return usage
-
-        if usage_type == "duration":
-            usage["audio_seconds"] = getattr(usage_obj, "seconds", None)
-
-        return usage
-
-    @staticmethod
-    def _error_message(the_conversation: Conversation, content: str) -> Message:
-        message = Message(role="assistant", content=content, usage={})
-        the_conversation.messages.append(message)
-        return message
-
-    def _extract_audio_file_for_transcription(self, the_conversation: Conversation) -> AudioFile | None:
-        files = getattr(the_conversation.messages[-1], "files", [])
-        if len(files) != 1:
-            return None
-
-        audio_file = files[0]
-        if not isinstance(audio_file, AudioFile):
-            return None
-
-        return audio_file
-
-    @staticmethod
-    def _prepare_audio_file_for_transcription(audio_source) -> io.BytesIO:
-        if isinstance(audio_source, AudioFile):
-            buffer = io.BytesIO(audio_source.file_bytes)
-            stem = Path(audio_source.name or "audio").stem or "audio"
-            buffer.name = f"{stem}.mp3"
-            buffer.seek(0)
-            return buffer
-
-        if hasattr(audio_source, "seek"):
-            try:
-                audio_source.seek(0)
-            except (AttributeError, OSError, ValueError):
-                pass
-
-        if hasattr(audio_source, "read"):
-            file_bytes = audio_source.read()
-            buffer = io.BytesIO(file_bytes)
-            original_name = getattr(audio_source, "name", "") or "audio.mp3"
-            suffix = Path(original_name).suffix or ".mp3"
-            buffer.name = f"{Path(original_name).stem or 'audio'}{suffix}"
-            buffer.seek(0)
-            return buffer
-
-        raise ValueError("Audio file must be a file-like object or an AudioFile instance.")
-
-    def _create_transcription_parameters(
-        self,
-        model: str,
-        audio_file,
-        additional_parameters: AdditionalParameters | None = None,
-    ) -> Dict:
-        additional_parameters = additional_parameters or {}
-        response_format = additional_parameters.get(
-            "response_format",
-            self._default_transcription_response_format(model),
-        )
-
-        valid_formats = self._allowed_transcription_response_formats(model)
-        if response_format not in valid_formats:
-            raise ValueError(
-                f"Model {model} supports response_format values {sorted(valid_formats)}, "
-                f"got '{response_format}'."
-            )
-
-        parameters = {
-            "model": model,
-            "file": self._prepare_audio_file_for_transcription(audio_file),
-            "response_format": response_format,
-        }
-
-        if language := additional_parameters.get("language"):
-            parameters["language"] = language
-        if additional_parameters.get("temperature") is not None:
-            parameters["temperature"] = additional_parameters["temperature"]
-
-        prompt = additional_parameters.get("prompt")
-
-        if model == GPT4O_TRANSCRIBE_DIARIZE:
-            if prompt:
-                raise ValueError("The gpt-4o-transcribe-diarize model does not support prompt.")
-            parameters["chunking_strategy"] = GPT4O_TRANSCRIBE_DIARIZE_CHUNKING_STRATEGY
-            return parameters
-
-        if prompt:
-            parameters["prompt"] = prompt
-
-        return parameters
-
-    def _transcribe_conversation_audio(
-        self,
-        model: str,
-        the_conversation: Conversation,
-        additional_parameters: AdditionalParameters | None = None,
-    ) -> Message:
-        audio_file = self._extract_audio_file_for_transcription(the_conversation)
-        if audio_file is None:
-            return self._error_message(
-                the_conversation,
-                "OpenAI transcription models require exactly one audio file in the last user message.",
-            )
-
-        if len(audio_file.file_bytes) > TRANSCRIPTION_MAX_FILE_SIZE_BYTES:
-            return self._error_message(
-                the_conversation,
-                "OpenAI transcription uploads are limited to 25 MB per file.",
-            )
-
-        try:
-            response = self.client.audio.transcriptions.create(
-                **self._create_transcription_parameters(
-                    model=model,
-                    audio_file=audio_file,
-                    additional_parameters=additional_parameters,
-                )
-            )
-        except Exception as error:
-            logger.error(f"OpenAI transcription failed: {error}")
-            return self._error_message(the_conversation, f"OpenAI transcription failed: {error}")
-
-        if isinstance(response, str):
-            content = response
-        elif model == GPT4O_TRANSCRIBE_DIARIZE and getattr(response, "segments", None):
-            content = self._format_diarized_transcription(response)
-        else:
-            content = getattr(response, "text", str(response))
-
-        message = Message(
-            role="assistant",
-            content=content,
-            usage=self._normalize_transcription_usage(model, getattr(response, "usage", None)),
-        )
-        the_conversation.messages.append(message)
-        return message
-
-    async def _transcribe_conversation_audio_async(
-        self,
-        model: str,
-        the_conversation: Conversation,
-        additional_parameters: AdditionalParameters | None = None,
-    ) -> Message:
-        audio_file = self._extract_audio_file_for_transcription(the_conversation)
-        if audio_file is None:
-            return self._error_message(
-                the_conversation,
-                "OpenAI transcription models require exactly one audio file in the last user message.",
-            )
-
-        if len(audio_file.file_bytes) > TRANSCRIPTION_MAX_FILE_SIZE_BYTES:
-            return self._error_message(
-                the_conversation,
-                "OpenAI transcription uploads are limited to 25 MB per file.",
-            )
-
-        try:
-            response = await self.async_client.audio.transcriptions.create(
-                **self._create_transcription_parameters(
-                    model=model,
-                    audio_file=audio_file,
-                    additional_parameters=additional_parameters,
-                )
-            )
-        except Exception as error:
-            logger.error(f"OpenAI transcription failed: {error}")
-            return self._error_message(the_conversation, f"OpenAI transcription failed: {error}")
-
-        if isinstance(response, str):
-            content = response
-        elif model == GPT4O_TRANSCRIBE_DIARIZE and getattr(response, "segments", None):
-            content = self._format_diarized_transcription(response)
-        else:
-            content = getattr(response, "text", str(response))
-
-        message = Message(
-            role="assistant",
-            content=content,
-            usage=self._normalize_transcription_usage(model, getattr(response, "usage", None)),
-        )
-        the_conversation.messages.append(message)
-        return message
 
     def _convert_file_to_content(self, file: BaseFile) -> Dict | None:
         """
@@ -746,15 +477,6 @@ class OpenAIAdapter(AdapterBase):
             for key, value in kwargs.items():
                 additional_parameters.setdefault(key, value)
 
-        if self._is_transcription_model(model):
-            if functions:
-                logger.warning("OpenAI transcription models ignore function/tool definitions.")
-            return self._transcribe_conversation_audio(
-                model=model,
-                the_conversation=the_conversation,
-                additional_parameters=additional_parameters,
-            )
-
         if functions:
             response = self.request_llm_with_functions(
                 model=model,
@@ -826,15 +548,6 @@ class OpenAIAdapter(AdapterBase):
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
             for key, value in kwargs.items():
                 additional_parameters.setdefault(key, value)
-
-        if self._is_transcription_model(model):
-            if functions:
-                logger.warning("OpenAI transcription models ignore function/tool definitions.")
-            return await self._transcribe_conversation_audio_async(
-                model=model,
-                the_conversation=the_conversation,
-                additional_parameters=additional_parameters,
-            )
 
         if functions:
             response = await self.request_llm_with_functions_async(

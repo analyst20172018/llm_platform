@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-05-16
+Version: 2026-05-17
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -8,7 +8,6 @@ This project is a provider-agnostic Python platform for:
 - Multi-provider LLM text interactions through one facade (`APIHandler`)
 - Tool/function calling during conversations
 - Multimodal input handling (text, images, audio, PDF, Excel, Word, PowerPoint, video)
-- Speech-to-text integrations
 - Provider-specific image, audio, document, and video input handling
 - YAML-driven model routing and parameter governance
 
@@ -49,22 +48,17 @@ File: `core/llm_handler.py`
 - `request_llm_async(...) -> Message`
 - `calculate_tokens(text) -> {'bytes': int, 'tokens': int}` (tiktoken `cl100k_base`)
 
-STT is dispatched through `request(...)` by choosing an appropriate transcription model; the YAML model registry routes to the matching adapter.
-
 ### 3.3 Adapter resolution
 Adapter class is selected by model's `adapter` in `models_config.yaml` and instantiated on demand.
 
 Registered adapter classes include:
-- `OpenAIAdapter`, `OpenAIOldAdapter`
+- `OpenAIAdapter`
 - `AnthropicAdapter`
 - `GoogleAdapter`
 - `GrokAdapter`
 - `DeepSeekAdapter`
 - `OpenRouterAdapter`
 - `MistralAdapter`
-- `SpeechmaticsAdapter`
-- `ElevenLabsAdapter`
-- `AssemblyAIAdapter`
 
 ### 3.4 Additional parameter normalization pipeline
 Implemented in `_prepare_additional_parameters`:
@@ -120,9 +114,9 @@ File: `services/files.py`
 File: `helpers/model_config.py`, config in `models_config.yaml`
 
 ### 6.1 Current catalog summary
-- Total models: 27
-- Visible models: 18
-- Adapter families: 11
+- Total models: 20
+- Visible models: 12
+- Adapter families: 7
 
 Models are grouped by `adapter`, with metadata:
 - `name`, `display_name`
@@ -149,8 +143,6 @@ Models are grouped by `adapter`, with metadata:
   - Responses API based chat flow
   - Sync + async request methods
   - Tool calling with recursive loop
-  - Model-routed speech-to-text path for `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize` via OpenAI's `/v1/audio/transcriptions` endpoint
-  - For `gpt-4o-transcribe-diarize`, the adapter hardcodes `chunking_strategy="auto"` and does not expose manual chunking or known-speaker reference parameters in the library surface
   - Supports `web_search`, `code_execution`, structured output parsing, reasoning/text parameter pass-through
   - Supports file citations retrieval from container files
 - `AnthropicAdapter`
@@ -175,12 +167,8 @@ Models are grouped by `adapter`, with metadata:
   - Sync chat with optional tool execution loop
   - Supports web search and code execution tools in xAI SDK
   - Supports structured output through xAI SDK `response_format` for both standard requests and Grok 4 tool-enabled requests
-  - Model-routed speech-to-text path for `grok-stt` via xAI's `/v1/stt` REST endpoint
-  - Formats diarized output into speaker-labeled transcript blocks and multichannel output into per-channel sections
 - `MistralAdapter`
   - Sync chat, recursive function-calling, OCR mode, and audio transcription mode
-- `OpenAIOldAdapter`
-  - Legacy chat completions path, including audio modalities and recursive function calling
 - `DeepSeekAdapter`
   - OpenAI-compatible chat completion path
   - Basic text/image input conversion
@@ -190,15 +178,7 @@ Models are grouped by `adapter`, with metadata:
   - Basic text/image input conversion
   - No tool execution implementation (`NotImplemented`)
 
-### 7.2 Specialized adapters
-- `SpeechmaticsAdapter`
-  - Speechmatics batch transcription
-- `ElevenLabsAdapter`
-  - ElevenLabs Scribe transcription with optional diarization formatting
-- `AssemblyAIAdapter`
-  - AssemblyAI transcription with polling
-
-### 7.3 Async support
+### 7.2 Async support
 Currently implemented async LLM paths:
 - `APIHandler.request_async`
 - `OpenAIAdapter.request_llm_async`
@@ -207,13 +187,12 @@ Currently implemented async LLM paths:
 Other adapters are sync-only from the `APIHandler` perspective.
 
 ## 8. Multimodal behavior by adapter (implemented)
-- OpenAI: text, image, audio, document inputs; model-routed STT via `gpt-4o-transcribe` and `gpt-4o-transcribe-diarize`
-- Anthropic: text/image/document; no STT
+- OpenAI: text, image, audio, document inputs
+- Anthropic: text/image/document
 - Google: text/image/audio/document/video inputs; Gemini Deep Research agents through background Interactions API calls
-- Grok: text/image/document in chat; model-routed STT via `grok-stt`
-- Mistral: text/image/document chat + OCR + STT
+- Grok: text/image/document in chat
+- Mistral: text/image/document chat + OCR + audio transcription mode
 - DeepSeek/OpenRouter: text + image/document conversion (OpenAI-compatible payload)
-- Speechmatics/ElevenLabs/AssemblyAI: STT-only workflows
 
 ## 9. Tools subsystem
 Files: `tools/base.py` and concrete tools in `tools/*.py`
@@ -245,30 +224,24 @@ Current code expects:
 - `DEEPSEEK_API_KEY`
 - `OPENROUTER_API_KEY`
 - `MISTRAL_API_KEY`
-- `SPEECHMATICS_API_KEY`
-- `ELEVEN_API_KEY`
-- `ASSEMBLYAI_API_KEY`
 
-Important: current `README.md` and some older docs list different variable names for Google/Grok/ElevenLabs. The values above reflect actual adapter code.
+Important: current `README.md` and some older docs list different variable names for Google/Grok. The values above reflect actual adapter code.
 
 ## 11. Dependencies
 From `requirements.txt`:
-- Provider SDKs: `openai`, `anthropic`, `google-genai`, `mistralai`, `xai_sdk`, `elevenlabs`, `speechmatics-python`, `assemblyai`
+- Provider SDKs: `openai`, `anthropic`, `google-genai`, `mistralai`, `xai_sdk`
 - Data/media: `pandas`, `pillow`, `PyPDF2`, `pydub`, `lxml`
 - Tooling and support: `pydantic`, `python-dotenv`, `PyYAML`, `requests`, `tiktoken`, `loguru`, `rich`, `praw`
 
 ## 12. Error handling and observability
 - Logging uses `loguru` in orchestration and adapters.
 - `APIHandler.request_llm` catches adapter exceptions and appends an assistant error message.
-- Several adapters append user-readable error messages to conversation when input validation fails (especially STT adapters).
 - Some adapter methods remain `NotImplemented` and will raise directly.
 
 ## 13. Known implementation gaps and inconsistencies
-1. Env-var naming inconsistency between docs and implementation (`GOOGLE_GEMINI_API_KEY` vs `GOOGLE_API_KEY`, `XAI_API_KEY` vs `GROK_API_KEY`, `ELEVEN_API_KEY` vs `ELEVENLABS_API_KEY`).
+1. Env-var naming inconsistency between docs and implementation (`GOOGLE_GEMINI_API_KEY` vs `GOOGLE_API_KEY`, `XAI_API_KEY` vs `GROK_API_KEY`).
 2. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral, not in DeepSeek/OpenRouter).
 3. Mutable default arguments exist in `Message` initializer (`[]` defaults), which is a Python risk pattern.
-4. `AdapterBase` is intentionally limited to chat-LLM adapters; speech-only adapters (`ElevenLabsAdapter`, `AssemblyAIAdapter`, `SpeechmaticsAdapter`) are standalone classes since the chat contract (`request_llm_with_functions`, conversation conversion) does not fit transcription.
-5. Legacy and current OpenAI paths coexist (`OpenAIAdapter` and `OpenAIOldAdapter`).
 
 ## 14. Request lifecycle details
 
@@ -289,13 +262,7 @@ From `requirements.txt`:
 5. Conversation is updated with tool call/response records.
 6. Adapter recursively calls provider until final non-tool assistant output is produced.
 
-### 14.3 Speech-to-text flow
-1. User supplies one audio file in latest message.
-2. STT adapter validates input and optional language/diarization parameters.
-3. Adapter submits job/polls or performs direct transcription call.
-4. Assistant message returns transcript text.
-
-### 14.4 Gemini Deep Research flow
+### 14.3 Gemini Deep Research flow
 1. Client calls a model such as `deep-research-preview-04-2026` or `deep-research-max-preview-04-2026`.
 2. `models_config.yaml` marks the model with `background_mode: true` and `agent_type: deep_research`, so `GoogleAdapter` uses the Gemini Interactions API instead of `models.generate_content`.
 3. The latest user message is converted into Interactions input; the conversation system prompt is prepended to the text input because Deep Research agents do not support `system_instruction`.
@@ -313,7 +280,7 @@ From `requirements.txt`:
 2. Ensure the mapped adapter exists in `APIHandler._lazy_initialization_of_adapter`.
 
 ### 15.2 Add a new adapter
-1. Implement adapter class in `adapters/`. Inherit `AdapterBase` for chat-LLM adapters; for transcription adapters, define a standalone class (see `ElevenLabsAdapter`).
+1. Implement adapter class in `adapters/` inheriting `AdapterBase`.
 2. Implement at least `request_llm` and conversation conversion.
 3. Add adapter mapping in `APIHandler` lazy-init map.
 4. Add model entries in `models_config.yaml`.

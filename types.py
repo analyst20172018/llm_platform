@@ -12,7 +12,6 @@ class TextParameters(TypedDict, total=False):
 
 class AdditionalParameters(TypedDict, total=False):
     response_modalities: List[str]  # e.g. ["text", "image", "audio"]
-    response_format: str  # output format for STT or other endpoint-specific responses
     web_search: bool  # allow integrated web search when supported
     url_context: bool  # enable URL context tool (Gemini)
     code_execution: bool  # allow code execution tool when supported
@@ -23,18 +22,3 @@ class AdditionalParameters(TypedDict, total=False):
     reasoning: ReasoningParameters  # reasoning/effort tuning
     text: TextParameters  # text verbosity tuning
     agent_count: int # parameter for Grok Multi Agent model
-    # Parameters for STT providers
-    language: str  # STT language code (e.g. "en")
-    format: bool  # enable STT text formatting / inverse text normalization
-    audio_format: str  # raw audio encoding hint (e.g. "pcm", "mulaw", "alaw")
-    sample_rate: int  # raw audio sample rate in Hz
-    multichannel: bool  # transcribe each audio channel independently
-    channels: int  # channel count hint for multichannel raw audio
-    diarize: bool  # STT diarization on/off
-    diarized: bool  # STT diarization on/off
-    tag_audio_events: bool  # STT audio event tagging
-    num_speakers: int  # STT speaker count hint
-    transcription_prompt: str  # OpenAI STT prompt passed to the transcription endpoint
-    # Additional parameters for AssemblyAI STT
-    language_detection: bool  # AssemblyAI language detection on/off
-    speakers_expected: int  # AssemblyAI expected speaker count
