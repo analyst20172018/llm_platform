@@ -132,6 +132,7 @@ Models are grouped by `adapter`, with metadata:
 - `additional_parameters` schema (including request defaults such as `max_tokens`)
 - optional `background_mode`
 - optional `agent_type` for Google agent routing, currently `deep_research`
+- optional `adaptive_thinking` (Anthropic): when true the adapter sends `thinking: {type: "adaptive"}` + `output_config.effort`; otherwise it falls back to the legacy `thinking: {type: "enabled", budget_tokens}`. Set on models that reject `enabled`/`budget_tokens` (Opus 4.7/4.8, Sonnet 4.6)
 
 ### 6.2 Parameter schema capabilities
 `Model` normalizes `additional_parameters` and supports:
@@ -156,6 +157,7 @@ Models are grouped by `adapter`, with metadata:
   - Streaming auto-enabled for large `max_tokens` (>= 21000)
   - Recursive tool-use loop
   - Supports web search, code execution, reasoning controls, structured output (non-streaming)
+  - Thinking mode is chosen per model from the `adaptive_thinking` flag in `models_config.yaml`: flagged models (Opus 4.7/4.8, Sonnet 4.6) use `thinking: {type: "adaptive"}` + `output_config.effort`; others use legacy `thinking: {type: "enabled", budget_tokens}`. (Models such as Opus 4.8 reject `enabled`/`budget_tokens` with a 400.)
   - Performs max-token correction against context window
 - `GoogleAdapter`
   - Built entirely on the Gemini **Interactions API** (`client.interactions.create`); the legacy `client.models.generate_content` surface is no longer used

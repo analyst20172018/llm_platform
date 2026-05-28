@@ -46,6 +46,7 @@ models:
   - name: claude-sonnet-4-6
     display_name: Claude Sonnet 4.6 👍
     adapter: AnthropicAdapter
+    adaptive_thinking: true
     pricing:
       input: 3 # USD/1M tokens
       output: 15 # USD/1M tokens
@@ -75,6 +76,7 @@ models:
   - name: claude-opus-4-8
     display_name: Claude Opus 4.8 💰
     adapter: AnthropicAdapter
+    adaptive_thinking: true
     pricing:
       input: 5 # USD/1M tokens
       output: 25 # USD/1M tokens

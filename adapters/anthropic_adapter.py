@@ -460,7 +460,13 @@ class AnthropicAdapter(AdapterBase):
 
         output_config = {}
 
-        if model in ["claude-opus-4-7", "claude-sonnet-4-6"]:
+        # Newer models (Opus 4.7/4.8, Sonnet 4.6, ...) require adaptive thinking:
+        # `thinking.type: "enabled"` with a fixed budget returns a 400 on them
+        # ("use thinking.type.adaptive and output_config.effort"). This is driven by
+        # the per-model `adaptive_thinking` flag in models_config.yaml, so enabling a
+        # new model is a config change rather than editing a hardcoded model list.
+        model_object = self.model_config[model]
+        if model_object and model_object["adaptive_thinking"]:
             reasoning_effort = additional_parameters.get("reasoning", {}).get("effort", None)
             if reasoning_effort:
                 request_kwargs['thinking'] = {"type": "adaptive"}
