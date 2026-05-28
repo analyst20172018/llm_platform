@@ -1,3 +1,4 @@
+import functools
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List
@@ -144,7 +145,7 @@ class Model:
         return []
 
     @property
-    def additional_parameters(self) -> List[Dict[str, any]]:
+    def additional_parameters(self) -> List[Dict[str, Any]]:
         return list(self._parameter_definitions.values())
 
     def parameter_definitions(self) -> Dict[str, Dict[str, Any]]:
@@ -165,22 +166,29 @@ class Model:
     def has_parameter(self, name: str) -> bool:
         return name in self._parameter_definitions
 
+@functools.lru_cache(maxsize=1)
+def _load_model_config_cached() -> Dict[str, Any]:
+    """Parse models_config.yaml once and cache it (avoids re-reading per construction)."""
+    config_path = Path(__file__).parent.parent / 'models_config.yaml'
+    with config_path.open('r', encoding="utf-8") as file:
+        return yaml.safe_load(file)
+
+
 class ModelConfig:
 
     def __init__(self) -> None:
         self.model_config = self.load_model_config()
+        self._models_by_name = {
+            each_model['name']: each_model for each_model in self.model_config.get('models', [])
+        }
 
-    def __getitem__(self, model_name:str) -> Model:
-        for each_model in self.model_config['models']:
-            if each_model['name'] == model_name:
-                return Model(each_model)
-        return None
+    def __getitem__(self, model_name: str) -> Model | None:
+        raw_model = self._models_by_name.get(model_name)
+        return Model(raw_model) if raw_model is not None else None
 
     @staticmethod
     def load_model_config():
-        config_path = Path(__file__).parent.parent / 'models_config.yaml'
-        with config_path.open('r', encoding="utf-8") as file:
-            return yaml.safe_load(file)
+        return _load_model_config_cached()
 
     def model_names(self) -> List[str]:
         """Get the list of all the models"""
@@ -220,14 +228,11 @@ class ModelConfig:
     # Legacy code
 
     def model(self, model_name) -> Dict:
-        """Get the model configuration for the given model"""
-        for each_model in self.model_config['models']:
-            if each_model['name'] == model_name:
-                return each_model
-        return None
-    
+        """Get the raw model configuration entry for the given model."""
+        return self._models_by_name.get(model_name)
+
     def model_has_parameter(self, model_name, parameter_name) -> bool:
-        """Check if the model has the given parameter"""
+        """Check if the model has the given parameter."""
         model = self[model_name]
         if not model:
             return False
@@ -236,31 +241,23 @@ class ModelConfig:
         return parameter_name in (model.model_config_data or {})
 
     def possible_inputs(self, model_name) -> List:
-        """Get the possible inputs for the model"""
-        for each_model in self.model_config['models']:
-            if each_model['name'] == model_name:
-                return each_model.get('inputs', [])
-        return []
+        """Get the possible inputs for the model."""
+        raw_model = self._models_by_name.get(model_name)
+        return raw_model.get('inputs', []) if raw_model else []
 
     def get_pricing(self, model_name):
-        """Get the pricing for the model"""
-        for each_model in self.model_config['models']:
-            if each_model['name'] == model_name:
-                return each_model.get('pricing', None)
-        return None
-    
+        """Get the pricing for the model."""
+        raw_model = self._models_by_name.get(model_name)
+        return raw_model.get('pricing', None) if raw_model else None
+
     def get_adapter_name(self, model_name):
-        """Get the name of the adapter for the given model"""
-        for each_model in self.model_config['models']:
-            if each_model['name'] == model_name:
-                return each_model.get('adapter', None)
-        return None
-    
+        """Get the name of the adapter for the given model."""
+        raw_model = self._models_by_name.get(model_name)
+        return raw_model.get('adapter', None) if raw_model else None
+
     def get_max_tokens(self, model_name):
-        """Get the max_tokens for the model"""
-        for each_model in self.model_config['models']:
-            if each_model['name'] == model_name:
-                return Model(each_model).max_tokens
-        return None
+        """Get the max_tokens for the model."""
+        model = self[model_name]
+        return model.max_tokens if model else None
     
     

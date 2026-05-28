@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Literal
 
 from pydantic import BaseModel
-from xai_sdk.chat import tool
 
 
 class BaseTool(ABC):
@@ -136,6 +135,9 @@ class BaseTool(ABC):
             }
 
         if provider == "grok":
+            # Imported lazily so the tool layer does not hard-depend on the xai_sdk.
+            from xai_sdk.chat import tool
+
             return tool(
                 name=cls.__name__,
                 description=cls.__doc__,

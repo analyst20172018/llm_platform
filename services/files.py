@@ -155,6 +155,7 @@ class PDFDocumentFile(DocumentFile):
             reader = PdfReader(io.BytesIO(self.bytes))
             return "".join(f"{page.extract_text()}\n" for page in reader.pages)
         except Exception:
+            logger.exception("Failed to extract text from PDF document.")
             return ""
 
     @property
@@ -163,6 +164,7 @@ class PDFDocumentFile(DocumentFile):
             reader = PdfReader(io.BytesIO(self.bytes))
             return len(reader.pages)
         except Exception:
+            logger.exception("Failed to read PDF page count.")
             return 0
 
 

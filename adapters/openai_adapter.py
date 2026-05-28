@@ -24,7 +24,7 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
 from llm_platform.tools.base import BaseTool
 from llm_platform.types import AdditionalParameters
 
-from .adapter_base import AdapterBase
+from .adapter_base import AdapterBase, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
 
 # Constants for response types
 TEXT_INPUT_TYPE = "input_text"
@@ -72,7 +72,7 @@ class OpenAIAdapter(AdapterBase):
         if isinstance(file, ImageFile):
             return {
                 "type": IMAGE_INPUT_TYPE,
-                "image_url": f"data:image/{file.extension};base64,{file.base64}",
+                "image_url": self._image_data_url(file),
             }
         if isinstance(file, AudioFile):
             return {
@@ -81,7 +81,7 @@ class OpenAIAdapter(AdapterBase):
             }
         if isinstance(file, PDFDocumentFile):
             # Small PDFs can be uploaded directly as files
-            if file.size < 32_000_000 and file.number_of_pages < 100:
+            if file.size < PDF_INLINE_MAX_BYTES and file.number_of_pages < PDF_INLINE_MAX_PAGES:
                 return {
                     "type": FILE_INPUT_TYPE,
                     "filename": file.name,
@@ -90,12 +90,12 @@ class OpenAIAdapter(AdapterBase):
             # For larger PDFs, provide the extracted text content
             return {
                 "type": TEXT_INPUT_TYPE,
-                "text": f'<document name="{file.name}">{file.text}</document>',
+                "text": self._document_xml(file),
             }
         if isinstance(file, (TextDocumentFile, ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
             return {
                 "type": TEXT_INPUT_TYPE,
-                "text": f'<document name="{file.name}">{file.text}</document>',
+                "text": self._document_xml(file),
             }
 
         logger.warning(f"Unsupported file type for conversion: {type(file)}. Skipping file.")
@@ -216,7 +216,7 @@ class OpenAIAdapter(AdapterBase):
             parameters["reasoning"]["summary"] = "auto"
 
         # Use previous_response_id for more efficient, stateful conversations
-        if use_previous_response_id and (prev_id := the_conversation.previous_response_id_for_openai):
+        if use_previous_response_id and (prev_id := the_conversation.last_assistant_id):
             parameters["previous_response_id"] = prev_id
             # When using a previous ID, only the latest user message is needed
             last_user_message = next(
@@ -250,12 +250,12 @@ class OpenAIAdapter(AdapterBase):
             * a usage dictionary.
         """
 
-        usage_obj = getattr(response, "usage", None)
-        usage = {
-            "model": getattr(response, "model", "Unknown model"),
-            "completion_tokens": getattr(usage_obj, "output_tokens", None),
-            "prompt_tokens": getattr(usage_obj, "input_tokens", None),
-        }
+        usage = self._build_usage(
+            getattr(response, "usage", None),
+            getattr(response, "model", "Unknown model"),
+            completion_attr="output_tokens",
+            prompt_attr="input_tokens",
+        )
 
         outputs = getattr(response, "output", [])
 
@@ -469,13 +469,7 @@ class OpenAIAdapter(AdapterBase):
         Returns:
             The final assistant Message object after all processing.
         """
-        if additional_parameters is None:
-            additional_parameters = {}
-
-        if kwargs:
-            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
-            for key, value in kwargs.items():
-                additional_parameters.setdefault(key, value)
+        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
 
         if functions:
             response = self.request_llm_with_functions(
@@ -541,13 +535,7 @@ class OpenAIAdapter(AdapterBase):
         Returns:
             The final assistant Message object after all processing.
         """
-        if additional_parameters is None:
-            additional_parameters = {}
-
-        if kwargs:
-            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
-            for key, value in kwargs.items():
-                additional_parameters.setdefault(key, value)
+        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
 
         if functions:
             response = await self.request_llm_with_functions_async(
@@ -586,13 +574,7 @@ class OpenAIAdapter(AdapterBase):
         **kwargs,
     ):
         """Handles the synchronous, recursive logic for tool-use conversations."""
-        if additional_parameters is None:
-            additional_parameters = {}
-
-        if kwargs:
-            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
-            for key, value in kwargs.items():
-                additional_parameters.setdefault(key, value)
+        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
         tools = [self._convert_function_to_tool(f) for f in functions]
         parameters = self._create_parameters_for_calling_llm(
             model, the_conversation, additional_parameters, use_previous_response_id=True
@@ -643,13 +625,7 @@ class OpenAIAdapter(AdapterBase):
         **kwargs,
     ):
         """Handles the asynchronous, recursive logic for tool-use conversations."""
-        if additional_parameters is None:
-            additional_parameters = {}
-
-        if kwargs:
-            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
-            for key, value in kwargs.items():
-                additional_parameters.setdefault(key, value)
+        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
         tools = [self._convert_function_to_tool(f) for f in functions]
         parameters = self._create_parameters_for_calling_llm(
             model, the_conversation, additional_parameters, use_previous_response_id=True
@@ -682,31 +658,12 @@ class OpenAIAdapter(AdapterBase):
 
     def _convert_func_to_tool(self, func: Callable) -> Dict:
         """Converts a Python function to an OpenAI tool definition using inspection."""
-        sig = inspect.signature(func)
-        TYPE_MAP = {
-            str: "string", int: "integer", float: "number",
-            bool: "boolean", list: "array", dict: "object",
-        }
-
-        properties = {}
-        required = []
-        for name, param in sig.parameters.items():
-            # Default to 'string' if type is missing or not in our map
-            schema_type = TYPE_MAP.get(param.annotation, "string")
-            properties[name] = {"type": schema_type, "description": ""}  # Description can be enhanced
-            if param.default == inspect.Parameter.empty:
-                required.append(name)
-
+        schema = self._callable_to_json_schema(func)
         return {
             "type": "function",
-            "name": func.__name__,
-            "description": func.__doc__ or f"Executes the {func.__name__} function.",
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-                "additionalProperties": False,
-            },
+            "name": schema["name"],
+            "description": schema["description"] or f"Executes the {func.__name__} function.",
+            "parameters": {**schema["parameters"], "additionalProperties": False},
             "strict": True,
         }
 

@@ -1,9 +1,7 @@
-import inspect
 import json
 import os
 from typing import Callable, Dict, List
 
-from loguru import logger
 from xai_sdk.chat import image, system, tool, tool_result
 from xai_sdk.proto import chat_pb2
 from xai_sdk.tools import code_execution, web_search, x_search
@@ -42,22 +40,6 @@ class GrokAdapter(AdapterBase):
 
         self.api_key = os.getenv("XAI_API_KEY")
         self.client = Client(api_key=self.api_key)
-
-    def _merge_additional_parameters(
-        self,
-        additional_parameters: AdditionalParameters | None,
-        kwargs: Dict,
-    ) -> AdditionalParameters:
-        merged_parameters = dict(additional_parameters or {})
-
-        if kwargs:
-            logger.warning(
-                "Passing request parameters via **kwargs is deprecated; use additional_parameters."
-            )
-            for key, value in kwargs.items():
-                merged_parameters.setdefault(key, value)
-
-        return merged_parameters
 
     def _get_structured_output_model(
         self,
@@ -111,10 +93,7 @@ class GrokAdapter(AdapterBase):
                 for each_file in message.files:
                     if isinstance(each_file, ImageFile):
                         message_parameters["content"].append(
-                            image(
-                                image_url=f"data:image/{each_file.extension};base64,{each_file.base64}",
-                                detail="high",
-                            )
+                            image(image_url=self._image_data_url(each_file), detail="high")
                         )
                     elif isinstance(each_file, AudioFile):
                         raise NotImplementedError("Grok does not support audio files")
@@ -128,9 +107,7 @@ class GrokAdapter(AdapterBase):
                             PowerPointDocumentFile,
                         ),
                     ):
-                        document_content = chat_pb2.Content(
-                            text=f'<document name="{each_file.name}">{each_file.text}</document>'
-                        )
+                        document_content = chat_pb2.Content(text=self._document_xml(each_file))
                         message_parameters["content"].append(document_content)
                     else:
                         raise ValueError(
@@ -202,14 +179,6 @@ class GrokAdapter(AdapterBase):
 
         return parameters
 
-    def _build_usage(self, response, model: str) -> Dict:
-        usage = getattr(response, "usage", None)
-        return {
-            "model": model,
-            "completion_tokens": getattr(usage, "completion_tokens", None),
-            "prompt_tokens": getattr(usage, "prompt_tokens", None),
-        }
-
     def _build_thinking_responses(self, response) -> List[ThinkingResponse]:
         if not getattr(response, "reasoning_content", None):
             return []
@@ -229,7 +198,7 @@ class GrokAdapter(AdapterBase):
             thinking_responses=self._build_thinking_responses(response),
             function_calls=function_calls or [],
             function_responses=function_responses or [],
-            usage=self._build_usage(response, model),
+            usage=self._build_usage(getattr(response, "usage", None), model),
         )
 
     def _execute_tool_calls(
@@ -366,45 +335,11 @@ class GrokAdapter(AdapterBase):
         )
 
     def _convert_func_to_tool(self, func: Callable) -> Dict:
-        sig = inspect.signature(func)
-
-        parameters = {}
-        required_params = []
-
-        for param_name, param in sig.parameters.items():
-            param_info = {}
-
-            if param.annotation != inspect.Parameter.empty:
-                if param.annotation == str:
-                    param_info["type"] = "string"
-                elif param.annotation == int:
-                    param_info["type"] = "integer"
-                elif param.annotation == float:
-                    param_info["type"] = "number"
-                elif param.annotation == bool:
-                    param_info["type"] = "boolean"
-                elif param.annotation == list:
-                    param_info["type"] = "array"
-                elif param.annotation == dict:
-                    param_info["type"] = "object"
-                else:
-                    param_info["type"] = "string"
-            else:
-                param_info["type"] = "string"
-
-            if param.default == inspect.Parameter.empty:
-                required_params.append(param_name)
-
-            parameters[param_name] = param_info
-
+        schema = self._callable_to_json_schema(func)
         return tool(
-            name=func.__name__,
-            description=func.__doc__ or "",
-            parameters={
-                "type": "object",
-                "properties": parameters,
-                "required": required_params,
-            },
+            name=schema["name"],
+            description=schema["description"],
+            parameters=schema["parameters"],
         )
 
     def _convert_function_to_tool(self, func: BaseTool | Callable) -> Dict:

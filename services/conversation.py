@@ -46,15 +46,6 @@ class FunctionCall:
             call_id=tool_call.id,
         )
 
-    @classmethod
-    def from_openai_old(cls, tool_call):
-        return cls(
-            id=tool_call.id,
-            name=tool_call.function.name,
-            arguments=str(tool_call.function.arguments),
-            call_id=tool_call.id,
-        )
-
     def to_openai(self) -> Dict:
         return {
             "id": self.id,
@@ -62,26 +53,6 @@ class FunctionCall:
             "name": self.name,
             "arguments": self.arguments,
             "type": "function_call",
-        }
-
-    def to_grok(self) -> Dict:
-        return {
-            "function": {
-                "arguments": self.arguments,
-                "name": self.name,
-            },
-            "id": self.call_id,
-            "type": "function",
-        }
-
-    def to_openai_old(self) -> Dict:
-        return {
-            "id": self.id,
-            "function": {
-                "name": self.name,
-                "arguments": self.arguments,
-            },
-            "type": "function",
         }
 
     def to_anthropic(self) -> Dict:
@@ -145,14 +116,6 @@ class FunctionResponse:
             "type": "function_call_output",
             "call_id": self.call_id,
             "output": json.dumps(self.response),
-        }
-
-    def to_openai_old(self) -> Dict:
-        return {
-            "role": "tool",
-            "tool_call_id": self.call_id,
-            "name": self.name,
-            "content": json.dumps(self.response),
         }
 
     def to_anthropic(self) -> Dict:
@@ -306,16 +269,9 @@ class Conversation:
         return self._empty_usage()
 
     @property
-    def previous_response_id_for_openai(self):
-        for message in reversed(self.messages):
-            if message.role == "assistant":
-                return message.id
-        return None
-
-    @property
-    def previous_interaction_id_for_google(self):
-        """Most recent assistant message id, used as Gemini Interactions API
-        ``previous_interaction_id`` to chain server-side conversation state."""
+    def last_assistant_id(self):
+        """Most recent assistant message id, used to chain provider-side conversation
+        state (OpenAI ``previous_response_id`` / Gemini ``previous_interaction_id``)."""
         for message in reversed(self.messages):
             if message.role == "assistant" and message.id:
                 return message.id

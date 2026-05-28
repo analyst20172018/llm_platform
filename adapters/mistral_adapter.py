@@ -9,7 +9,6 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
                                          MediaFile, ImageFile, VideoFile)
 import json
-import inspect
 from llm_platform.types import AdditionalParameters
 
 class MistralAdapter(AdapterBase):
@@ -50,8 +49,8 @@ class MistralAdapter(AdapterBase):
                     if isinstance(each_file, ImageFile):
 
                         # Add the image to the content list
-                        image_content = {"type": "image_url", 
-                                         "image_url": {"url": f"data:image/{each_file.extension};base64,{each_file.base64}"}
+                        image_content = {"type": "image_url",
+                                         "image_url": {"url": self._image_data_url(each_file)}
                                          }
                         history_message["content"].append(image_content)
                     
@@ -68,7 +67,7 @@ class MistralAdapter(AdapterBase):
                         # Add the text document to the history as a text in XML tags
                         new_text_content = {
                             "type": "text",
-                            "text": f"""<document name="{each_file.name}">{each_file.text}</document>"""
+                            "text": self._document_xml(each_file)
                         }
                         history_message["content"].insert(0, new_text_content)
 
@@ -188,13 +187,7 @@ class MistralAdapter(AdapterBase):
                     additional_parameters: AdditionalParameters | None = None,
                     **kwargs) -> Message:
 
-        if additional_parameters is None:
-            additional_parameters = {}
-
-        if kwargs:
-            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
-            for key, value in kwargs.items():
-                additional_parameters.setdefault(key, value)
+        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
 
         # Transcribe
         if model == "voxtral-mini-latest":
@@ -264,69 +257,24 @@ class MistralAdapter(AdapterBase):
                             **request_params,
                             )
         
-        usage = {"model": model,
-                 "completion_tokens": response.usage.completion_tokens,
-                 "prompt_tokens": response.usage.prompt_tokens
-                }
-        
+        usage = self._build_usage(getattr(response, "usage", None), model)
+
         message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
         the_conversation.messages.append(message)
         
         return message
     
     def _convert_func_to_tool(self, func: Callable) -> Dict:
-        # Get function signature
-        sig = inspect.signature(func)
-
-        # Create parameters dictionary
-        parameters = {}
-        required_params = []
-
-        # Analyze each parameter
-        for param_name, param in sig.parameters.items():
-            param_info = {}
-
-            # Get parameter type annotation if available
-            if param.annotation != inspect.Parameter.empty:
-                if param.annotation == str:
-                    param_info['type'] = 'string'
-                elif param.annotation == int:
-                    param_info['type'] = 'integer'
-                elif param.annotation == float:
-                    param_info['type'] = 'number'
-                elif param.annotation == bool:
-                    param_info['type'] = 'boolean'
-                elif param.annotation == list:
-                    param_info['type'] = 'array'
-                elif param.annotation == dict:
-                    param_info['type'] = 'object'
-                else:
-                    param_info['type'] = 'string'  # default to string for unknown types
-            else:
-                param_info['type'] = 'string'  # default to string if no type annotation
-
-            # Check if parameter is required
-            if param.default == inspect.Parameter.empty:
-                required_params.append(param_name)
-
-            parameters[param_name] = param_info
-
-        # Create the tool dictionary
-        tool = {
-            'function': {
-                'name': func.__name__,
-                'description': func.__doc__ or '',
-                'parameters': {
-                    'type': 'object',
-                    'properties': parameters,
-                    'required': required_params,
-                    "additionalProperties": False
-                },
-                "strict": True
-            },
+        schema = self._callable_to_json_schema(func)
+        return {
             'type': 'function',
+            'function': {
+                'name': schema['name'],
+                'description': schema['description'],
+                'parameters': {**schema['parameters'], "additionalProperties": False},
+                "strict": True,
+            },
         }
-        return tool
 
     def _convert_function_to_tool(self, func: BaseTool | Callable) -> Dict:
         # Convert the function to a tool for OpenAI
@@ -359,11 +307,8 @@ class MistralAdapter(AdapterBase):
             tool_choice = "any",
         )
 
-        usage = {"model": model,
-                "completion_tokens": chat_response.usage.completion_tokens,
-                "prompt_tokens": chat_response.usage.prompt_tokens
-        }
-        
+        usage = self._build_usage(getattr(chat_response, "usage", None), model)
+
         assistant_message = chat_response.choices[0].message
 
         # Save tool_calls parameter from the openai answer for the history
@@ -389,22 +334,18 @@ class MistralAdapter(AdapterBase):
                 raise ValueError(f"Function {each_tools_call.function.name} not found in tools")
             function = functions[function_index]
 
-            # Get all function parameters
-            function_parameters = []
-            for key, value in tools[function_index]['function'].get('parameters', {}).get('properties', {}).items():
-                function_parameters.append(tool_arguments[key])
-
-            # Call the function
-            function_response = function(*function_parameters)
+            # Call the function with keyword arguments (robust to optional/reordered args,
+            # matching the OpenAI/Grok adapters and avoiding KeyError on omitted optionals).
+            function_response = function(**tool_arguments)
 
             function_response_record = FunctionResponse(name=tool_function_name,
                                                         id=tool_call_id,
                                                         response=function_response)
             function_response_records.append(function_response_record)
-            
+
             if tool_output_callback:
                 tool_output_callback(tool_function_name,
-                                     function_parameters,
+                                     tool_arguments,
                                      function_response
                                     )
 

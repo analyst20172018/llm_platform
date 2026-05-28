@@ -1,5 +1,4 @@
 import asyncio
-import inspect
 import json
 from loguru import logger
 import os
@@ -24,7 +23,7 @@ from llm_platform.services.files import (
 )
 from llm_platform.tools.base import BaseTool
 
-from .adapter_base import AdapterBase
+from .adapter_base import AdapterBase, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
 from llm_platform.types import AdditionalParameters
 
 # --- Constants ---
@@ -45,19 +44,8 @@ REASONING_BUDGETS = {
 # Buffer for response tokens when correcting max_tokens to avoid exceeding context window
 RESPONSE_TOKEN_BUFFER = 1000
 
-# Python type to JSON schema type mapping for tool generation
-PYTHON_TYPE_TO_JSON_SCHEMA = {
-    str: 'string',
-    int: 'integer',
-    float: 'number',
-    bool: 'boolean',
-    list: 'array',
-    dict: 'object',
-}
-DEFAULT_JSON_SCHEMA_TYPE = 'string'
-
 # Threshold for max_tokens above which streaming is required to avoid HTTP timeouts
-MAX_TOKEN_THRESHOLD_FOR_STREANING = 21_000
+MAX_TOKENS_STREAMING_THRESHOLD = 21_000
 
 
 class ClaudeStreamProcessor:
@@ -93,20 +81,20 @@ class ClaudeStreamProcessor:
             'message_delta': self._handle_message_delta,
         }
 
-    def process_event(self, event: any):
+    def process_event(self, event: Any):
         """Process a single event from the Claude stream."""
         event_type = getattr(event, 'type', None)
         if handler := self._event_handlers.get(event_type):
             handler(event)
 
-    def _handle_message_start(self, event: any):
+    def _handle_message_start(self, event: Any):
         message = getattr(event, 'message', None)
         if not message:
             return
         self.usage["model"] = message.model
         self.usage["prompt_tokens"] = getattr(message.usage, 'input_tokens', 0)
 
-    def _handle_content_block_start(self, event: any):
+    def _handle_content_block_start(self, event: Any):
         content_block = getattr(event, 'content_block', None)
         if not content_block:
             return
@@ -117,7 +105,7 @@ class ClaudeStreamProcessor:
             self._current_tool_id = getattr(content_block, 'id', None)
             self._current_tool_json = ""
 
-    def _handle_content_block_delta(self, event: any):
+    def _handle_content_block_delta(self, event: Any):
         delta = getattr(event, 'delta', None)
         if not delta:
             return
@@ -132,7 +120,7 @@ class ClaudeStreamProcessor:
         elif delta_type == 'input_json_delta':
             self._current_tool_json += getattr(delta, 'partial_json', '')
 
-    def _handle_content_block_stop(self, event: any):
+    def _handle_content_block_stop(self, event: Any):
         if self._current_block_type == 'tool_use' and self._current_tool_name:
             try:
                 parameters = json.loads(self._current_tool_json) if self._current_tool_json else {}
@@ -158,7 +146,7 @@ class ClaudeStreamProcessor:
 
         self._current_block_type = None
 
-    def _handle_message_delta(self, event: any):
+    def _handle_message_delta(self, event: Any):
         self.usage["completion_tokens"] = getattr(event.usage, 'output_tokens', 0)
         self.stop_reason = getattr(event.delta, 'stop_reason', None)
 
@@ -185,25 +173,19 @@ class AnthropicAdapter(AdapterBase):
         """
         Sends a request to the LLM, handling simple responses and tool use.
 
-        Uses streaming for requests with max_tokens >= MAX_TOKEN_THRESHOLD_FOR_STREANING
+        Uses streaming for requests with max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD
         to avoid HTTP timeouts. Uses non-streaming otherwise, which enables structured output.
         """
-        if additional_parameters is None:
-            additional_parameters = {}
-
-        if kwargs:
-            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
-            for key, value in kwargs.items():
-                additional_parameters.setdefault(key, value)
+        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
 
         max_tokens = additional_parameters.get("max_tokens") or 0
-        use_streaming = max_tokens >= MAX_TOKEN_THRESHOLD_FOR_STREANING
+        use_streaming = max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD
 
         if use_streaming and additional_parameters.get("structured_output", None):
             raise ValueError(
-                f"Streaming is required for max_tokens >= {MAX_TOKEN_THRESHOLD_FOR_STREANING}, "
+                f"Streaming is required for max_tokens >= {MAX_TOKENS_STREAMING_THRESHOLD}, "
                 f"but streaming does not support structured output. "
-                f"Please reduce max_tokens below {MAX_TOKEN_THRESHOLD_FOR_STREANING} or remove structured output."
+                f"Please reduce max_tokens below {MAX_TOKENS_STREAMING_THRESHOLD} or remove structured output."
             )
 
         if use_streaming:
@@ -472,8 +454,9 @@ class AnthropicAdapter(AdapterBase):
         if max_tokens := additional_parameters.get("max_tokens", None):
             request_kwargs["max_tokens"] = max_tokens
 
-        if temperatue := additional_parameters.get("temperature", None):
-            request_kwargs['temperature'] = temperatue
+        temperature = additional_parameters.get("temperature", None)
+        if temperature is not None:
+            request_kwargs['temperature'] = temperature
 
         output_config = {}
 
@@ -560,7 +543,7 @@ class AnthropicAdapter(AdapterBase):
 
         return content_list
 
-    def _ensure_content_is_list(self, content: any) -> List[Dict]:
+    def _ensure_content_is_list(self, content: Any) -> List[Dict]:
         """Ensures message content is a list, converting a string if necessary."""
         if isinstance(content, list):
             return content
@@ -581,7 +564,7 @@ class AnthropicAdapter(AdapterBase):
     def _format_document_content(self, file: DocumentFile, citations_enabled: bool) -> Dict:
         """Formats a DocumentFile into an Anthropic content block."""
         # For small PDFs, upload the raw file. For large PDFs or other doc types, extract text.
-        if isinstance(file, PDFDocumentFile) and file.size < 32_000_000 and file.number_of_pages < 100:
+        if isinstance(file, PDFDocumentFile) and file.size < PDF_INLINE_MAX_BYTES and file.number_of_pages < PDF_INLINE_MAX_PAGES:
             source = {"type": "base64", "media_type": "application/pdf", "data": file.base64}
         else:
             source = {"type": "text", "media_type": "text/plain", "data": file.text}
@@ -604,26 +587,19 @@ class AnthropicAdapter(AdapterBase):
 
     def _convert_callable_to_tool(self, func: Callable) -> Dict:
         """Uses introspection to create a tool definition from a Python function."""
-        sig = inspect.signature(func)
-        properties = {}
-        required = []
-
-        for name, param in sig.parameters.items():
-            param_type = PYTHON_TYPE_TO_JSON_SCHEMA.get(param.annotation, DEFAULT_JSON_SCHEMA_TYPE)
-            properties[name] = {'type': param_type}
-            if param.default == inspect.Parameter.empty:
-                required.append(name)
-
+        schema = self._callable_to_json_schema(func)
         return {
-            'name': func.__name__,
-            'description': func.__doc__ or '',
-            'input_schema': {'type': 'object', 'properties': properties, 'required': required},
+            'name': schema['name'],
+            'description': schema['description'],
+            'input_schema': schema['parameters'],
         }
 
     # --- Token Counting ---
 
-    def count_tokens(self, model: str, messages: List[Dict], tools: List[Dict] = []) -> int:
+    def count_tokens(self, model: str, messages: List[Dict], tools: List[Dict] | None = None) -> int:
         """Counts the number of input tokens for a given model, message list, and tools."""
+        if tools is None:
+            tools = []
         try:
             response = self.client.messages.count_tokens(model=model, messages=messages, tools=tools)
             return response.input_tokens
@@ -631,8 +607,10 @@ class AnthropicAdapter(AdapterBase):
             logger.warning(f"Could not count tokens for model {model}: {e}")
             return 0
 
-    def correct_max_tokens(self, model: str, messages: List[Dict], max_tokens: int, tools: List[Dict] = []) -> int:
+    def correct_max_tokens(self, model: str, messages: List[Dict], max_tokens: int, tools: List[Dict] | None = None) -> int:
         """Adjusts max_tokens to prevent exceeding the model's context window."""
+        if tools is None:
+            tools = []
         request_tokens = self.count_tokens(model, messages, tools)
         specific_model_object = self.model_config[model]
         context_window = specific_model_object.context_window
@@ -656,17 +634,3 @@ class AnthropicAdapter(AdapterBase):
             )
             return new_max_tokens
         return max_tokens
-    
-    def request_llm_with_functions(self,
-                                   model: str, 
-                                   the_conversation: Conversation, 
-                                   functions: List[BaseTool]=[], 
-                                   tool_output_callback: Callable=None,
-                                   additional_parameters: AdditionalParameters | None = None,
-                                   **kwargs
-                                   ): 
-        """
-        Not implemented
-        This method is not implemented in the AnthropicAdapter.
-        """
-        raise NotImplementedError("request_llm_with_functions is not implemented in AnthropicAdapter.")

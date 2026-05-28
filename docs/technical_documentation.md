@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-05-17
+Version: 2026-05-28
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -25,11 +25,14 @@ Main runtime flow:
 
 Primary modules:
 - `core/llm_handler.py`: orchestration facade and entrypoint
+- `core/parameter_normalizer.py`: `ParameterNormalizer` — normalizes `additional_parameters` against a model's YAML schema (extracted from the facade)
+- `adapters/adapter_base.py`: `AdapterBase` contract plus provider-agnostic helpers shared by the adapters (parameter merge, usage extraction, callable→JSON-schema, content-block formatting, PDF/tool-round constants)
+- `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter)
 - `adapters/*.py`: provider-specific translation and API calls
 - `services/conversation.py`: conversation/message/function-call domain model + serialization
 - `services/files.py`: file abstractions and format conversion/extraction
-- `helpers/model_config.py`: YAML model registry loader and parameter schema normalization
-- `tools/*.py`: tool abstraction and built-in tool implementations
+- `helpers/model_config.py`: YAML model registry loader (cached + name-indexed) and parameter schema normalization
+- `tools/*.py`: tool abstraction and built-in tool implementations (`SSHCommandTool` base for SSH admin tools)
 - `types.py`: typed definition of supported additional parameters
 
 ## 3. Core facade (`APIHandler`)
@@ -49,7 +52,7 @@ File: `core/llm_handler.py`
 - `calculate_tokens(text) -> {'bytes': int, 'tokens': int}` (tiktoken `cl100k_base`)
 
 ### 3.3 Adapter resolution
-Adapter class is selected by model's `adapter` in `models_config.yaml` and instantiated on demand.
+Adapter class is selected by model's `adapter` in `models_config.yaml` and imported + instantiated on demand. Adapter classes are registered as `"module:ClassName"` import paths (`ADAPTER_IMPORT_PATHS`) and loaded lazily through `importlib`, so importing `APIHandler` does not transitively import every provider SDK.
 
 Registered adapter classes include:
 - `OpenAIAdapter`
@@ -61,13 +64,15 @@ Registered adapter classes include:
 - `MistralAdapter`
 
 ### 3.4 Additional parameter normalization pipeline
-Implemented in `_prepare_additional_parameters`:
+Implemented in `core/parameter_normalizer.ParameterNormalizer.normalize` (the facade owns a `ParameterNormalizer` and delegates via `_prepare_additional_parameters`):
 1. Merge user `additional_parameters` and deprecated `**kwargs` (kwargs only fill missing keys).
 2. Load model parameter definitions from YAML.
 3. Apply defaults for definitions with `send_default: true` (including `max_tokens`, which is a standard YAML `additional_parameter` per model with provider-specific `request_key` mapping, e.g. `max_output_tokens` for OpenAI and Google).
 4. Map friendly keys to nested request keys (`request_key`, e.g. `reasoning_effort -> reasoning.effort`, `max_tokens -> max_output_tokens`).
 5. Drop fields where `include_in_request: false`.
 6. Filter unsupported keys for the selected model and log warnings.
+
+Normalization runs exactly once per call. `request` / `request_async` append the user message and forward the raw `additional_parameters` (and any deprecated `**kwargs`) to `request_llm` / `request_llm_async`, which are the single normalization point; direct callers of `request_llm` are therefore normalized identically.
 
 ## 4. Conversation domain model
 File: `services/conversation.py`
@@ -169,22 +174,15 @@ Models are grouped by `adapter`, with metadata:
   - Supports structured output through xAI SDK `response_format` for both standard requests and Grok 4 tool-enabled requests
 - `MistralAdapter`
   - Sync chat, recursive function-calling, OCR mode, and audio transcription mode
-- `DeepSeekAdapter`
-  - OpenAI-compatible chat completion path
-  - Basic text/image input conversion
-  - No tool execution implementation (`NotImplemented`)
-- `OpenRouterAdapter`
-  - OpenAI-compatible chat completion path
-  - Basic text/image input conversion
-  - No tool execution implementation (`NotImplemented`)
+- `DeepSeekAdapter`, `OpenRouterAdapter`
+  - Thin subclasses of `OpenAICompatibleAdapter` (each declares only `BASE_URL` / `ENV_VAR`; DeepSeek overrides `_suppress_temperature` for `deepseek-reasoner`)
+  - Shared OpenAI-compatible chat path: text/image/audio/document conversion, parameter marshalling, and usage extraction live in the base
+  - Tool calling is not supported: they inherit the uniform `AdapterBase.request_llm_with_functions` that raises `NotImplementedError`
 
 ### 7.2 Async support
-Currently implemented async LLM paths:
-- `APIHandler.request_async`
-- `OpenAIAdapter.request_llm_async`
-- `OpenAIAdapter.request_llm_with_functions_async`
+`AdapterBase` provides a default `request_llm_async` that runs the adapter's synchronous `request_llm` off the event loop via `asyncio.to_thread`. As a result `APIHandler.request_async` / `request_llm_async` work for every adapter rather than only OpenAI.
 
-Other adapters are sync-only from the `APIHandler` perspective.
+`OpenAIAdapter` overrides the default with a native async implementation (`request_llm_async`, `request_llm_with_functions_async`) backed by the async OpenAI client; all other adapters inherit the thread-offloaded default.
 
 ## 8. Multimodal behavior by adapter (implemented)
 - OpenAI: text, image, audio, document inputs
@@ -206,14 +204,15 @@ Files: `tools/base.py` and concrete tools in `tools/*.py`
 - OpenAI
 - Anthropic
 - Google (schema transformed to Gemini-compatible form; `GoogleAdapter` wraps the resulting dict with `{"type": "function", ...}` to satisfy the Interactions API tools schema)
-- Grok
+- Grok (the `xai_sdk` `tool` type is imported lazily inside `to_params`, so importing the tools layer does not require `xai_sdk`)
+
+Plain Python callables passed as tools are converted to a JSON schema once by `AdapterBase._callable_to_json_schema`; each adapter wraps that canonical schema in its provider-specific envelope.
 
 ### 9.2 Built-in tool modules
 - `RunPowerShellCommand` (persistent PowerShell process)
-- `CzechLaws` + helper function variant
+- `CzechLaws`
 - `Reddit`
-- `RaspberryAdmin` (SSH)
-- `UbuntuAdmin` (SSH)
+- `RaspberryAdmin`, `UbuntuAdmin` (thin subclasses of `SSHCommandTool` in `tools/ssh_command.py`)
 
 ## 10. Environment variables and credentials
 Current code expects:
@@ -235,13 +234,14 @@ From `requirements.txt`:
 
 ## 12. Error handling and observability
 - Logging uses `loguru` in orchestration and adapters.
-- `APIHandler.request_llm` catches adapter exceptions and appends an assistant error message.
+- `APIHandler.request_llm` / `request_llm_async` let adapter exceptions propagate to the caller, consistently across the sync and async paths; they no longer swallow exceptions into a fabricated assistant message appended to the conversation.
+- `APIHandler.get_adapter` raises `ValueError` for a model not present in `models_config.yaml`.
 - Some adapter methods remain `NotImplemented` and will raise directly.
 
 ## 13. Known implementation gaps and inconsistencies
-1. Env-var naming inconsistency between docs and implementation (`GOOGLE_GEMINI_API_KEY` vs `GOOGLE_API_KEY`, `XAI_API_KEY` vs `GROK_API_KEY`).
-2. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral, not in DeepSeek/OpenRouter).
-3. Mutable default arguments exist in `Message` initializer (`[]` defaults), which is a Python risk pattern.
+1. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral, not in DeepSeek/OpenRouter).
+2. Mutable default arguments still exist in the `Message` initializer (`[]` defaults); the adapter and `APIHandler` method signatures that previously shared this pattern have been migrated to `None` defaults.
+3. The `README.md` environment-variable list now matches the adapter code (`GOOGLE_GEMINI_API_KEY`, `XAI_API_KEY`).
 
 ## 14. Request lifecycle details
 
@@ -292,11 +292,16 @@ From `requirements.txt`:
 4. Pass tool instance in `APIHandler.request(..., functions=[...])`.
 
 ## 16. File and package map
-- `core/llm_handler.py`: orchestration facade
-- `helpers/model_config.py`: YAML model registry and parameter normalization
+- `core/llm_handler.py`: orchestration facade (lazy adapter registry, conversation state, sync/async routing)
+- `core/parameter_normalizer.py`: `ParameterNormalizer` parameter pipeline
+- `helpers/model_config.py`: YAML model registry (cached + name-indexed) and parameter normalization
 - `services/conversation.py`: conversation and tool metadata classes
 - `services/files.py`: file classes and text/media extraction
+- `adapters/adapter_base.py`: `AdapterBase` contract + shared adapter helpers
+- `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base (DeepSeek, OpenRouter)
 - `adapters/*.py`: provider integrations
+- `tools/base.py`: `BaseTool` contract + per-provider declaration emission
+- `tools/ssh_command.py`: `SSHCommandTool` base for SSH admin tools
 - `tools/*.py`: callable tool implementations
 - `models_config.yaml`: model routing and metadata
 - `types.py`: typed `AdditionalParameters`

@@ -4,7 +4,7 @@ import time
 from typing import Any, Callable, Dict, List, Tuple
 from loguru import logger
 
-from .adapter_base import AdapterBase
+from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
 from llm_platform.services.conversation import (Conversation, FunctionCall,
                                                 FunctionResponse, Message,
                                                 ThinkingResponse)
@@ -617,12 +617,7 @@ class GoogleAdapter(AdapterBase):
         id so the server retrieves the rest of the history.
         """
         functions = functions or []
-        additional_parameters = additional_parameters or {}
-
-        if kwargs:
-            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
-            for key, value in kwargs.items():
-                additional_parameters.setdefault(key, value)
+        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
 
         model_object = self.model_config[model]
         if (
@@ -648,7 +643,7 @@ class GoogleAdapter(AdapterBase):
         # conversation has an interaction id, chain to it via
         # ``previous_interaction_id`` and send only the new user_input.
         # Otherwise (first turn), send the full history.
-        prev_interaction_id = the_conversation.previous_interaction_id_for_google
+        prev_interaction_id = the_conversation.last_assistant_id
         if prev_interaction_id:
             input_items = self._build_input_from_latest_user_message(the_conversation)
             interaction = self.client.interactions.create(
@@ -663,7 +658,7 @@ class GoogleAdapter(AdapterBase):
                 **base_kwargs,
             )
 
-        while True:
+        for _tool_round in range(MAX_TOOL_ROUNDS):
             assistant_message = self._parse_interaction_response(interaction, model)
             the_conversation.messages.append(assistant_message)
 
@@ -698,13 +693,7 @@ class GoogleAdapter(AdapterBase):
                 **base_kwargs,
             )
 
-    def request_llm_with_functions(self,
-                                   model: str,
-                                   config: Dict,
-                                   the_conversation: Conversation,
-                                   functions: List[BaseTool] = [],
-                                   tool_output_callback: Callable = None,
-                                   additional_parameters: AdditionalParameters | None = None,
-                                   **kwargs):
-        """Not implemented in GoogleAdapter."""
-        raise NotImplementedError("request_llm_with_functions is not implemented in GoogleAdapter.")
+        raise RuntimeError(
+            f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+        )
+

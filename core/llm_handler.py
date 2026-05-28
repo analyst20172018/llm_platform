@@ -1,29 +1,26 @@
+import importlib
 from typing import Any, Callable, Dict, List, Union
 
 import tiktoken
 from loguru import logger
 
-from llm_platform.adapters.anthropic_adapter import AnthropicAdapter
-from llm_platform.adapters.deepseek_adapter import DeepSeekAdapter
-from llm_platform.adapters.google_adapter import GoogleAdapter
-from llm_platform.adapters.grok_adapter import GrokAdapter
-from llm_platform.adapters.mistral_adapter import MistralAdapter
-from llm_platform.adapters.openai_adapter import OpenAIAdapter
-from llm_platform.adapters.openrouter_adapter import OpenRouterAdapter
+from llm_platform.core.parameter_normalizer import ParameterNormalizer
 from llm_platform.helpers.model_config import ModelConfig
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import BaseFile, ImageFile, PDFDocumentFile
 from llm_platform.tools.base import BaseTool
 from llm_platform.types import AdditionalParameters
 
-ADAPTER_CLASSES = {
-    "OpenAIAdapter": OpenAIAdapter,
-    "AnthropicAdapter": AnthropicAdapter,
-    "OpenRouterAdapter": OpenRouterAdapter,
-    "GoogleAdapter": GoogleAdapter,
-    "GrokAdapter": GrokAdapter,
-    "DeepSeekAdapter": DeepSeekAdapter,
-    "MistralAdapter": MistralAdapter,
+# Adapter classes are imported lazily (on first use) so importing the facade does
+# not transitively import every provider SDK. Maps adapter name -> "module:ClassName".
+ADAPTER_IMPORT_PATHS = {
+    "OpenAIAdapter": "llm_platform.adapters.openai_adapter:OpenAIAdapter",
+    "AnthropicAdapter": "llm_platform.adapters.anthropic_adapter:AnthropicAdapter",
+    "OpenRouterAdapter": "llm_platform.adapters.openrouter_adapter:OpenRouterAdapter",
+    "GoogleAdapter": "llm_platform.adapters.google_adapter:GoogleAdapter",
+    "GrokAdapter": "llm_platform.adapters.grok_adapter:GrokAdapter",
+    "DeepSeekAdapter": "llm_platform.adapters.deepseek_adapter:DeepSeekAdapter",
+    "MistralAdapter": "llm_platform.adapters.mistral_adapter:MistralAdapter",
 }
 
 class APIHandler:
@@ -32,28 +29,8 @@ class APIHandler:
     It provides methods for making synchronous and asynchronous requests to language models
     and retrieving available models.
     
-    Attributes:
-        adapters (Dict[str, Any]): A dictionary to store initialized adapters.
-        model_config (ModelConfig): Configuration for the language models.
-        the_conversation (Conversation): The conversation context.
-        history (List): Legacy attribute for storing history.
-        current_costs (Any): Legacy attribute for storing current costs.
-    Methods:
-        __init__(system_prompt: str = "You are a helpful assistant"):
-            Initializes the APIHandler with a system prompt.
-        _lazy_initialization_of_adapter(adapter_name: str) -> Any:
-            Lazily initializes and returns the specified adapter.
-        get_adapter(model_name: str) -> Any:
-            Gets the appropriate adapter for the given model name.
-        request(model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None, files: List[BaseFile] = [], tool_output_callback: Callable = None, additional_parameters: AdditionalParameters | None = None, **kwargs) -> str:
-        request_async(model: str, prompt: str, functions: Union[List[BaseTool], List[Callable]] = None, files: List[BaseFile] = [], tool_output_callback: Callable = None, additional_parameters: AdditionalParameters | None = None, **kwargs) -> str:
-            Asynchronously sends a request to the language model with the given parameters.
-        request_llm(model: str, functions: Union[List[BaseTool], List[Callable]] = None, temperature: int = 0, tool_output_callback: Callable = None, additional_parameters: AdditionalParameters | None = None, **kwargs) -> str:
-            Makes a request to the language model using the appropriate adapter.
-        request_llm_async(model: str, functions: Union[List[BaseTool], List[Callable]] = None, temperature: int = 0, tool_output_callback: Callable = None, additional_parameters: AdditionalParameters | None = None, **kwargs) -> str:
-            Asynchronously makes a request to the language model using the appropriate adapter.
-        calculate_tokens(text: str) -> Dict[str, int]:
-            Calculates the number of tokens in the given text.
+    Adapter selection, parameter normalization, and conversation state are all
+    handled here; provider-specific translation lives in the adapters.
     """
     
     def __init__(self, system_prompt: str = "You are a helpful assistant"):
@@ -65,11 +42,8 @@ class APIHandler:
         """
         self.adapters: Dict[str, Any] = {}
         self.model_config = ModelConfig()
+        self.normalizer = ParameterNormalizer(self.model_config)
         self.the_conversation = Conversation(system_prompt = system_prompt)
-
-        # Legacy:
-        self.history = []
-        self.current_costs = None
 
     def _lazy_initialization_of_adapter(self, adapter_name: str):
         """
@@ -85,11 +59,12 @@ class APIHandler:
             ValueError: If the specified adapter is not supported.
         """
         if adapter_name not in self.adapters:
-            adapter_class = ADAPTER_CLASSES.get(adapter_name)
-
-            if adapter_class is None:
+            import_path = ADAPTER_IMPORT_PATHS.get(adapter_name)
+            if import_path is None:
                 raise ValueError(f"Adapter {adapter_name} is not supported")
 
+            module_path, class_name = import_path.split(":")
+            adapter_class = getattr(importlib.import_module(module_path), class_name)
             self.adapters[adapter_name] = adapter_class()
 
         return self.adapters[adapter_name]
@@ -104,111 +79,10 @@ class APIHandler:
         Returns:
             Any: The adapter for the specified model.
         """
-        adapter_name = self.model_config[model_name].adapter
-        #print(f"Using adapter: {adapter_name} for model: {model_name}")
-        return self._lazy_initialization_of_adapter(adapter_name)
-
-    @staticmethod
-    def _set_nested_parameter(target: Dict[str, Any], path: str, value: Any) -> None:
-        if not path:
-            return
-        parts = [part for part in str(path).split(".") if part]
-        if not parts:
-            return
-        cursor = target
-        for part in parts[:-1]:
-            if part not in cursor or not isinstance(cursor[part], dict):
-                cursor[part] = {}
-            cursor = cursor[part]
-        cursor[parts[-1]] = value
-
-    def _allowed_parameter_keys(self, model_object: Any) -> set:
-        if not model_object:
-            return set()
-        allowed = set()
-        for name, definition in model_object.parameter_definitions().items():
-            if definition.get("include_in_request", True):
-                allowed.add(name)
-            request_key = definition.get("request_key")
-            if request_key:
-                allowed.add(str(request_key).split(".")[0])
-        allowed.update({"response_modalities"})
-        return allowed
-
-    @staticmethod
-    def _request_root_key(request_key: str | None) -> str | None:
-        if not request_key:
-            return None
-        return str(request_key).split(".")[0]
-
-    @staticmethod
-    def _merge_additional_parameters(
-        additional_parameters: AdditionalParameters | None,
-        kwargs: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        merged: Dict[str, Any] = {}
-        if additional_parameters:
-            merged.update(additional_parameters)
-
-        if kwargs:
-            logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
-            for key, value in kwargs.items():
-                merged.setdefault(key, value)
-
-        return merged
-
-    def _apply_parameter_defaults(self, merged: Dict[str, Any], model_object: Any) -> None:
-        for name, definition in model_object.parameter_definitions().items():
-            if not definition.get("send_default", True):
-                continue
-            if name in merged:
-                continue
-
-            root_key = self._request_root_key(definition.get("request_key"))
-            if root_key and root_key in merged:
-                continue
-
-            default_value = definition.get("default")
-            if default_value is not None:
-                merged[name] = default_value
-
-    def _apply_request_key_mappings(self, merged: Dict[str, Any], model_object: Any) -> None:
-        for name, definition in model_object.parameter_definitions().items():
-            request_key = definition.get("request_key")
-            if not request_key or name not in merged:
-                continue
-
-            value = merged.pop(name)
-            if value is None or value == "":
-                continue
-
-            self._set_nested_parameter(merged, request_key, value)
-
-    @staticmethod
-    def _remove_excluded_parameters(merged: Dict[str, Any], model_object: Any) -> None:
-        for name, definition in model_object.parameter_definitions().items():
-            if not definition.get("include_in_request", True):
-                merged.pop(name, None)
-
-    def _filter_allowed_parameters(
-        self,
-        model: str,
-        merged: Dict[str, Any],
-        model_object: Any,
-    ) -> Dict[str, Any]:
-        allowed = self._allowed_parameter_keys(model_object)
-        if not allowed:
-            return merged
-
-        filtered: Dict[str, Any] = {}
-        for key, value in merged.items():
-            if key in allowed:
-                filtered[key] = value
-            else:
-                logger.warning(
-                    f"Model {model} does not support parameter '{key}'. Ignoring the parameter."
-                )
-        return filtered
+        model_object = self.model_config[model_name]
+        if model_object is None:
+            raise ValueError(f"Model '{model_name}' is not defined in models_config.yaml")
+        return self._lazy_initialization_of_adapter(model_object.adapter)
 
     def _append_user_message(self, prompt: str, files: List[BaseFile] | None) -> None:
         self.the_conversation.messages.append(
@@ -227,16 +101,7 @@ class APIHandler:
         **kwargs,
     ) -> Dict:
         """Normalize request parameters against the selected model definition."""
-        merged = self._merge_additional_parameters(additional_parameters, kwargs)
-
-        model_object = self.model_config[model] if model else None
-        if not model_object:
-            return merged
-
-        self._apply_parameter_defaults(merged, model_object)
-        self._apply_request_key_mappings(merged, model_object)
-        self._remove_excluded_parameters(merged, model_object)
-        return self._filter_allowed_parameters(model, merged, model_object)
+        return self.normalizer.normalize(model, additional_parameters, **kwargs)
 
     def request(
         self,
@@ -247,7 +112,7 @@ class APIHandler:
         tool_output_callback: Callable = None,
         additional_parameters: AdditionalParameters | None = None,
         **kwargs,
-    ) -> str:
+    ) -> Message:
         """
             Send a single prompt to a language model and receive the assistant’s answer.
 
@@ -323,21 +188,19 @@ class APIHandler:
             conversational context to the model until ``Conversation.clear()`` is
             invoked.
             """
-        self._append_user_message(prompt, files)
+        if not prompt:
+            raise ValueError("Prompt cannot be empty")
 
-        normalized_parameters = self._prepare_additional_parameters(
-            model,
-            additional_parameters,
-            **kwargs,
-        )
+        self._append_user_message(prompt, files)
 
         return self.request_llm(
             model,
             functions=functions,
             tool_output_callback=tool_output_callback,
-            additional_parameters=normalized_parameters,
+            additional_parameters=additional_parameters,
+            **kwargs,
         )
-        
+
     async def request_async(
         self,
         model: str,
@@ -347,7 +210,7 @@ class APIHandler:
         tool_output_callback: Callable = None,
         additional_parameters: AdditionalParameters | None = None,
         **kwargs,
-    ) -> str:
+    ) -> Message:
         """
         Make a request to the language model.
 
@@ -362,20 +225,15 @@ class APIHandler:
         """
         if not prompt:
             raise ValueError("Prompt cannot be empty")
-        
-        self._append_user_message(prompt, files)
 
-        normalized_parameters = self._prepare_additional_parameters(
-            model,
-            additional_parameters,
-            **kwargs,
-        )
+        self._append_user_message(prompt, files)
 
         return await self.request_llm_async(
             model,
             functions=functions,
             tool_output_callback=tool_output_callback,
-            additional_parameters=normalized_parameters,
+            additional_parameters=additional_parameters,
+            **kwargs,
         )
     
     def request_llm(self, 
@@ -453,28 +311,20 @@ class APIHandler:
             **kwargs,
         )
 
-        try:
-            response = adapter.request_llm(
-                model=model,
-                the_conversation=self.the_conversation,
-                functions=functions,
-                tool_output_callback=tool_output_callback,
-                additional_parameters=normalized_parameters,
-            )
-
-            return response
-        except Exception as e:
-            logger.error(f"Error in API call: {e}")
-            message = Message(role="assistant", content=f"Error in API call: {e}", usage=None, files=[])
-            self.the_conversation.messages.append(message)
-            return message
+        return adapter.request_llm(
+            model=model,
+            the_conversation=self.the_conversation,
+            functions=functions,
+            tool_output_callback=tool_output_callback,
+            additional_parameters=normalized_parameters,
+        )
     
     async def request_llm_async(self,
                         model: str,
                         functions: Union[List[BaseTool], List[Callable]] = None,
                         tool_output_callback: Callable=None,
                         additional_parameters: AdditionalParameters | None = None,
-                        **kwargs) -> str:
+                        **kwargs) -> Message:
         logger.info(f"Calling API asynchronously with model {model}")
         adapter = self.get_adapter(model)
 
@@ -494,7 +344,7 @@ class APIHandler:
         return response
 
     @staticmethod
-    def calculate_tokens(text) -> Dict[str, int]:
+    def calculate_tokens(text: str) -> Dict[str, int]:
         """
         Calculate the number of tokens in the given text.
 
