@@ -72,8 +72,8 @@ models:
         label: Reasoning
         request_key: reasoning.effort
 
-  - name: claude-opus-4-7
-    display_name: Claude Opus 4.7 💰
+  - name: claude-opus-4-8
+    display_name: Claude Opus 4.8 💰
     adapter: AnthropicAdapter
     pricing:
       input: 5 # USD/1M tokens
@@ -350,12 +350,12 @@ models:
         request_key: reasoning.effort
     visible: true
 
-  - name: gemini-3-flash-preview
-    display_name: Gemini 3 Flash
+  - name: gemini-3.5-flash
+    display_name: Gemini 3.5 Flash
     adapter: GoogleAdapter
     pricing:
-      input: 0.5 # USD/1M tokens
-      output: 3 # USD/1M tokens
+      input: 1.5 # USD/1M tokens
+      output: 9 # USD/1M tokens
     context_window: 1_048_576
     inputs:
       - text
@@ -373,15 +373,14 @@ models:
       code_execution: *param_code_execution
       url_context: *param_url_context
       structured_output: *param_structured_output
-      temperature: *param_temperature_fixed_1
       reasoning_effort:
         type: enum
-        options: [minimal, low, high]
+        options: [minimal, low, medium, high]
         default: minimal
         ui: select
         label: Reasoning
         request_key: reasoning.effort
-    visible: false
+    visible: true
 
   - name: gemini-3.1-flash-lite
     display_name: Gemini 3.1 Flash-Lite
@@ -457,7 +456,6 @@ models:
     visible: false
 
 
-
   - name: grok-4.3
     display_name: Grok 4.3
     adapter: GrokAdapter
@@ -465,6 +463,35 @@ models:
       input: 1.25 # USD/1M tokens
       output: 2.5 # USD/1M tokens
     context_window: 1_000_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 64000
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, high]
+        default: low
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+    visible: true
+
+  - name: grok-build-0.1
+    display_name: Grok Build 0.1
+    adapter: GrokAdapter
+    pricing:
+      input: 1 # USD/1M tokens
+      output: 2 # USD/1M tokens
+    context_window: 256_000
     inputs:
       - text
       - image
