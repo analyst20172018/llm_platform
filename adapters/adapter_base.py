@@ -12,6 +12,11 @@ from llm_platform.helpers.model_config import ModelConfig
 from llm_platform.types import AdditionalParameters
 
 
+# Load environment variables (.env) once when the adapters layer is first imported,
+# rather than on every adapter construction.
+load_dotenv()
+
+
 # Python type -> JSON-schema type mapping for converting plain callables to tool schemas
 PYTHON_TYPE_TO_JSON_SCHEMA = {
     str: "string",
@@ -28,7 +33,7 @@ PDF_INLINE_MAX_BYTES = 32_000_000
 PDF_INLINE_MAX_PAGES = 100
 
 # Safety cap on agentic tool-calling rounds, to bound runaway cost / unbounded loops.
-MAX_TOOL_ROUNDS = 20
+MAX_TOOL_ROUNDS = 40
 
 
 class AdapterBase(ABC):
@@ -41,9 +46,20 @@ class AdapterBase(ABC):
     """
 
     def __init__(self):
-        load_dotenv()
         self.latest_usage = None
         self.model_config = ModelConfig()
+        self._client = None
+
+    @property
+    def client(self):
+        """Provider SDK client, constructed lazily once on first access."""
+        if self._client is None:
+            self._client = self._build_client()
+        return self._client
+
+    def _build_client(self):
+        """Construct the provider SDK client. Subclasses override this."""
+        raise NotImplementedError(f"{type(self).__name__} must implement _build_client()")
 
     # --- Abstract contract ---
 

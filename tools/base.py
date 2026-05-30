@@ -1,6 +1,7 @@
 import copy
+import shlex
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Literal
+from typing import Any, Dict, Iterable, Literal
 
 from pydantic import BaseModel
 
@@ -12,6 +13,38 @@ class BaseTool(ABC):
     def __call__(self, **kwargs) -> Any:
         """Executes the tool with the given arguments."""
         raise NotImplementedError
+
+    # Shell control operators that allow a single command string to invoke more than
+    # one program (chaining, piping, substitution, redirection). When an allow-list is
+    # active these are rejected, so checking only the leading token is a sound guard.
+    _SHELL_CONTROL_CHARS = (";", "|", "&", "`", "$", ">", "<", "(", ")", "\n", "\r")
+
+    def _check_command_allowed(self, command: str, allowed_commands: Iterable[str] | None) -> None:
+        """Opt-in command allow-list guard for command-executing tools.
+
+        When ``allowed_commands`` is None (the default) no restriction is applied, so
+        existing behavior is unchanged. When a collection is supplied, the command must
+        be a single simple command (no shell chaining/piping/substitution/redirection)
+        whose leading token is one of the allowed names; otherwise a ``PermissionError``
+        is raised before the command runs. The shell-operator check is what makes the
+        leading-token allow-list a real boundary rather than a bypassable hint.
+        """
+        if allowed_commands is None:
+            return
+        if any(char in command for char in self._SHELL_CONTROL_CHARS):
+            raise PermissionError(
+                f"Command contains a disallowed shell control operator; only a single "
+                f"simple command from the allow-list is permitted for {self.name}."
+            )
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            tokens = command.split()
+        first_token = tokens[0] if tokens else ""
+        if first_token not in set(allowed_commands):
+            raise PermissionError(
+                f"Command {first_token!r} is not in the allow-list for {self.name}."
+            )
 
     @property
     def __name__(self):

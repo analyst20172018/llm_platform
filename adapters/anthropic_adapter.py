@@ -6,7 +6,6 @@ from typing import Any, Callable, Dict, List, Tuple
 
 import anthropic
 
-from llm_platform.helpers.model_config import ModelConfig
 from llm_platform.services.conversation import (
     Conversation,
     FunctionCall,
@@ -22,6 +21,11 @@ from llm_platform.services.files import (
     TextDocumentFile,
 )
 from llm_platform.tools.base import BaseTool
+from llm_platform.adapters.serializers import (
+    function_call_to_anthropic,
+    function_response_to_anthropic,
+    thinking_response_to_anthropic,
+)
 
 from .adapter_base import AdapterBase, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
 from llm_platform.types import AdditionalParameters
@@ -154,10 +158,8 @@ class ClaudeStreamProcessor:
 class AnthropicAdapter(AdapterBase):
     """Adapter for interacting with the Anthropic Claude API."""
 
-    def __init__(self):
-        super().__init__()
-        self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        self.model_config = ModelConfig()
+    def _build_client(self):
+        return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
     # --- Main Public Methods ---
 
@@ -515,7 +517,7 @@ class AnthropicAdapter(AdapterBase):
 
             # Per Anthropic's API, tool results must be in a separate, subsequent user message.
             if message.function_responses:
-                tool_results_content = [fr.to_anthropic() for fr in message.function_responses]
+                tool_results_content = [function_response_to_anthropic(fr) for fr in message.function_responses]
                 history.append({"role": "user", "content": tool_results_content})
 
         return history
@@ -540,11 +542,11 @@ class AnthropicAdapter(AdapterBase):
         # For assistant messages, add thinking and tool call requests.
         if message.role == "assistant":
             if message.thinking_responses:
-                thinking_content = [tr.to_anthropic() for tr in message.thinking_responses]
+                thinking_content = [thinking_response_to_anthropic(tr) for tr in message.thinking_responses]
                 content_list = thinking_content + content_list  # Prepend thinking blocks
 
             if message.function_calls:
-                tool_call_content = [fc.to_anthropic() for fc in message.function_calls]
+                tool_call_content = [function_call_to_anthropic(fc) for fc in message.function_calls]
                 content_list.extend(tool_call_content)
 
         return content_list

@@ -322,6 +322,7 @@ models:
   - name: gemini-3.1-pro-preview
     display_name: Gemini 3.1 Pro 👍
     adapter: GoogleAdapter
+    uses_thinking_level: true
     pricing:
       input: 4 # USD/1M tokens
       output: 18 # USD/1M tokens
@@ -355,6 +356,7 @@ models:
   - name: gemini-3.5-flash
     display_name: Gemini 3.5 Flash
     adapter: GoogleAdapter
+    uses_thinking_level: true
     pricing:
       input: 1.5 # USD/1M tokens
       output: 9 # USD/1M tokens
@@ -387,6 +389,7 @@ models:
   - name: gemini-3.1-flash-lite
     display_name: Gemini 3.1 Flash-Lite
     adapter: GoogleAdapter
+    uses_thinking_level: true
     pricing:
       input: 0.25 # USD/1M tokens
       output: 1.5 # USD/1M tokens
@@ -461,6 +464,7 @@ models:
   - name: grok-4.3
     display_name: Grok 4.3
     adapter: GrokAdapter
+    structured_output_with_tools: true
     pricing:
       input: 1.25 # USD/1M tokens
       output: 2.5 # USD/1M tokens

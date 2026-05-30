@@ -6,7 +6,3 @@ class DeepSeekAdapter(OpenAICompatibleAdapter):
 
     BASE_URL = "https://api.deepseek.com"
     ENV_VAR = "DEEPSEEK_API_KEY"
-
-    def _suppress_temperature(self, model: str) -> bool:
-        # The deepseek-reasoner model does not accept a temperature parameter.
-        return model == "deepseek-reasoner"

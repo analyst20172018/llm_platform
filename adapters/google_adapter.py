@@ -41,13 +41,12 @@ class GoogleAdapter(AdapterBase):
         "agent_config",
     }
 
-    def __init__(self):
-        super().__init__()
+    def _build_client(self):
         api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
         if not api_key:
             raise ValueError("GOOGLE_GEMINI_API_KEY environment variable not set.")
         from google import genai
-        self.client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
+        return genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
 
     # ------------------------------------------------------------------
     # File / content conversion
@@ -247,7 +246,8 @@ class GoogleAdapter(AdapterBase):
 
         if reasoning := additional_parameters.get("reasoning"):
             effort = reasoning.get("effort", "none")
-            if "gemini-3" in model:
+            model_object = self.model_config[model]
+            if model_object and model_object["uses_thinking_level"]:
                 cfg["thinking_level"] = effort
             else:
                 cfg["thinking_budget"] = self.REASONING_EFFORT_MAP.get(effort, 0)

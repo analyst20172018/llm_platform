@@ -22,6 +22,12 @@ from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
                                          MediaFile, ImageFile, VideoFile, define_file_type)
 from llm_platform.tools.base import BaseTool
+from llm_platform.adapters.serializers import (
+    function_call_from_openai,
+    function_call_to_openai,
+    function_response_to_openai,
+    thinking_response_to_openai,
+)
 from llm_platform.types import AdditionalParameters
 
 from .adapter_base import AdapterBase, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
@@ -50,13 +56,19 @@ class OpenAIAdapter(AdapterBase):
     """
 
     def __init__(self):
-        """
-        Initializes the OpenAIAdapter with synchronous and asynchronous clients.
-        """
         super().__init__()
-        from openai import AsyncOpenAI, OpenAI
-        self.client = OpenAI()
-        self.async_client = AsyncOpenAI()
+        self._async_client = None
+
+    def _build_client(self):
+        from openai import OpenAI
+        return OpenAI()
+
+    @property
+    def async_client(self):
+        if self._async_client is None:
+            from openai import AsyncOpenAI
+            self._async_client = AsyncOpenAI()
+        return self._async_client
 
     def _convert_file_to_content(self, file: BaseFile) -> Dict | None:
         """
@@ -122,11 +134,11 @@ class OpenAIAdapter(AdapterBase):
 
             # Add any reasoning responses
             if message.thinking_responses:
-                history.extend(tr.to_openai() for tr in message.thinking_responses)
+                history.extend(thinking_response_to_openai(tr) for tr in message.thinking_responses)
 
             # Add any function calls
             if message.function_calls:
-                history.extend(fc.to_openai() for fc in message.function_calls)  
+                history.extend(function_call_to_openai(fc) for fc in message.function_calls)  
 
             # Add text content        
             content_items = []
@@ -154,7 +166,7 @@ class OpenAIAdapter(AdapterBase):
 
             # Add any function responses that followed the main content
             if message.function_responses:
-                history.extend(fr.to_openai() for fr in message.function_responses)
+                history.extend(function_response_to_openai(fr) for fr in message.function_responses)
 
         return history
 
@@ -236,17 +248,22 @@ class OpenAIAdapter(AdapterBase):
 
         return parameters
 
-    def _parse_response(self, response) -> Tuple[str, List[ThinkingResponse], List[MediaFile], Dict]:
+    def _parse_response(self, response) -> Tuple[str, List[ThinkingResponse], List[MediaFile], List[Dict], Dict]:
         """
         Parses the raw OpenAI response into structured data.
+
+        This is pure: it performs no network IO. Container-file citations are
+        returned as metadata for the caller to fetch via
+        `_retrieve_container_files` / `_retrieve_container_files_async`.
 
         Args:
             response: The response object from the OpenAI client.
 
         Returns:
-            * the answer text, 
+            * the answer text,
             * a list of thinking responses,
-            * a list of generated media files, and 
+            * a list of generated media files,
+            * a list of container-file citation dicts (to be retrieved separately), and
             * a usage dictionary.
         """
 
@@ -261,6 +278,7 @@ class OpenAIAdapter(AdapterBase):
 
         answer_text = ""
         files_from_response = []
+        container_file_citations = []
         thinking_responses = []
 
         for output in outputs:
@@ -274,37 +292,16 @@ class OpenAIAdapter(AdapterBase):
                             answer_text += "\n"
                         answer_text += content.text
 
-                    # Extract annotations
+                    # Collect container-file citations as metadata only. The bytes
+                    # are fetched separately (see `_retrieve_container_files`) so that
+                    # parsing stays pure and the async path does not block on network IO.
                     for annotation in (getattr(content, "annotations", []) or []):
-                        # Extract files from annotations
                         if getattr(annotation, "type", "") == "container_file_citation":
-                            file_retrieve_response = self.client.containers.files.content.retrieve(
-                                    container_id=annotation.container_id,
-                                    file_id=annotation.file_id,
-                            )
-                            data = getattr(file_retrieve_response, "content", None)
-                            
-                            file_type = define_file_type(annotation.filename)
-                            retrieved_file = None
-                            if file_type == "image":
-                                retrieved_file = ImageFile.from_bytes(data, file_name=annotation.filename)
-                            elif file_type == "video":
-                                retrieved_file = VideoFile.from_bytes(data, file_name=annotation.filename)
-                            elif file_type == "audio":
-                                retrieved_file = AudioFile.from_bytes(data, file_name=annotation.filename)
-                            elif file_type == "text":
-                                retrieved_file = TextDocumentFile.from_string(data, file_name=annotation.filename)
-                            elif file_type == "pdf":
-                                retrieved_file = PDFDocumentFile.from_bytes(data, file_name=annotation.filename)
-                            elif file_type == "excel":
-                                retrieved_file = ExcelDocumentFile.from_bytes(data, file_name=annotation.filename)
-                            elif file_type == "word":
-                                retrieved_file = WordDocumentFile.from_bytes(data, file_name=annotation.filename)
-                            elif file_type == "powerpoint":
-                                retrieved_file = PowerPointDocumentFile.from_bytes(data, file_name=annotation.filename)
-                            
-                            if retrieved_file:
-                                files_from_response.append(retrieved_file)
+                            container_file_citations.append({
+                                "container_id": annotation.container_id,
+                                "file_id": annotation.file_id,
+                                "filename": annotation.filename,
+                            })
 
 
             # Extract image output from message outputs
@@ -330,12 +327,65 @@ class OpenAIAdapter(AdapterBase):
                 code_text = getattr(output, "code", "")
                 answer_text += f"\n```\n{code_text}```\n"
 
-        return answer_text, thinking_responses, files_from_response, usage
+        return answer_text, thinking_responses, files_from_response, container_file_citations, usage
+
+    @staticmethod
+    def _build_file_from_container_data(data, filename) -> MediaFile | None:
+        """Build a file object from raw container-file bytes and its filename."""
+        file_type = define_file_type(filename)
+        if file_type == "image":
+            return ImageFile.from_bytes(data, file_name=filename)
+        elif file_type == "video":
+            return VideoFile.from_bytes(data, file_name=filename)
+        elif file_type == "audio":
+            return AudioFile.from_bytes(data, file_name=filename)
+        elif file_type == "text":
+            return TextDocumentFile.from_string(data.decode("utf-8", errors="replace"), name=filename)
+        elif file_type == "pdf":
+            return PDFDocumentFile.from_bytes(data, file_name=filename)
+        elif file_type == "excel":
+            return ExcelDocumentFile.from_bytes(data, file_name=filename)
+        elif file_type == "word":
+            return WordDocumentFile.from_bytes(data, file_name=filename)
+        elif file_type == "powerpoint":
+            return PowerPointDocumentFile.from_bytes(data, file_name=filename)
+        return None
+
+    def _retrieve_container_files(self, citations: List[Dict]) -> List[MediaFile]:
+        """Fetch container-file citations (sync). Kept out of `_parse_response`
+        so parsing is pure and testable."""
+        files = []
+        for citation in citations:
+            response = self.client.containers.files.content.retrieve(
+                container_id=citation["container_id"],
+                file_id=citation["file_id"],
+            )
+            retrieved_file = self._build_file_from_container_data(
+                getattr(response, "content", None), citation["filename"]
+            )
+            if retrieved_file:
+                files.append(retrieved_file)
+        return files
+
+    async def _retrieve_container_files_async(self, citations: List[Dict]) -> List[MediaFile]:
+        """Async counterpart of `_retrieve_container_files` (uses the async client)."""
+        files = []
+        for citation in citations:
+            response = await self.async_client.containers.files.content.retrieve(
+                container_id=citation["container_id"],
+                file_id=citation["file_id"],
+            )
+            retrieved_file = self._build_file_from_container_data(
+                getattr(response, "content", None), citation["filename"]
+            )
+            if retrieved_file:
+                files.append(retrieved_file)
+        return files
 
     def _get_function_calls_from_response(self, response) -> List[FunctionCall]:
         """Extracts function call records from an OpenAI response."""
         return [
-            FunctionCall.from_openai(output)
+            function_call_from_openai(output)
             for output in getattr(response, "output", [])
             if getattr(output, "type", "") == FUNCTION_CALL_TYPE
         ]
@@ -497,7 +547,9 @@ class OpenAIAdapter(AdapterBase):
                     time.sleep(10)  # Poll every 10 seconds
                     response = self.client.responses.retrieve(response.id)
 
-        answer_text, thinking_responses, files_from_response, usage = self._parse_response(response)
+        answer_text, thinking_responses, files_from_response, citations, usage = self._parse_response(response)
+        # Container files come before parsed (generated) files to preserve the pre-refactor order.
+        files_from_response = self._retrieve_container_files(citations) + files_from_response
 
         message = Message(
             role="assistant",
@@ -551,7 +603,9 @@ class OpenAIAdapter(AdapterBase):
             )
             response = await self.async_client.responses.create(**parameters)
 
-        answer_text, thinking_responses, files_from_response, usage = self._parse_response(response)
+        answer_text, thinking_responses, files_from_response, citations, usage = self._parse_response(response)
+        # Container files come before parsed (generated) files to preserve the pre-refactor order.
+        files_from_response = await self._retrieve_container_files_async(citations) + files_from_response
 
         message = Message(
             role="assistant",
@@ -593,7 +647,8 @@ class OpenAIAdapter(AdapterBase):
                 time.sleep(10)  # Poll every 10 seconds
                 response = self.client.responses.retrieve(response.id)
 
-        text, thinking, files, usage = self._parse_response(response)
+        text, thinking, files, citations, usage = self._parse_response(response)
+        files = self._retrieve_container_files(citations) + files
         function_calls = self._get_function_calls_from_response(response)
 
         # 2. If no tools were called, the conversation is over.
@@ -634,7 +689,8 @@ class OpenAIAdapter(AdapterBase):
 
         # 1. Get response from the model
         response = await self.async_client.responses.create(**parameters)
-        text, thinking, files, usage = self._parse_response(response)
+        text, thinking, files, citations, usage = self._parse_response(response)
+        files = await self._retrieve_container_files_async(citations) + files
         function_calls = self._get_function_calls_from_response(response)
 
         # 2. If no tools were called, the conversation is over.

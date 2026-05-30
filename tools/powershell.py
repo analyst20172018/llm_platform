@@ -1,5 +1,5 @@
 from llm_platform.tools.base import BaseTool
-from typing import Dict
+from typing import Dict, Iterable
 from pydantic import BaseModel, Field
 import subprocess
 
@@ -19,12 +19,16 @@ class RunPowerShellCommand(BaseTool):
     class InputModel(BaseModel):
         command: str = Field(description="Command to execute", required=True)
 
-    def __init__(self):
+    def __init__(self, allowed_commands: Iterable[str] | None = None):
         """
         Initializes a single PowerShell process that remains active
         across multiple calls to the __call__() method.
+
+        Pass ``allowed_commands`` to restrict execution to an allow-list (matched
+        on the command's first token); the default ``None`` applies no restriction.
         """
         super().__init__()
+        self.allowed_commands = allowed_commands
         self.console = Console()
         # Start a persistent PowerShell session
         self.process = subprocess.Popen(
@@ -56,6 +60,8 @@ class RunPowerShellCommand(BaseTool):
             Dict: Contains "output" for standard output and "error" for
                   standard error.
         """
+        self._check_command_allowed(command, self.allowed_commands)
+
         # Show the command in a panel
         self.console.print(Panel(f"Command: [bold green]{command}", border_style="green"))
 

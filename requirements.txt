@@ -19,3 +19,4 @@ requests
 rich
 tiktoken
 loguru
+paramiko

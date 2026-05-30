@@ -23,6 +23,7 @@ from llm_platform.services.files import (
     WordDocumentFile,
 )
 from llm_platform.tools.base import BaseTool
+from llm_platform.adapters.serializers import function_call_from_grok
 from llm_platform.types import AdditionalParameters
 
 from .adapter_base import AdapterBase
@@ -36,10 +37,11 @@ class GrokAdapter(AdapterBase):
 
     def __init__(self):
         super().__init__()
-        from xai_sdk import Client
-
         self.api_key = os.getenv("XAI_API_KEY")
-        self.client = Client(api_key=self.api_key)
+
+    def _build_client(self):
+        from xai_sdk import Client
+        return Client(api_key=self.api_key)
 
     def _get_structured_output_model(
         self,
@@ -53,6 +55,20 @@ class GrokAdapter(AdapterBase):
                 "Grok structured_output must be a Pydantic model class, not a boolean flag."
             )
         return structured_output
+
+    def _validate_structured_output_with_tools(self, model: str, has_tools: bool) -> None:
+        """Reject structured output combined with tools unless the model allows it.
+
+        Only models flagged ``structured_output_with_tools`` (the Grok 4 family)
+        support that combination. Call this only when structured output is requested.
+        """
+        if not has_tools:
+            return
+        model_object = self.model_config[model]
+        if not (model_object and model_object["structured_output_with_tools"]):
+            raise ValueError(
+                "Structured output with tools is only supported for the Grok 4 family."
+            )
 
     def convert_conversation_history_to_adapter_format(
         self,
@@ -171,11 +187,7 @@ class GrokAdapter(AdapterBase):
 
         if structured_output_model := self._get_structured_output_model(additional_parameters):
             parameters["response_format"] = structured_output_model
-
-            if parameters["tools"] and not model.startswith("grok-4"):
-                raise ValueError(
-                    "Structured output with tools is only supported for the Grok 4 family."
-                )
+            self._validate_structured_output_with_tools(model, bool(parameters["tools"]))
 
         return parameters
 
@@ -291,12 +303,8 @@ class GrokAdapter(AdapterBase):
         parameters["tools"].extend(tool_definitions)
         parameters["tool_choice"] = "auto"
 
-        if self._get_structured_output_model(additional_parameters) and not model.startswith(
-            "grok-4"
-        ):
-            raise ValueError(
-                "Structured output with tools is only supported for the Grok 4 family."
-            )
+        if self._get_structured_output_model(additional_parameters):
+            self._validate_structured_output_with_tools(model, has_tools=True)
 
         chat = self.client.chat.create(**parameters)
         chat, _ = self.convert_conversation_history_to_adapter_format(
@@ -308,7 +316,7 @@ class GrokAdapter(AdapterBase):
             return response
 
         function_call_records = [
-            FunctionCall.from_grok(each_tool_call) for each_tool_call in response.tool_calls
+            function_call_from_grok(each_tool_call) for each_tool_call in response.tool_calls
         ]
         function_response_records = self._execute_tool_calls(
             function_call_records=function_call_records,

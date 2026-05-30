@@ -14,7 +14,6 @@ from llm_platform.services.files import (
     VideoFile,
 )
 
-
 class FunctionCall:
     def __init__(
         self,
@@ -28,44 +27,8 @@ class FunctionCall:
         self.arguments = arguments
         self.call_id = id if call_id is None else call_id
 
-    @classmethod
-    def from_openai(cls, tool_call):
-        return cls(
-            id=tool_call.id,
-            name=tool_call.name,
-            arguments=str(tool_call.arguments),
-            call_id=getattr(tool_call, "call_id", tool_call.id),
-        )
-
-    @classmethod
-    def from_grok(cls, tool_call):
-        return cls(
-            id=tool_call.id,
-            name=tool_call.function.name,
-            arguments=str(tool_call.function.arguments),
-            call_id=tool_call.id,
-        )
-
-    def to_openai(self) -> Dict:
-        return {
-            "id": self.id,
-            "call_id": self.call_id,
-            "name": self.name,
-            "arguments": self.arguments,
-            "type": "function_call",
-        }
-
-    def to_anthropic(self) -> Dict:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "input": self.arguments,
-            "type": "tool_use",
-        }
-
     def __str__(self):
         return f"Id: {self.id}; Function: {self.name}, Arguments: {self.arguments}"
-
 
 class FunctionResponse:
     def __init__(
@@ -109,76 +72,19 @@ class FunctionResponse:
                     )
                 )
 
-    def to_openai(self) -> Dict:
-        if self.files:
-            print("WARNING: Files are not supported in function responses for OpenAI")
-        return {
-            "type": "function_call_output",
-            "call_id": self.call_id,
-            "output": json.dumps(self.response),
-        }
-
-    def to_anthropic(self) -> Dict:
-        output = {
-            "type": "tool_result",
-            "tool_use_id": self.id,
-            "content": [
-                {
-                    "type": "text",
-                    "text": json.dumps(self.response),
-                }
-            ],
-        }
-
-        for file in self.files:
-            if isinstance(file, ImageFile):
-                output["content"].append(
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": f"image/{file.extension}",
-                            "data": file.base64,
-                        },
-                    }
-                )
-
-        return output
-
     def __str__(self):
         return (
             f"Id: {self.id}; Call id: {self.call_id}; Function: {self.name}, "
             f"Response: {json.dumps(self.response)}"
         )
 
-
 class ThinkingResponse:
     def __init__(self, content: str, id: str = None):
         self.content = content
         self.id = id
 
-    def to_openai(self) -> Dict:
-        return {
-            "id": self.id,
-            "summary": [
-                {
-                    "type": "summary_text",
-                    "text": self.content,
-                }
-            ],
-            "type": "reasoning",
-        }
-
-    def to_anthropic(self) -> Dict:
-        return {
-            "type": "thinking",
-            "thinking": self.content,
-            "signature": self.id if self.id else "0",
-        }
-
     def __str__(self):
         return f"Id: {self.id}; Thinking: {self.content}"
-
 
 class Message:
     def __init__(
@@ -220,7 +126,6 @@ class Message:
             + "\n".join(str(function_response) for function_response in self.function_responses)
             + "\n".join(str(additional_response) for additional_response in self.additional_responses)
         )
-
 
 class Conversation:
     def __init__(

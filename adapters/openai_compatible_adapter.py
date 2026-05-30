@@ -1,8 +1,6 @@
 import os
 from typing import Any, Callable, Dict, List
 
-from loguru import logger
-
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.services.files import (
     AudioFile,
@@ -14,6 +12,10 @@ from llm_platform.services.files import (
     WordDocumentFile,
 )
 from llm_platform.tools.base import BaseTool
+from llm_platform.adapters.serializers import (
+    function_call_to_openai,
+    function_response_to_openai,
+)
 from llm_platform.types import AdditionalParameters
 
 from .adapter_base import AdapterBase
@@ -46,15 +48,19 @@ class OpenAICompatibleAdapter(AdapterBase):
     BASE_URL: str = None
     ENV_VAR: str = None
 
-    def __init__(self):
-        super().__init__()
+    def _build_client(self):
         from openai import OpenAI
-
-        self.client = OpenAI(base_url=self.BASE_URL, api_key=os.getenv(self.ENV_VAR))
+        return OpenAI(base_url=self.BASE_URL, api_key=os.getenv(self.ENV_VAR))
 
     def _suppress_temperature(self, model: str) -> bool:
-        """Whether to drop the ``temperature`` parameter for a given model."""
-        return False
+        """Whether to drop the ``temperature`` parameter for a given model.
+
+        Driven by the per-model ``suppress_temperature`` flag in
+        models_config.yaml. No model currently sets it; it is a dormant per-model
+        extension point for any future model that rejects ``temperature``.
+        """
+        model_object = self.model_config[model]
+        return bool(model_object and model_object["suppress_temperature"])
 
     def convert_conversation_history_to_adapter_format(
         self, the_conversation: Conversation, model: str, **kwargs
@@ -67,7 +73,7 @@ class OpenAICompatibleAdapter(AdapterBase):
 
             if message.function_calls:
                 history_message["tool_calls"] = [
-                    each_call.to_openai() for each_call in message.function_calls
+                    function_call_to_openai(each_call) for each_call in message.function_calls
                 ]
 
             if message.files is not None:
@@ -80,7 +86,9 @@ class OpenAICompatibleAdapter(AdapterBase):
                         )
 
                     elif isinstance(each_file, AudioFile):
-                        assert "gpt-4o-audio" in model
+                        model_object = self.model_config[model]
+                        if not (model_object and "audio" in model_object.inputs):
+                            raise ValueError(f"Model {model} does not support audio input.")
                         kwargs.setdefault("modalities", ["text"])
                         kwargs.setdefault("audio", {"voice": "alloy", "format": "wav"})
                         if not isinstance(history_message["content"], list):
@@ -106,7 +114,7 @@ class OpenAICompatibleAdapter(AdapterBase):
 
             if message.function_responses:
                 for each_response in message.function_responses:
-                    history.append(each_response.to_openai())
+                    history.append(function_response_to_openai(each_response))
 
         return history, kwargs
 

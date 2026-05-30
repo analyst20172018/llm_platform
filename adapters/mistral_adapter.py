@@ -1,23 +1,23 @@
 from .adapter_base import AdapterBase
 import os
-from typing import Any, Callable, Dict, List, Tuple
-from loguru import logger
+from typing import Any, Callable, Dict, List
 from llm_platform.tools.base import BaseTool
-from llm_platform.services.conversation import Conversation, Message, FunctionCall, FunctionResponse
-from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
-                                         TextDocumentFile, PDFDocumentFile,
-                                         ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
-                                         MediaFile, ImageFile, VideoFile)
+from llm_platform.adapters.serializers import (function_call_from_openai,
+                                                  function_call_to_openai,
+                                                  function_response_to_openai)
+from llm_platform.services.conversation import Conversation, Message, FunctionResponse
+from llm_platform.services.files import (AudioFile, TextDocumentFile, PDFDocumentFile,
+                                         ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile,
+                                         ImageFile)
 import json
 from llm_platform.types import AdditionalParameters
 
 class MistralAdapter(AdapterBase):
     
-    def __init__(self):
-        super().__init__()
+    def _build_client(self):
         # Import lazily so this SDK does not slow down module import time.
-        from mistralai import Mistral
-        self.client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+        from mistralai.client import Mistral
+        return Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
 
     def convert_conversation_history_to_adapter_format(self, 
                         the_conversation: Conversation, 
@@ -40,7 +40,7 @@ class MistralAdapter(AdapterBase):
 
             # If there is an attribute tool_calls in message, then add it to history. 
             if message.function_calls:
-                history_message["tool_calls"] = [each_call.to_openai() for each_call in message.function_calls]
+                history_message["tool_calls"] = [function_call_to_openai(each_call) for each_call in message.function_calls]
 
             if not message.files is None:
                 for each_file in message.files:
@@ -79,108 +79,11 @@ class MistralAdapter(AdapterBase):
             # Add all function responses to the history
             if message.function_responses:
                 for each_response in message.function_responses:
-                    history.append(each_response.to_openai())
+                    history.append(function_response_to_openai(each_response))
 
         return history, kwargs
 
-    def convert_conversation_history_to_adapter_format_for_ocr(self, the_conversation: Conversation) -> Dict:
-        
-        # Add history of messages
-        for message in the_conversation.messages:
-
-            if message.files:
-                for each_file in message.files:
-                    
-                    # Images
-                    if isinstance(each_file, ImageFile):
-
-                        # Add the image to the content list
-                        document = {"type": "image_url", 
-                                    "image_url": f"data:image/{each_file.extension};base64,{each_file.base64}"
-                        }
-                        return document
-                    
-                    # Audio
-                    if isinstance(each_file, AudioFile):
-                        logger.warning("Audio files are not supported")
-                    
-                    # Text documents
-                    elif isinstance(each_file, (TextDocumentFile, ExcelDocumentFile)):
-                        logger.warning("Text files are not supported")
-
-                    # PDF documents
-                    elif isinstance(each_file, PDFDocumentFile):
-                        # Add the image to the content list
-                        document = {
-                            "type": "document_url", 
-                            "document_url": f"data:application/pdf;base64,{each_file.base64}" 
-                        }
-                        return document
-
-                    else:
-                        raise ValueError(f"Unsupported file type: {message.file.get_type()}")
-
-            raise ValueError(f"No image or pdf files are found in the conversation history")
-
-        return None
-
-    def transcribe_audio(self, model: str, 
-                    the_conversation: Conversation, 
-                    functions:List[BaseTool]=None, 
-                    tool_output_callback: Callable=None, 
-                    additional_parameters: AdditionalParameters | None = None,
-                    **kwargs) -> Message:
-        """Transcribe the last conversation audio attachment with a Mistral speech model.
-
-        Expects exactly one audio file in the last message of ``the_conversation``.
-        Builds the transcription request, applies supported parameters from
-        ``additional_parameters`` (``language`` and ``timestamp_granularities``),
-        sends it to Mistral, and appends the assistant response to the conversation.
-
-        Args:
-            model: Target Mistral transcription model.
-            the_conversation: Conversation containing the audio file in its last message.
-            functions: Unused; accepted for interface compatibility.
-            tool_output_callback: Unused; accepted for interface compatibility.
-            additional_parameters: Optional transcription options.
-            **kwargs: Unused extra arguments for interface compatibility.
-
-        Returns:
-            Message: Assistant message containing transcribed text, or an error message
-            if the input does not contain exactly one file.
-        """
-        
-        # Get files from the last message. I expect only one file - audio file for transcription
-        files = getattr(the_conversation.messages[-1], "files", [])
-        if len(files) != 1:
-            logger.error(f"There are {len(files)} files in the last message. I expect only one audio file to transcribe it.")
-            message = Message(role="assistant", content=f"There are {len(files)} files in the last message. I expect only one audio file to transcribe it.", usage={})
-            the_conversation.messages.append(message)
-            return message
-        
-        audio_file = files[0]
-        parameters = {
-            'model': model,
-            'file': {
-                "content": audio_file.bytes_io.getvalue(),
-                "file_name": audio_file.name,
-            },
-        }
-        if language := additional_parameters.get("language", None):
-            parameters["language"] = language
-        #if diarized := additional_parameters.get("diarized", None):
-        #    parameters["diarize"] = diarized
-        if additional_parameters.get("timestamp_granularities", None):
-            parameters["timestamp_granularities"] = ["segment"] # NOTE: timestamp_granularities is currently not compatible with language, please use either one or the other.
-
-        transcription_response = self.client.audio.transcriptions.complete(**parameters)
-
-        message = Message(role="assistant", content=transcription_response.text)
-        the_conversation.messages.append(message)
-
-        return message
-
-    def request_llm(self, model: str, 
+    def request_llm(self, model: str,
                     the_conversation: Conversation, 
                     functions:List[BaseTool]=None, 
                     tool_output_callback: Callable=None, 
@@ -188,15 +91,6 @@ class MistralAdapter(AdapterBase):
                     **kwargs) -> Message:
 
         additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
-
-        # Transcribe
-        if model == "voxtral-mini-latest":
-            return self.transcribe_audio(model=model, 
-                                        the_conversation=the_conversation, 
-                                        functions=functions, 
-                                        tool_output_callback=tool_output_callback, 
-                                        additional_parameters=additional_parameters,
-                                        **kwargs)
 
         request_params: Dict[str, Any] = {}
         if "temperature" in additional_parameters:
@@ -221,24 +115,8 @@ class MistralAdapter(AdapterBase):
                 continue
             request_params[key] = value
 
-        # OCR
-        if model == "mistral-ocr-latest":
-            document = self.convert_conversation_history_to_adapter_format_for_ocr(the_conversation)
-            ocr_response = self.client.ocr.process(
-                                        model=model,
-                                        document=document,
-                                        include_image_base64=False
-                            )
-            response_pages_markdown = [each.markdown for each in ocr_response.pages]
-            output_markdown = '\n'.join(response_pages_markdown)
-
-            message = Message(role="assistant", content=output_markdown)
-            the_conversation.messages.append(message)
-
-            return message
-        
         # LLM with functions
-        elif not functions is None:
+        if not functions is None:
             response = self.request_llm_with_functions(
                             model=model,
                             the_conversation=the_conversation,
@@ -313,7 +191,7 @@ class MistralAdapter(AdapterBase):
 
         # Save tool_calls parameter from the openai answer for the history
         if getattr(assistant_message, 'tool_calls', None) is not None:
-            function_call_records = [FunctionCall.from_openai(each_tool_call) for each_tool_call in assistant_message.tool_calls]
+            function_call_records = [function_call_from_openai(each_tool_call) for each_tool_call in assistant_message.tool_calls]
         else: 
             function_call_records = []
 

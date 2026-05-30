@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-05-28
+Version: 2026-05-30
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -26,10 +26,10 @@ Main runtime flow:
 Primary modules:
 - `core/llm_handler.py`: orchestration facade and entrypoint
 - `core/parameter_normalizer.py`: `ParameterNormalizer` — normalizes `additional_parameters` against a model's YAML schema (extracted from the facade)
-- `adapters/adapter_base.py`: `AdapterBase` contract plus provider-agnostic helpers shared by the adapters (parameter merge, usage extraction, callable→JSON-schema, content-block formatting, PDF/tool-round constants)
+- `adapters/adapter_base.py`: `AdapterBase` contract plus provider-agnostic helpers shared by the adapters (parameter merge, usage extraction, callable→JSON-schema, content-block formatting, PDF/tool-round constants). `load_dotenv()` runs once at module import (not per adapter construction)
 - `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter)
 - `adapters/*.py`: provider-specific translation and API calls
-- `services/conversation.py`: conversation/message/function-call domain model + serialization
+- `services/conversation.py`: provider-agnostic conversation/message/function-call domain model + platform-internal persistence (provider wire serialization lives in `adapters/serializers.py`)
 - `services/files.py`: file abstractions and format conversion/extraction
 - `helpers/model_config.py`: YAML model registry loader (cached + name-indexed) and parameter schema normalization
 - `tools/*.py`: tool abstraction and built-in tool implementations (`SSHCommandTool` base for SSH admin tools)
@@ -52,7 +52,7 @@ File: `core/llm_handler.py`
 - `calculate_tokens(text) -> {'bytes': int, 'tokens': int}` (tiktoken `cl100k_base`)
 
 ### 3.3 Adapter resolution
-Adapter class is selected by model's `adapter` in `models_config.yaml` and imported + instantiated on demand. Adapter classes are registered as `"module:ClassName"` import paths (`ADAPTER_IMPORT_PATHS`) and loaded lazily through `importlib`, so importing `APIHandler` does not transitively import every provider SDK.
+Adapter class is selected by model's `adapter` in `models_config.yaml` and imported + instantiated on demand. Adapter classes are registered as `"module:ClassName"` import paths (`ADAPTER_IMPORT_PATHS`) and loaded lazily through `importlib`, so importing `APIHandler` does not transitively import every provider SDK. Each adapter constructs its provider SDK client lazily: `AdapterBase` owns the single cached `client` property and delegates the one-line construction to a `_build_client()` hook each adapter overrides (OpenAI additionally has its own `async_client` property). So adapter construction needs no API key and performs no network/SDK work until the first request — only the selected provider's SDK is imported, and only when actually used.
 
 Registered adapter classes include:
 - `OpenAIAdapter`
@@ -86,9 +86,11 @@ Classes:
 
 Message roles: `user`, `assistant`, `function`
 
+The domain model is provider-agnostic: it carries no vendor knowledge. Provider wire (de)serialization for `FunctionCall` / `FunctionResponse` / `ThinkingResponse` lives in `adapters/serializers.py` as standalone functions (e.g. `function_call_to_openai`, `function_call_to_anthropic`, `function_call_from_openai`, `function_call_from_grok`), keeping `services/` free of provider formats.
+
 ### Serialization
-- `Conversation.save_to_json()` serializes messages and file payloads
-- `Conversation.read_from_json(data)` reconstructs conversation and supported file objects
+- Platform-internal persistence only: `Conversation.save_to_json()` serializes messages and file payloads, and `Conversation.read_from_json(data)` reconstructs conversation and supported file objects.
+- Vendor wire (de)serialization is not part of the domain model; it lives in `adapters/serializers.py` (see §16).
 
 ## 5. File abstraction model
 File: `services/files.py`
@@ -99,15 +101,18 @@ File: `services/files.py`
 ### 5.2 Class hierarchy
 - `BaseFile`
 - `DocumentFile`
-  - `TextDocumentFile`
-  - `PDFDocumentFile`
-  - `ExcelDocumentFile`
-  - `WordDocumentFile`
-  - `PowerPointDocumentFile`
+  - `TextDocumentFile` (text-backed: stores `self.text`)
+  - `ByteDocumentFile` (byte-backed base: stores raw `self.data`, shares `from_bytes`/`from_file`)
+    - `PDFDocumentFile`
+    - `ExcelDocumentFile`
+    - `WordDocumentFile`
+    - `PowerPointDocumentFile`
 - `MediaFile`
   - `ImageFile`
   - `AudioFile` (auto-converts non-mp3 input to mp3)
   - `VideoFile`
+
+The byte-backed subclasses differ only in their `text` extraction property; the common storage (`self.data`) and constructors (`from_bytes(data, file_name="")`, `from_file(name)`) live in `ByteDocumentFile`. `MediaFile` and its subclasses store raw bytes in `self.data` as well; the local-filesystem reader is `MediaFile.from_path` and the network fetch `MediaFile.from_web_url` uses a 30s timeout. Across all byte-backed files the attribute is named `data` (not the shadowing builtin `bytes`); `base64`/`size`/`extension`/`text` remain the public read surface used by adapters and serialization.
 
 ### 5.3 Content extraction behavior
 - PDF: text extraction via `PyPDF2`
@@ -133,6 +138,11 @@ Models are grouped by `adapter`, with metadata:
 - optional `background_mode`
 - optional `agent_type` for Google agent routing, currently `deep_research`
 - optional `adaptive_thinking` (Anthropic): when true the adapter sends `thinking: {type: "adaptive"}` + `output_config.effort`; otherwise it falls back to the legacy `thinking: {type: "enabled", budget_tokens}`. Set on models that reject `enabled`/`budget_tokens` (Opus 4.7/4.8, Sonnet 4.6)
+- optional `uses_thinking_level` (Google): when true the adapter sends Gemini 3's categorical `thinking_level`; otherwise the legacy numeric `thinking_budget`. Set on the `gemini-3.x` chat models (replaces the former `"gemini-3" in model` substring check)
+- optional `structured_output_with_tools` (Grok): when true, structured output may be combined with tools; otherwise that combination raises. Set on the Grok 4 family (replaces the former `model.startswith("grok-4")` check)
+- optional `suppress_temperature` (OpenAI-compatible): when true the adapter drops the `temperature` parameter. No model currently sets it (the former `deepseek-reasoner` special case was removed), but it remains the per-model extension point should a temperature-rejecting model be added
+
+These per-model capability flags follow the `adaptive_thinking` precedent: enabling a behavior is a `models_config.yaml` change rather than a hardcoded model-name check in adapter code. Model `inputs` doubles as a capability signal — e.g. OpenAI-compatible audio input is now gated on `"audio" in inputs` rather than a model-name check.
 
 ### 6.2 Parameter schema capabilities
 `Model` normalizes `additional_parameters` and supports:
@@ -150,7 +160,7 @@ Models are grouped by `adapter`, with metadata:
   - Sync + async request methods
   - Tool calling with recursive loop
   - Supports `web_search`, `code_execution`, structured output parsing, reasoning/text parameter pass-through
-  - Supports file citations retrieval from container files
+  - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch
 - `AnthropicAdapter`
   - Sync only
   - Non-streaming and streaming execution paths
@@ -166,18 +176,18 @@ Models are grouped by `adapter`, with metadata:
   - Server-side conversation state is reused across turns via `previous_interaction_id`. The first turn sends the full converted history; the returned `interaction.id` is stored on the assistant `Message`. On every subsequent turn the adapter resolves the prior id through `Conversation.previous_interaction_id_for_google` and sends only the new `user_input` (mirroring the `previous_response_id_for_openai` pattern used by `OpenAIAdapter`).
   - Function-calling round-trips inside a single user turn use the same `previous_interaction_id` chaining; only the new `function_result` entries are sent on follow-up calls
   - Tools are emitted as plain dicts: `{"type": "function", ...}` for `BaseTool` declarations plus `{"type": "google_search"}`, `{"type": "url_context"}`, `{"type": "code_execution"}` for built-ins
-  - Generation parameters (`temperature`, `max_output_tokens`, `thinking_level` for Gemini 3 / `thinking_budget` otherwise, `thinking_summaries: "auto"`) go inside `generation_config`. Structured output is sent through the top-level `response_format` field (the Interactions API polymorphic shape) via `extra_body` to bypass stale SDK serialization: `{type: "text", mime_type: "application/json", schema}`.
+  - Generation parameters (`temperature`, `max_output_tokens`, `thinking_level` for models flagged `uses_thinking_level` / `thinking_budget` otherwise, `thinking_summaries: "auto"`) go inside `generation_config`. Structured output is sent through the top-level `response_format` field (the Interactions API polymorphic shape) via `extra_body` to bypass stale SDK serialization: `{type: "text", mime_type: "application/json", schema}`.
   - Responses are parsed off `interaction.steps`: `model_output` → text/images/citations, `thought` → `ThinkingResponse`, `function_call` → `FunctionCall`, `code_execution_call` / `code_execution_result` → `additional_responses`
   - Routes Gemini models marked with both `background_mode: true` and `agent_type: deep_research` to a separate Deep Research path (`agent=<model>`, `background=True`, `store=True`), polled until terminal status and parsed into a standard cited `Message`
   - Supports Deep Research text/image/PDF/audio/video inputs from the latest user message
 - `GrokAdapter`
   - Sync chat with optional tool execution loop
   - Supports web search and code execution tools in xAI SDK
-  - Supports structured output through xAI SDK `response_format` for both standard requests and Grok 4 tool-enabled requests
+  - Supports structured output through xAI SDK `response_format` for both standard requests and tool-enabled requests on models flagged `structured_output_with_tools` (the Grok 4 family)
 - `MistralAdapter`
-  - Sync chat, recursive function-calling, OCR mode, and audio transcription mode
+  - Sync chat and recursive function-calling
 - `DeepSeekAdapter`, `OpenRouterAdapter`
-  - Thin subclasses of `OpenAICompatibleAdapter` (each declares only `BASE_URL` / `ENV_VAR`; DeepSeek overrides `_suppress_temperature` for `deepseek-reasoner`)
+  - Thin subclasses of `OpenAICompatibleAdapter` (each declares only `BASE_URL` / `ENV_VAR`); temperature suppression is driven by the per-model `suppress_temperature` flag in the base rather than a name-based override
   - Shared OpenAI-compatible chat path: text/image/audio/document conversion, parameter marshalling, and usage extraction live in the base
   - Tool calling is not supported: they inherit the uniform `AdapterBase.request_llm_with_functions` that raises `NotImplementedError`
 
@@ -191,7 +201,7 @@ Models are grouped by `adapter`, with metadata:
 - Anthropic: text/image/document
 - Google: text/image/audio/document/video inputs; Gemini Deep Research agents through background Interactions API calls
 - Grok: text/image/document in chat
-- Mistral: text/image/document chat + OCR + audio transcription mode
+- Mistral: text/image/document chat
 - DeepSeek/OpenRouter: text + image/document conversion (OpenAI-compatible payload)
 
 ## 9. Tools subsystem
@@ -215,6 +225,11 @@ Plain Python callables passed as tools are converted to a JSON schema once by `A
 - `CzechLaws`
 - `Reddit`
 - `RaspberryAdmin`, `UbuntuAdmin` (thin subclasses of `SSHCommandTool` in `tools/ssh_command.py`)
+
+### 9.3 Command-execution hardening
+- `SSHCommandTool` imports `paramiko` lazily (inside `__call__`), so importing the tools layer does not require `paramiko` to be installed.
+- Command-executing tools (`SSHCommandTool`, `RunPowerShellCommand`) accept an optional `allowed_commands` constructor argument. When provided, `BaseTool._check_command_allowed` first rejects any command containing a shell control operator (`; | & \` $ > < ( )` or a newline) — so chaining/piping/substitution cannot smuggle a non-allowed program past the check — and then requires the command's leading token to be in the allow-list; either failure raises `PermissionError` before execution. The default `None` applies no restriction, preserving existing behavior.
+- SSH host-key policy remains `AutoAddPolicy` (unchanged by design).
 
 ## 10. Environment variables and credentials
 Current code expects:
@@ -297,7 +312,8 @@ From `requirements.txt`:
 - `core/llm_handler.py`: orchestration facade (lazy adapter registry, conversation state, sync/async routing)
 - `core/parameter_normalizer.py`: `ParameterNormalizer` parameter pipeline
 - `helpers/model_config.py`: YAML model registry (cached + name-indexed) and parameter normalization
-- `services/conversation.py`: conversation and tool metadata classes
+- `services/conversation.py`: provider-agnostic conversation and tool metadata classes (no vendor knowledge); platform-internal persistence only (`save_to_json`/`read_from_json`)
+- `adapters/serializers.py`: provider wire (de)serialization for the domain objects (functions like `function_call_to_openai`), kept out of the domain model so `services/` stays provider-agnostic
 - `services/files.py`: file classes and text/media extraction
 - `adapters/adapter_base.py`: `AdapterBase` contract + shared adapter helpers
 - `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base (DeepSeek, OpenRouter)

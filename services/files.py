@@ -96,7 +96,7 @@ class BaseFile(ABC):
 
     @property
     def bytes_io(self) -> BinaryIO:
-        output = io.BytesIO(self.file_bytes)
+        output = io.BytesIO(self.data)
         output.name = self.name
         return output
 
@@ -107,16 +107,16 @@ class DocumentFile(BaseFile):
 
     @property
     def size(self) -> int:
-        if hasattr(self, "bytes"):
-            return len(self.bytes)
+        if hasattr(self, "data"):
+            return len(self.data)
         if hasattr(self, "text"):
             return len(self.text)
         return 0
 
     @property
     def base64(self) -> str:
-        if hasattr(self, "bytes"):
-            return base64.b64encode(self.bytes).decode("utf-8")
+        if hasattr(self, "data"):
+            return base64.b64encode(self.data).decode("utf-8")
         logger.warning("Base64 encoding not available for this document type.")
         return ""
 
@@ -136,23 +136,28 @@ class TextDocumentFile(DocumentFile):
         return cls(text, name)
 
 
-class PDFDocumentFile(DocumentFile):
-    def __init__(self, bytes: BinaryIO, name: str = ""):
+class ByteDocumentFile(DocumentFile):
+    """Base for byte-backed documents: stores raw ``data`` and exposes text via a
+    subclass ``text`` property. Subclasses only differ in how they extract text."""
+
+    def __init__(self, data: bytes, name: str = ""):
         super().__init__(name=name)
-        self.bytes = bytes
+        self.data = data
 
     @classmethod
-    def from_bytes(cls, bytes: BinaryIO, name: str = "") -> "PDFDocumentFile":
-        return cls(bytes, name)
+    def from_bytes(cls, data: bytes, file_name: str = "") -> "ByteDocumentFile":
+        return cls(data, file_name)
 
     @classmethod
-    def from_file(cls, name: str) -> "PDFDocumentFile":
+    def from_file(cls, name: str) -> "ByteDocumentFile":
         return cls(_read_binary_file(name), name=name)
 
+
+class PDFDocumentFile(ByteDocumentFile):
     @property
     def text(self) -> str:
         try:
-            reader = PdfReader(io.BytesIO(self.bytes))
+            reader = PdfReader(io.BytesIO(self.data))
             return "".join(f"{page.extract_text()}\n" for page in reader.pages)
         except Exception:
             logger.exception("Failed to extract text from PDF document.")
@@ -161,29 +166,17 @@ class PDFDocumentFile(DocumentFile):
     @property
     def number_of_pages(self) -> int:
         try:
-            reader = PdfReader(io.BytesIO(self.bytes))
+            reader = PdfReader(io.BytesIO(self.data))
             return len(reader.pages)
         except Exception:
             logger.exception("Failed to read PDF page count.")
             return 0
 
 
-class ExcelDocumentFile(DocumentFile):
-    def __init__(self, bytes: BinaryIO, name: str = ""):
-        super().__init__(name=name)
-        self.bytes = bytes
-
-    @classmethod
-    def from_bytes(cls, bytes: BinaryIO, name: str = "") -> "ExcelDocumentFile":
-        return cls(bytes, name)
-
-    @classmethod
-    def from_file(cls, name: str) -> "ExcelDocumentFile":
-        return cls(_read_binary_file(name), name=name)
-
+class ExcelDocumentFile(ByteDocumentFile):
     @property
     def text(self) -> str:
-        excel = pd.ExcelFile(io.BytesIO(self.bytes))
+        excel = pd.ExcelFile(io.BytesIO(self.data))
         text_parts = []
         for sheet_name in excel.sheet_names:
             dataframe = excel.parse(sheet_name=sheet_name)
@@ -191,24 +184,12 @@ class ExcelDocumentFile(DocumentFile):
         return "\n".join(text_parts)
 
 
-class WordDocumentFile(DocumentFile):
-    def __init__(self, bytes: BinaryIO, name: str = ""):
-        super().__init__(name=name)
-        self.bytes = bytes
-
-    @classmethod
-    def from_bytes(cls, bytes: BinaryIO, name: str = "") -> "WordDocumentFile":
-        return cls(bytes, name)
-
-    @classmethod
-    def from_file(cls, name: str) -> "WordDocumentFile":
-        return cls(_read_binary_file(name), name=name)
-
+class WordDocumentFile(ByteDocumentFile):
     @property
     def text(self) -> str:
         try:
             namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-            root = _read_zip_xml(self.bytes, "word/document.xml")
+            root = _read_zip_xml(self.data, "word/document.xml")
             paragraphs = []
             for paragraph in root.iter(f"{namespace}p"):
                 texts = [node.text for node in paragraph.iter(f"{namespace}t") if node.text]
@@ -220,23 +201,11 @@ class WordDocumentFile(DocumentFile):
             return ""
 
 
-class PowerPointDocumentFile(DocumentFile):
-    def __init__(self, bytes: BinaryIO, name: str = ""):
-        super().__init__(name=name)
-        self.bytes = bytes
-
-    @classmethod
-    def from_bytes(cls, bytes: BinaryIO, name: str = "") -> "PowerPointDocumentFile":
-        return cls(bytes, name)
-
-    @classmethod
-    def from_file(cls, name: str) -> "PowerPointDocumentFile":
-        return cls(_read_binary_file(name), name=name)
-
+class PowerPointDocumentFile(ByteDocumentFile):
     @property
     def text(self) -> str:
         try:
-            with zipfile.ZipFile(io.BytesIO(self.bytes)) as presentation:
+            with zipfile.ZipFile(io.BytesIO(self.data)) as presentation:
                 slide_entries = []
                 for name in presentation.namelist():
                     if name.startswith("ppt/slides/slide") and name.endswith(".xml"):
@@ -263,19 +232,19 @@ class PowerPointDocumentFile(DocumentFile):
 
 
 class MediaFile(BaseFile):
-    def __init__(self, file_bytes: bytes, name: str):
+    def __init__(self, data: bytes, name: str):
         super().__init__(name=name)
-        self.file_bytes = file_bytes
+        self.data = data
 
     @classmethod
-    def from_url(cls, url: str) -> "MediaFile":
+    def from_path(cls, url: str) -> "MediaFile":
         file_name = os.path.basename(url)
         with open(url, "rb") as media_file:
             return cls(media_file.read(), file_name)
 
     @classmethod
     def from_web_url(cls, url: str) -> "MediaFile":
-        response = requests.get(url)
+        response = requests.get(url, timeout=30)
         if response.status_code != 200:
             raise ValueError(f"Failed to fetch file from URL: {url}")
 
@@ -293,8 +262,8 @@ class MediaFile(BaseFile):
             raise ValueError("Failed to convert file to PNG.") from error
 
     @classmethod
-    def from_bytes(cls, file_bytes: bytes, file_name: str) -> "MediaFile":
-        return cls(file_bytes, file_name)
+    def from_bytes(cls, data: bytes, file_name: str) -> "MediaFile":
+        return cls(data, file_name)
 
     @classmethod
     def from_base64(cls, base64_str: str, file_name: str) -> "MediaFile":
@@ -302,12 +271,12 @@ class MediaFile(BaseFile):
 
     @property
     def base64(self) -> str:
-        return base64.b64encode(self.file_bytes).decode("utf-8")
+        return base64.b64encode(self.data).decode("utf-8")
 
 
 class ImageFile(MediaFile):
-    def __init__(self, file_bytes: bytes, name: str):
-        super().__init__(file_bytes, name)
+    def __init__(self, data: bytes, name: str):
+        super().__init__(data, name)
 
     @classmethod
     def from_pil_image(
@@ -318,7 +287,7 @@ class ImageFile(MediaFile):
         buffer = io.BytesIO()
         pil_image.save(buffer, format="PNG")
         buffer.seek(0)
-        return cls(file_bytes=buffer.getvalue(), name=file_name)
+        return cls(data=buffer.getvalue(), name=file_name)
 
     @property
     def pil_image(self):
@@ -326,18 +295,18 @@ class ImageFile(MediaFile):
 
     @property
     def size(self) -> int:
-        return len(self.file_bytes)
+        return len(self.data)
 
 
 class AudioFile(MediaFile):
-    def __init__(self, file_bytes: bytes, name: str):
-        super().__init__(file_bytes, name)
+    def __init__(self, data: bytes, name: str):
+        super().__init__(data, name)
 
         if self.extension.lower() != "mp3":
-            self.file_bytes = self.convert_to_mp3()
+            self.data = self.convert_to_mp3()
 
     def convert_to_mp3(self) -> bytes:
-        audio_stream = io.BytesIO(self.file_bytes)
+        audio_stream = io.BytesIO(self.data)
 
         try:
             audio = AudioSegment.from_file(audio_stream, format=self.extension)
@@ -351,5 +320,5 @@ class AudioFile(MediaFile):
 
 
 class VideoFile(MediaFile):
-    def __init__(self, file_bytes: bytes, name: str):
-        super().__init__(file_bytes, name=name)
+    def __init__(self, data: bytes, name: str):
+        super().__init__(data, name=name)
