@@ -103,7 +103,7 @@ models:
         label: Reasoning
         request_key: reasoning.effort
 
-  - name: 	claude-fable-5
+  - name: claude-fable-5
     display_name: Claude Opus 4.8 💰💰
     adapter: AnthropicAdapter
     adaptive_thinking: true
