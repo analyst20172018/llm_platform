@@ -65,7 +65,13 @@ class ClaudeStreamProcessor:
         self.thinking_responses: List[ThinkingResponse] = []
         self.response_text: str = ""
         self.tool_uses: List[Dict] = []
-        self.usage: Dict = {"model": "", "completion_tokens": 0, "prompt_tokens": 0}
+        self.usage: Dict = {
+            "model": "",
+            "completion_tokens": 0,
+            "prompt_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
         self.stop_reason: str | None = None
 
         # Internal state for processing the stream
@@ -95,8 +101,15 @@ class ClaudeStreamProcessor:
         message = getattr(event, 'message', None)
         if not message:
             return
+        usage = message.usage
+        cache_read = getattr(usage, 'cache_read_input_tokens', 0) or 0
+        cache_creation = getattr(usage, 'cache_creation_input_tokens', 0) or 0
         self.usage["model"] = message.model
-        self.usage["prompt_tokens"] = getattr(message.usage, 'input_tokens', 0)
+        # With caching on, the API's input_tokens counts only the uncached remainder;
+        # report prompt_tokens as the full input (uncached + cache read + cache write).
+        self.usage["prompt_tokens"] = getattr(usage, 'input_tokens', 0) + cache_read + cache_creation
+        self.usage["cache_read_tokens"] = cache_read
+        self.usage["cache_creation_tokens"] = cache_creation
 
     def _handle_content_block_start(self, event: Any):
         content_block = getattr(event, 'content_block', None)
@@ -239,9 +252,15 @@ class AnthropicAdapter(AdapterBase):
     def _parse_non_streaming_response(self, response) -> ClaudeStreamProcessor:
         """Converts a non-streaming API response into a ClaudeStreamProcessor for uniform handling."""
         processor = ClaudeStreamProcessor()
+        cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+        cache_creation = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
         processor.usage["model"] = response.model
-        processor.usage["prompt_tokens"] = response.usage.input_tokens
+        # With caching on, the API's input_tokens counts only the uncached remainder;
+        # report prompt_tokens as the full input (uncached + cache read + cache write).
+        processor.usage["prompt_tokens"] = response.usage.input_tokens + cache_read + cache_creation
         processor.usage["completion_tokens"] = response.usage.output_tokens
+        processor.usage["cache_read_tokens"] = cache_read
+        processor.usage["cache_creation_tokens"] = cache_creation
         processor.stop_reason = response.stop_reason
 
         for block in response.content:
@@ -493,6 +512,13 @@ class AnthropicAdapter(AdapterBase):
 
         if beta_flag := BETA_FLAGS.get(model):
             request_kwargs['betas'] = beta_flag
+
+        # Enable automatic prompt caching. A single top-level cache_control places the
+        # breakpoint on the last cacheable block and moves it forward as the conversation
+        # grows, so the stable system + tools + history prefix is served from cache on
+        # subsequent turns and tool-use loops. Prompts below the model's minimum cacheable
+        # length are silently left uncached, so this is safe to apply unconditionally.
+        request_kwargs["cache_control"] = {"type": "ephemeral"}
 
         return request_kwargs
 
