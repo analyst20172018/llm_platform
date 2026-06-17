@@ -586,6 +586,22 @@ models:
         <<: *param_max_tokens
         default: 384_000
 
+  - name: glm-5.2
+    display_name: GLM 5.2
+    adapter: ZaiAdapter
+    pricing:
+      input: 1.4 # USD/1M tokens
+      output: 4.4 # USD/1M tokens
+    context_window: 1_000_000
+    inputs:
+      - text
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 128000
+    visible: true
 
   - name: meta-llama/llama-4-maverick
     display_name: Llama 4 Maverick

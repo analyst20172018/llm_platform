@@ -21,6 +21,7 @@ ADAPTER_IMPORT_PATHS = {
     "GrokAdapter": "llm_platform.adapters.grok_adapter:GrokAdapter",
     "DeepSeekAdapter": "llm_platform.adapters.deepseek_adapter:DeepSeekAdapter",
     "MistralAdapter": "llm_platform.adapters.mistral_adapter:MistralAdapter",
+    "ZaiAdapter": "llm_platform.adapters.zai_adapter:ZaiAdapter",
 }
 
 class APIHandler:

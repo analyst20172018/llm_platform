@@ -5,6 +5,7 @@ openai
 google-genai # 	New library (Recommended). Old library was ´google-generativeai´
 mistralai
 xai_sdk
+zai-sdk
 lxml
 pandas
 pillow

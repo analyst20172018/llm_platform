@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-05-30
+Version: 2026-06-17
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -27,7 +27,7 @@ Primary modules:
 - `core/llm_handler.py`: orchestration facade and entrypoint
 - `core/parameter_normalizer.py`: `ParameterNormalizer` — normalizes `additional_parameters` against a model's YAML schema (extracted from the facade)
 - `adapters/adapter_base.py`: `AdapterBase` contract plus provider-agnostic helpers shared by the adapters (parameter merge, usage extraction, callable→JSON-schema, content-block formatting, PDF/tool-round constants). `load_dotenv()` runs once at module import (not per adapter construction)
-- `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter)
+- `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter, Z.AI)
 - `adapters/*.py`: provider-specific translation and API calls
 - `services/conversation.py`: provider-agnostic conversation/message/function-call domain model + platform-internal persistence (provider wire serialization lives in `adapters/serializers.py`)
 - `services/files.py`: file abstractions and format conversion/extraction
@@ -62,6 +62,7 @@ Registered adapter classes include:
 - `DeepSeekAdapter`
 - `OpenRouterAdapter`
 - `MistralAdapter`
+- `ZaiAdapter`
 
 ### 3.4 Additional parameter normalization pipeline
 Implemented in `core/parameter_normalizer.ParameterNormalizer.normalize` (the facade owns a `ParameterNormalizer` and delegates via `_prepare_additional_parameters`):
@@ -126,7 +127,7 @@ File: `helpers/model_config.py`, config in `models_config.yaml`
 ### 6.1 Current catalog summary
 - Total models: 20
 - Visible models: 12
-- Adapter families: 7
+- Adapter families: 8
 
 Models are grouped by `adapter`, with metadata:
 - `name`, `display_name`
@@ -187,8 +188,8 @@ These per-model capability flags follow the `adaptive_thinking` precedent: enabl
   - Supports structured output through xAI SDK `response_format` for both standard requests and tool-enabled requests on models flagged `structured_output_with_tools` (the Grok 4 family)
 - `MistralAdapter`
   - Sync chat and recursive function-calling
-- `DeepSeekAdapter`, `OpenRouterAdapter`
-  - Thin subclasses of `OpenAICompatibleAdapter` (each declares only `BASE_URL` / `ENV_VAR`); temperature suppression is driven by the per-model `suppress_temperature` flag in the base rather than a name-based override
+- `DeepSeekAdapter`, `OpenRouterAdapter`, `ZaiAdapter`
+  - Thin subclasses of `OpenAICompatibleAdapter`. `DeepSeekAdapter` / `OpenRouterAdapter` declare only `BASE_URL` / `ENV_VAR` and use the OpenAI client against the provider base URL; `ZaiAdapter` (GLM models) additionally overrides `_build_client` to use the official `zai-sdk` `ZaiClient`, which exposes the same OpenAI-compatible `chat.completions.create` surface. Temperature suppression is driven by the per-model `suppress_temperature` flag in the base rather than a name-based override
   - Shared OpenAI-compatible chat path: text/image/audio/document conversion, parameter marshalling, and usage extraction live in the base
   - Tool calling is not supported: they inherit the uniform `AdapterBase.request_llm_with_functions` that raises `NotImplementedError`
 
@@ -204,6 +205,7 @@ These per-model capability flags follow the `adaptive_thinking` precedent: enabl
 - Grok: text/image/document in chat
 - Mistral: text/image/document chat
 - DeepSeek/OpenRouter: text + image/document conversion (OpenAI-compatible payload)
+- Z.AI (GLM-5.2): text (OpenAI-compatible payload via `zai-sdk` `ZaiClient`)
 
 ## 9. Tools subsystem
 Files: `tools/base.py` and concrete tools in `tools/*.py`
@@ -241,12 +243,13 @@ Current code expects:
 - `DEEPSEEK_API_KEY`
 - `OPENROUTER_API_KEY`
 - `MISTRAL_API_KEY`
+- `ZAI_API_KEY`
 
 Important: current `README.md` and some older docs list different variable names for Google/Grok. The values above reflect actual adapter code.
 
 ## 11. Dependencies
 From `requirements.txt`:
-- Provider SDKs: `openai`, `anthropic`, `google-genai`, `mistralai`, `xai_sdk`
+- Provider SDKs: `openai`, `anthropic`, `google-genai`, `mistralai`, `xai_sdk`, `zai-sdk`
 - Data/media: `pandas`, `pillow`, `PyPDF2`, `pydub`, `lxml`
 - Tooling and support: `pydantic`, `python-dotenv`, `PyYAML`, `requests`, `tiktoken`, `loguru`, `rich`, `praw`
 
@@ -317,7 +320,8 @@ From `requirements.txt`:
 - `adapters/serializers.py`: provider wire (de)serialization for the domain objects (functions like `function_call_to_openai`), kept out of the domain model so `services/` stays provider-agnostic
 - `services/files.py`: file classes and text/media extraction
 - `adapters/adapter_base.py`: `AdapterBase` contract + shared adapter helpers
-- `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base (DeepSeek, OpenRouter)
+- `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base (DeepSeek, OpenRouter, Z.AI)
+- `adapters/zai_adapter.py`: `ZaiAdapter` — Z.AI GLM models via the official `zai-sdk` `ZaiClient` (OpenAI-compatible)
 - `adapters/*.py`: provider integrations
 - `tools/base.py`: `BaseTool` contract + per-provider declaration emission
 - `tools/ssh_command.py`: `SSHCommandTool` base for SSH admin tools
