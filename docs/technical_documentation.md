@@ -190,8 +190,11 @@ These per-model capability flags follow the `adaptive_thinking` precedent: enabl
   - Sync chat and recursive function-calling
 - `DeepSeekAdapter`, `OpenRouterAdapter`, `ZaiAdapter`
   - Thin subclasses of `OpenAICompatibleAdapter`. `DeepSeekAdapter` / `OpenRouterAdapter` declare only `BASE_URL` / `ENV_VAR` and use the OpenAI client against the provider base URL; `ZaiAdapter` (GLM models) additionally overrides `_build_client` to use the official `zai-sdk` `ZaiClient`, which exposes the same OpenAI-compatible `chat.completions.create` surface. Temperature suppression is driven by the per-model `suppress_temperature` flag in the base rather than a name-based override
-  - Shared OpenAI-compatible chat path: text/image/audio/document conversion, parameter marshalling, and usage extraction live in the base
-  - Tool calling is not supported: they inherit the uniform `AdapterBase.request_llm_with_functions` that raises `NotImplementedError`
+  - Shared OpenAI-compatible chat path: text/image/audio/document conversion, parameter marshalling, and usage extraction live in the base. Tool-call history is serialized in Chat Completions shape (`function_call_to_openai_chat` / `function_response_to_openai_chat`): tool calls nested under `tool_calls[].function` on the assistant message, tool results sent as standalone `role: "tool"` messages
+  - `DeepSeekAdapter` / `OpenRouterAdapter` do not implement tool calling: they inherit the uniform `AdapterBase.request_llm_with_functions` that raises `NotImplementedError`
+  - `ZaiAdapter` adds tool calling and web search on top of the shared base:
+    - **Function calling**: `request_llm` routes to a recursive `request_llm_with_functions` loop (request → execute local `BaseTool`/callable tools → append `FunctionCall`/`FunctionResponse` records → re-ask) until the model stops emitting `tool_calls`. Function tools are emitted as `{"type": "function", "function": {...}}` via `_convert_function_to_tool` (reusing `BaseTool.to_params(provider="openai")` or `_callable_to_json_schema`)
+    - **Web search**: Z.AI's built-in server-side `web_search` tool, enabled by the `web_search` additional parameter. `_build_request_params` is overridden to attach the built-in tool (`{"type": "web_search", "web_search": {"enable": True, "search_engine": "search-prime", "search_result": True}}`) so both the plain-chat and function-calling paths pick it up. No static `search_query` is sent — GLM derives queries from the conversation. Built-in and function tools are merged on the same request
 
 ### 7.2 Async support
 `AdapterBase` provides a default `request_llm_async` that runs the adapter's synchronous `request_llm` off the event loop via `asyncio.to_thread`. As a result `APIHandler.request_async` / `request_llm_async` work for every adapter rather than only OpenAI.
@@ -205,7 +208,7 @@ These per-model capability flags follow the `adaptive_thinking` precedent: enabl
 - Grok: text/image/document in chat
 - Mistral: text/image/document chat
 - DeepSeek/OpenRouter: text + image/document conversion (OpenAI-compatible payload)
-- Z.AI (GLM-5.2): text (OpenAI-compatible payload via `zai-sdk` `ZaiClient`)
+- Z.AI (GLM-5.2): text (OpenAI-compatible payload via `zai-sdk` `ZaiClient`); supports function calling and the built-in `web_search` tool
 
 ## 9. Tools subsystem
 Files: `tools/base.py` and concrete tools in `tools/*.py`
@@ -260,7 +263,7 @@ From `requirements.txt`:
 - Some adapter methods remain `NotImplemented` and will raise directly.
 
 ## 13. Known implementation gaps and inconsistencies
-1. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral, not in DeepSeek/OpenRouter).
+1. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral/Z.AI, not in DeepSeek/OpenRouter).
 2. Mutable default arguments still exist in the `Message` initializer (`[]` defaults); the adapter and `APIHandler` method signatures that previously shared this pattern have been migrated to `None` defaults.
 3. The `README.md` environment-variable list now matches the adapter code (`GOOGLE_GEMINI_API_KEY`, `XAI_API_KEY`).
 
@@ -317,11 +320,11 @@ From `requirements.txt`:
 - `core/parameter_normalizer.py`: `ParameterNormalizer` parameter pipeline
 - `helpers/model_config.py`: YAML model registry (cached + name-indexed) and parameter normalization
 - `services/conversation.py`: provider-agnostic conversation and tool metadata classes (no vendor knowledge); platform-internal persistence only (`save_to_json`/`read_from_json`)
-- `adapters/serializers.py`: provider wire (de)serialization for the domain objects (functions like `function_call_to_openai`), kept out of the domain model so `services/` stays provider-agnostic
+- `adapters/serializers.py`: provider wire (de)serialization for the domain objects (functions like `function_call_to_openai` for the OpenAI Responses API and `function_call_to_openai_chat` for the OpenAI-compatible Chat Completions API), kept out of the domain model so `services/` stays provider-agnostic
 - `services/files.py`: file classes and text/media extraction
 - `adapters/adapter_base.py`: `AdapterBase` contract + shared adapter helpers
 - `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base (DeepSeek, OpenRouter, Z.AI)
-- `adapters/zai_adapter.py`: `ZaiAdapter` — Z.AI GLM models via the official `zai-sdk` `ZaiClient` (OpenAI-compatible)
+- `adapters/zai_adapter.py`: `ZaiAdapter` — Z.AI GLM models via the official `zai-sdk` `ZaiClient` (OpenAI-compatible); adds function calling (recursive tool loop) and the built-in `web_search` tool
 - `adapters/*.py`: provider integrations
 - `tools/base.py`: `BaseTool` contract + per-provider declaration emission
 - `tools/ssh_command.py`: `SSHCommandTool` base for SSH admin tools

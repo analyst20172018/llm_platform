@@ -13,8 +13,8 @@ from llm_platform.services.files import (
 )
 from llm_platform.tools.base import BaseTool
 from llm_platform.adapters.serializers import (
-    function_call_to_openai,
-    function_response_to_openai,
+    function_call_to_openai_chat,
+    function_response_to_openai_chat,
 )
 from llm_platform.types import AdditionalParameters
 
@@ -73,7 +73,7 @@ class OpenAICompatibleAdapter(AdapterBase):
 
             if message.function_calls:
                 history_message["tool_calls"] = [
-                    function_call_to_openai(each_call) for each_call in message.function_calls
+                    function_call_to_openai_chat(each_call) for each_call in message.function_calls
                 ]
 
             if message.files is not None:
@@ -114,7 +114,7 @@ class OpenAICompatibleAdapter(AdapterBase):
 
             if message.function_responses:
                 for each_response in message.function_responses:
-                    history.append(function_response_to_openai(each_response))
+                    history.append(function_response_to_openai_chat(each_response))
 
         return history, kwargs
 

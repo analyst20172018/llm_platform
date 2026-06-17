@@ -66,6 +66,43 @@ def thinking_response_to_openai(thinking_response) -> Dict:
 
 
 # --------------------------------------------------------------------------- #
+# OpenAI Chat Completions
+# --------------------------------------------------------------------------- #
+# The serializers above target the OpenAI *Responses* API. Providers on the
+# OpenAI-compatible *Chat Completions* API (``chat.completions.create``) use a
+# different tool-call wire shape: tool calls are nested under
+# ``tool_calls[].function`` on the assistant message, and tool results are sent
+# as standalone ``role: "tool"`` messages.
+
+def function_call_from_openai_chat(tool_call) -> FunctionCall:
+    return FunctionCall(
+        id=tool_call.id,
+        name=tool_call.function.name,
+        arguments=str(tool_call.function.arguments),
+        call_id=tool_call.id,
+    )
+
+
+def function_call_to_openai_chat(function_call) -> Dict:
+    return {
+        "id": function_call.call_id,
+        "type": "function",
+        "function": {
+            "name": function_call.name,
+            "arguments": function_call.arguments,
+        },
+    }
+
+
+def function_response_to_openai_chat(function_response) -> Dict:
+    return {
+        "role": "tool",
+        "tool_call_id": function_response.call_id,
+        "content": json.dumps(function_response.response),
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Anthropic
 # --------------------------------------------------------------------------- #
 

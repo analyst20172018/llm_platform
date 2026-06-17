@@ -601,6 +601,8 @@ models:
       max_tokens:
         <<: *param_max_tokens
         default: 128000
+      function_calling: *param_function_calling
+      web_search: *param_web_search
     visible: true
 
   - name: meta-llama/llama-4-maverick
