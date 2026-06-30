@@ -27,6 +27,14 @@ class GoogleAdapter(AdapterBase):
     DEEP_RESEARCH_POLL_INTERVAL_SECONDS = 10
     DEEP_RESEARCH_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "incomplete"}
 
+    # Background agent polling (e.g. the Antigravity agent). Polling stops both on
+    # terminal statuses and on ``requires_action`` (the agent is waiting for a
+    # custom-function result before it can continue).
+    AGENT_POLL_INTERVAL_SECONDS = 5
+    AGENT_POLL_STOP_STATUSES = {
+        "completed", "failed", "cancelled", "incomplete", "requires_action",
+    }
+
     # Keys consumed directly when building Interactions params; everything else
     # in additional_parameters is forwarded into generation_config verbatim.
     _RESERVED_PARAM_KEYS = {
@@ -469,9 +477,15 @@ class GoogleAdapter(AdapterBase):
 
         text_content = "".join(text_parts).strip()
         if not text_content and not function_calls and not files:
-            status = getattr(interaction, "status", None)
-            error = getattr(interaction, "error", None)
-            text_content = f"ERROR. No content in response. status={status} error={error}"
+            # Managed agents surface the finished answer on ``output_text``; fall
+            # back to it before declaring an error.
+            output_text = (getattr(interaction, "output_text", "") or "").strip()
+            if output_text:
+                text_content = output_text
+            else:
+                status = getattr(interaction, "status", None)
+                error = getattr(interaction, "error", None)
+                text_content = f"ERROR. No content in response. status={status} error={error}"
 
         return Message(
             id=getattr(interaction, "id", None),
@@ -592,6 +606,125 @@ class GoogleAdapter(AdapterBase):
         return assistant_message
 
     # ------------------------------------------------------------------
+    # Antigravity agent path
+    # ------------------------------------------------------------------
+
+    def _build_antigravity_kwargs(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[BaseTool],
+        additional_parameters: AdditionalParameters,
+    ) -> Dict:
+        """Kwargs for ``client.interactions.create`` on the Antigravity agent
+        path, excluding ``input`` / ``previous_interaction_id`` / ``environment``.
+
+        Unlike the standard Gemini chat path, the Antigravity agent rejects
+        ``generation_config`` parameters (``temperature``, ``max_output_tokens``,
+        ...) and structured output with a 400, so neither is sent. Built-in tools
+        (``google_search`` / ``url_context`` / ``code_execution``) and any custom
+        functions are forwarded; the sandbox filesystem is enabled implicitly by
+        the ``environment`` argument supplied at call time."""
+        kwargs: Dict[str, Any] = {"agent": model}
+        if the_conversation.system_prompt:
+            kwargs["system_instruction"] = the_conversation.system_prompt
+        if tools := self._build_tools(functions, additional_parameters):
+            kwargs["tools"] = tools
+        return kwargs
+
+    def _poll_agent_interaction(self, interaction):
+        """Polls a background interaction until it reaches a terminal status or
+        ``requires_action`` (waiting on a client-side function result)."""
+        while getattr(interaction, "status", None) not in self.AGENT_POLL_STOP_STATUSES:
+            time.sleep(self.AGENT_POLL_INTERVAL_SECONDS)
+            interaction = self.client.interactions.get(interaction.id)
+        return interaction
+
+    def _request_antigravity(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[BaseTool],
+        tool_output_callback: Callable,
+        additional_parameters: AdditionalParameters,
+    ) -> Message:
+        """Runs the Antigravity managed agent through the Gemini Interactions API.
+
+        A single ``interactions.create`` provisions a remote Linux sandbox
+        (``environment="remote"``) and runs the agent's internal tool-use loop
+        (code execution, web search, URL fetch, filesystem) server-side, returning
+        the finished result. Only *custom* functions need a client-side
+        round-trip: those are executed locally and fed back via
+        ``previous_interaction_id`` (function calling is stateful-only), reusing
+        the same sandbox ``environment``. Built-in and filesystem calls are run by
+        the sandbox and already carry their results, so they are not re-executed.
+
+        When the model is flagged ``background_mode: true`` the interaction runs
+        asynchronously (``background=True`` + ``store=True``) and is polled until
+        it completes or needs a function result — the recommended mode for these
+        long-running agent tasks.
+        """
+        base_kwargs = self._build_antigravity_kwargs(
+            model, the_conversation, functions, additional_parameters
+        )
+        model_object = self.model_config[model]
+        background = bool(model_object and model_object["background_mode"])
+        if background:
+            base_kwargs["background"] = True
+            base_kwargs["store"] = True
+
+        custom_function_names = {f.__name__ for f in functions}
+
+        interaction = self.client.interactions.create(
+            input=self._build_input_from_conversation(the_conversation),
+            environment="remote",
+            **base_kwargs,
+        )
+
+        for _tool_round in range(MAX_TOOL_ROUNDS):
+            if background:
+                interaction = self._poll_agent_interaction(interaction)
+
+            assistant_message = self._parse_interaction_response(interaction, model)
+
+            # Keep only the calls the platform is responsible for executing.
+            custom_calls = [
+                fc for fc in assistant_message.function_calls
+                if fc.name in custom_function_names
+            ]
+            assistant_message.function_calls = custom_calls
+            the_conversation.messages.append(assistant_message)
+
+            if not custom_calls:
+                return assistant_message
+
+            function_responses = []
+            for fc in custom_calls:
+                function_to_call = next((f for f in functions if f.__name__ == fc.name), None)
+                args: Dict = {}
+                try:
+                    args = json.loads(fc.arguments)
+                    result = function_to_call(**args)
+                except Exception as e:
+                    result = {"error": f"Execution failed: {e}"}
+                    logger.error(f"Error executing function '{fc.name}': {e}")
+                function_responses.append(FunctionResponse(name=fc.name, response=result, id=fc.id))
+                if tool_output_callback:
+                    tool_output_callback(fc.name, args, result)
+            assistant_message.function_responses = function_responses
+
+            interaction = self.client.interactions.create(
+                input=[self._function_result_entry(fr) for fr in function_responses],
+                previous_interaction_id=interaction.id,
+                environment=getattr(interaction, "environment_id", None) or "remote",
+                **base_kwargs,
+            )
+
+        raise RuntimeError(
+            f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+        )
+
+    # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
 
@@ -629,6 +762,15 @@ class GoogleAdapter(AdapterBase):
                 model=model,
                 the_conversation=the_conversation,
                 functions=functions,
+                additional_parameters=additional_parameters,
+            )
+
+        if model_object and model_object["agent_type"] == "antigravity":
+            return self._request_antigravity(
+                model=model,
+                the_conversation=the_conversation,
+                functions=functions,
+                tool_output_callback=tool_output_callback,
                 additional_parameters=additional_parameters,
             )
 

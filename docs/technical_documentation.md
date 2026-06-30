@@ -125,8 +125,8 @@ The byte-backed subclasses differ only in their `text` extraction property; the 
 File: `helpers/model_config.py`, config in `models_config.yaml`
 
 ### 6.1 Current catalog summary
-- Total models: 20
-- Visible models: 12
+- Total models: 22
+- Visible models: 15
 - Adapter families: 8
 
 Models are grouped by `adapter`, with metadata:
@@ -137,7 +137,7 @@ Models are grouped by `adapter`, with metadata:
 - `visible`
 - `additional_parameters` schema (including request defaults such as `max_tokens`)
 - optional `background_mode`
-- optional `agent_type` for Google agent routing, currently `deep_research`
+- optional `agent_type` for Google managed-agent routing: `deep_research` (Gemini Deep Research) or `antigravity` (Antigravity agent — Interactions call into a remote sandbox). Both pair with `background_mode: true` to run asynchronously and be polled until terminal
 - optional `adaptive_thinking` (Anthropic): when true the adapter sends `thinking: {type: "adaptive"}` + `output_config.effort`; otherwise it falls back to the legacy `thinking: {type: "enabled", budget_tokens}`. Set on models that reject `enabled`/`budget_tokens` (Opus 4.7/4.8, Sonnet 4.6)
 - optional `uses_thinking_level` (Google): when true the adapter sends Gemini 3's categorical `thinking_level`; otherwise the legacy numeric `thinking_budget`. Set on the `gemini-3.x` chat models (replaces the former `"gemini-3" in model` substring check)
 - optional `structured_output_with_tools` (Grok): when true, structured output may be combined with tools; otherwise that combination raises. Set on the Grok 4 family (replaces the former `model.startswith("grok-4")` check)
@@ -182,6 +182,7 @@ These per-model capability flags follow the `adaptive_thinking` precedent: enabl
   - Responses are parsed off `interaction.steps`: `model_output` → text/images/citations, `thought` → `ThinkingResponse`, `function_call` → `FunctionCall`, `code_execution_call` / `code_execution_result` → `additional_responses`
   - Routes Gemini models marked with both `background_mode: true` and `agent_type: deep_research` to a separate Deep Research path (`agent=<model>`, `background=True`, `store=True`), polled until terminal status and parsed into a standard cited `Message`
   - Supports Deep Research text/image/PDF/audio/video inputs from the latest user message
+  - Routes models marked `agent_type: antigravity` to the Antigravity managed-agent path (`_request_antigravity`): `interactions.create(agent=<model>, environment="remote", ...)` provisions a remote Linux sandbox and runs the agent's tool-use loop (code execution, web search, URL fetch, filesystem) server-side. The agent rejects `generation_config`/structured output, so neither is sent — only `system_instruction`, built-in tools (per the `web_search`/`code_execution`/`url_context` flags), and custom functions. Built-in and filesystem calls are executed by the sandbox; only *custom* functions need a client-side round-trip, fed back via `previous_interaction_id` (stateful-only function calling) reusing the same `environment`. When the model is flagged `background_mode: true` (the default for `antigravity-preview-05-2026`) every `interactions.create` runs with `background=True` + `store=True` and is polled by `_poll_agent_interaction` until a terminal status or `requires_action` (the agent waiting on a custom-function result) — the recommended mode for these long-running agent tasks. Responses are parsed with the shared `_parse_interaction_response` (which falls back to `interaction.output_text` when no `model_output` step text is present)
 - `GrokAdapter`
   - Sync chat with optional tool execution loop
   - Supports web search and code execution tools in xAI SDK
@@ -204,7 +205,7 @@ These per-model capability flags follow the `adaptive_thinking` precedent: enabl
 ## 8. Multimodal behavior by adapter (implemented)
 - OpenAI: text, image, audio, document inputs
 - Anthropic: text/image/document
-- Google: text/image/audio/document/video inputs; Gemini Deep Research agents through background Interactions API calls
+- Google: text/image/audio/document/video inputs; Gemini Deep Research agents through background Interactions API calls; Antigravity managed agent (`agent_type: antigravity`) over the Interactions API with a remote sandbox, accepting text/image input only
 - Grok: text/image/document in chat
 - Mistral: text/image/document chat
 - DeepSeek/OpenRouter: text + image/document conversion (OpenAI-compatible payload)
