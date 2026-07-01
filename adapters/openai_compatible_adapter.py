@@ -80,7 +80,7 @@ class OpenAICompatibleAdapter(AdapterBase):
                 for each_file in message.files:
                     if isinstance(each_file, ImageFile):
                         if not isinstance(history_message["content"], list):
-                            history_message["content"] = [history_message["content"]]
+                            history_message["content"] = [{"type": "text", "text": history_message["content"]}]
                         history_message["content"].append(
                             {"type": "image_url", "image_url": {"url": self._image_data_url(each_file)}}
                         )
@@ -89,10 +89,10 @@ class OpenAICompatibleAdapter(AdapterBase):
                         model_object = self.model_config[model]
                         if not (model_object and "audio" in model_object.inputs):
                             raise ValueError(f"Model {model} does not support audio input.")
-                        kwargs.setdefault("modalities", ["text"])
-                        kwargs.setdefault("audio", {"voice": "alloy", "format": "wav"})
                         if not isinstance(history_message["content"], list):
-                            history_message["content"] = [history_message["content"]]
+                            history_message["content"] = [{"type": "text", "text": history_message["content"]}]
+                        # AudioFile converts its payload to mp3 on construction, so the
+                        # declared format is always mp3 regardless of the original extension.
                         history_message["content"].append(
                             {"type": "input_audio", "input_audio": {"data": each_file.base64, "format": "mp3"}}
                         )

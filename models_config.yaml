@@ -131,6 +131,36 @@ models:
         request_key: reasoning.effort
     visible: false
 
+  - name: claude-fable-5
+    display_name: Claude Fable 5 💰💰💰
+    adapter: AnthropicAdapter
+    adaptive_thinking: true
+    pricing:
+      input: 10 # USD/1M tokens
+      output: 50 # USD/1M tokens
+    context_window: 1_000_000
+    inputs:
+      - image
+      - text
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 128000
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      citations_enabled: *param_citations_enabled
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [low, medium, high, xhigh, max]
+        default: low
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+
 
   - name: gpt-5.5
     display_name: GPT-5.5 👍

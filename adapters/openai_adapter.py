@@ -30,7 +30,7 @@ from llm_platform.adapters.serializers import (
 )
 from llm_platform.types import AdditionalParameters
 
-from .adapter_base import AdapterBase, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
+from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
 
 # Constants for response types
 TEXT_INPUT_TYPE = "input_text"
@@ -304,12 +304,15 @@ class OpenAIAdapter(AdapterBase):
                             })
 
 
-            # Extract image output from message outputs
+            # Extract image output from message outputs. `result` is a single
+            # base64-encoded image string, not a list of images.
             if output_type == IMAGE_GENERATION_CALL_TYPE:
-                image_b64_data = getattr(output, "result", None) or []
-                for i, b64 in enumerate(image_b64_data):
+                if image_b64 := getattr(output, "result", None):
                     files_from_response.append(
-                        ImageFile.from_base64(base64_str=b64, file_name=f"image_{i}.png")
+                        ImageFile.from_base64(
+                            base64_str=image_b64,
+                            file_name=f"image_{len(files_from_response)}.png",
+                        )
                     )
 
             # Extract reasoning output from message outputs
@@ -381,6 +384,20 @@ class OpenAIAdapter(AdapterBase):
             if retrieved_file:
                 files.append(retrieved_file)
         return files
+
+    def _poll_background_response(self, response):
+        """Poll a background-mode response until it leaves the queued/in-progress states."""
+        while response.status in {"queued", "in_progress"}:
+            time.sleep(10)  # Poll every 10 seconds
+            response = self.client.responses.retrieve(response.id)
+        return response
+
+    async def _poll_background_response_async(self, response):
+        """Async counterpart of `_poll_background_response` (uses the async client)."""
+        while response.status in {"queued", "in_progress"}:
+            await asyncio.sleep(10)  # Poll every 10 seconds
+            response = await self.async_client.responses.retrieve(response.id)
+        return response
 
     def _get_function_calls_from_response(self, response) -> List[FunctionCall]:
         """Extracts function call records from an OpenAI response."""
@@ -543,9 +560,7 @@ class OpenAIAdapter(AdapterBase):
 
             if parameters.get("background"):
                 logger.info(f"Background task initiated")
-                while response.status in {"queued", "in_progress"}:
-                    time.sleep(10)  # Poll every 10 seconds
-                    response = self.client.responses.retrieve(response.id)
+                response = self._poll_background_response(response)
 
         answer_text, thinking_responses, files_from_response, citations, usage = self._parse_response(response)
         # Container files come before parsed (generated) files to preserve the pre-refactor order.
@@ -603,6 +618,10 @@ class OpenAIAdapter(AdapterBase):
             )
             response = await self.async_client.responses.create(**parameters)
 
+            if parameters.get("background"):
+                logger.info(f"Background task initiated")
+                response = await self._poll_background_response_async(response)
+
         answer_text, thinking_responses, files_from_response, citations, usage = self._parse_response(response)
         # Container files come before parsed (generated) files to preserve the pre-refactor order.
         files_from_response = await self._retrieve_container_files_async(citations) + files_from_response
@@ -625,9 +644,15 @@ class OpenAIAdapter(AdapterBase):
         functions: List[Union[BaseTool, Callable]],
         tool_output_callback: Callable = None,
         additional_parameters: AdditionalParameters | None = None,
+        _tool_round: int = 0,
         **kwargs,
     ):
         """Handles the synchronous, recursive logic for tool-use conversations."""
+        if _tool_round >= MAX_TOOL_ROUNDS:
+            raise RuntimeError(
+                f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+            )
+
         additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
         tools = [self._convert_function_to_tool(f) for f in functions]
         parameters = self._create_parameters_for_calling_llm(
@@ -643,9 +668,7 @@ class OpenAIAdapter(AdapterBase):
 
         if parameters.get("background"):
             logger.info(f"Background task initiated. Response ID: {response.id}")
-            while response.status in {"queued", "in_progress"}:
-                time.sleep(10)  # Poll every 10 seconds
-                response = self.client.responses.retrieve(response.id)
+            response = self._poll_background_response(response)
 
         text, thinking, files, citations, usage = self._parse_response(response)
         files = self._retrieve_container_files(citations) + files
@@ -667,7 +690,8 @@ class OpenAIAdapter(AdapterBase):
 
         # 5. Call the model again with the updated history to get the final answer
         return self.request_llm_with_functions(
-            model, the_conversation, functions, tool_output_callback, additional_parameters
+            model, the_conversation, functions, tool_output_callback, additional_parameters,
+            _tool_round=_tool_round + 1,
         )
 
     async def request_llm_with_functions_async(
@@ -677,9 +701,15 @@ class OpenAIAdapter(AdapterBase):
         functions: List[Union[BaseTool, Callable]],
         tool_output_callback: Callable = None,
         additional_parameters: AdditionalParameters | None = None,
+        _tool_round: int = 0,
         **kwargs,
     ):
         """Handles the asynchronous, recursive logic for tool-use conversations."""
+        if _tool_round >= MAX_TOOL_ROUNDS:
+            raise RuntimeError(
+                f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+            )
+
         additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
         tools = [self._convert_function_to_tool(f) for f in functions]
         parameters = self._create_parameters_for_calling_llm(
@@ -689,6 +719,11 @@ class OpenAIAdapter(AdapterBase):
 
         # 1. Get response from the model
         response = await self.async_client.responses.create(**parameters)
+
+        if parameters.get("background"):
+            logger.info(f"Background task initiated. Response ID: {response.id}")
+            response = await self._poll_background_response_async(response)
+
         text, thinking, files, citations, usage = self._parse_response(response)
         files = await self._retrieve_container_files_async(citations) + files
         function_calls = self._get_function_calls_from_response(response)
@@ -709,7 +744,8 @@ class OpenAIAdapter(AdapterBase):
 
         # 5. Call the model again with the updated history to get the final answer
         return await self.request_llm_with_functions_async(
-            model, the_conversation, functions, tool_output_callback, additional_parameters
+            model, the_conversation, functions, tool_output_callback, additional_parameters,
+            _tool_round=_tool_round + 1,
         )
 
     def _convert_func_to_tool(self, func: Callable) -> Dict:

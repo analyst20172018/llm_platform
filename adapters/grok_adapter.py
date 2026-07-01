@@ -26,7 +26,7 @@ from llm_platform.tools.base import BaseTool
 from llm_platform.adapters.serializers import function_call_from_grok
 from llm_platform.types import AdditionalParameters
 
-from .adapter_base import AdapterBase
+from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
 
 
 class GrokAdapter(AdapterBase):
@@ -290,8 +290,14 @@ class GrokAdapter(AdapterBase):
         functions: List[BaseTool | Callable],
         tool_output_callback: Callable = None,
         additional_parameters: AdditionalParameters | None = None,
+        _tool_round: int = 0,
         **kwargs,
     ):
+        if _tool_round >= MAX_TOOL_ROUNDS:
+            raise RuntimeError(
+                f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+            )
+
         additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
 
         tool_definitions = [self._convert_function_to_tool(function) for function in functions]
@@ -340,6 +346,7 @@ class GrokAdapter(AdapterBase):
             functions=functions,
             tool_output_callback=tool_output_callback,
             additional_parameters=additional_parameters,
+            _tool_round=_tool_round + 1,
         )
 
     def _convert_func_to_tool(self, func: Callable) -> Dict:

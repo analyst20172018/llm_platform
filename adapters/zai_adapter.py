@@ -7,6 +7,7 @@ from llm_platform.tools.base import BaseTool
 from llm_platform.adapters.serializers import function_call_from_openai_chat
 from llm_platform.types import AdditionalParameters
 
+from .adapter_base import MAX_TOOL_ROUNDS
 from .openai_compatible_adapter import OpenAICompatibleAdapter
 
 
@@ -140,8 +141,14 @@ class ZaiAdapter(OpenAICompatibleAdapter):
         functions: List[BaseTool | Callable],
         tool_output_callback: Callable = None,
         additional_parameters: AdditionalParameters | None = None,
+        _tool_round: int = 0,
         **kwargs,
     ) -> Message:
+        if _tool_round >= MAX_TOOL_ROUNDS:
+            raise RuntimeError(
+                f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+            )
+
         additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
 
         tools = [self._convert_function_to_tool(function) for function in functions]
@@ -192,4 +199,5 @@ class ZaiAdapter(OpenAICompatibleAdapter):
             functions=functions,
             tool_output_callback=tool_output_callback,
             additional_parameters=additional_parameters,
+            _tool_round=_tool_round + 1,
         )

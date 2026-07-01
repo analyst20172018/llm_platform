@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-06-17
+Version: 2026-07-01
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -26,7 +26,7 @@ Main runtime flow:
 Primary modules:
 - `core/llm_handler.py`: orchestration facade and entrypoint
 - `core/parameter_normalizer.py`: `ParameterNormalizer` — normalizes `additional_parameters` against a model's YAML schema (extracted from the facade)
-- `adapters/adapter_base.py`: `AdapterBase` contract plus provider-agnostic helpers shared by the adapters (parameter merge, usage extraction, callable→JSON-schema, content-block formatting, PDF/tool-round constants). `load_dotenv()` runs once at module import (not per adapter construction)
+- `adapters/adapter_base.py`: `AdapterBase` contract plus provider-agnostic helpers shared by the adapters (parameter merge, usage extraction, callable→JSON-schema, tool-name resolution `_tool_name`, content-block formatting, PDF/tool-round constants). `load_dotenv()` runs once at module import (not per adapter construction)
 - `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter, Z.AI)
 - `adapters/*.py`: provider-specific translation and API calls
 - `services/conversation.py`: provider-agnostic conversation/message/function-call domain model + platform-internal persistence (provider wire serialization lives in `adapters/serializers.py`)
@@ -156,18 +156,23 @@ These per-model capability flags follow the `adaptive_thinking` precedent: enabl
 ## 7. Adapter capability matrix
 
 ### 7.1 Text and tool orchestration adapters
+All tool-calling loops (OpenAI sync/async, Anthropic, Google, Grok, Mistral, Z.AI) are bounded by the shared `MAX_TOOL_ROUNDS` constant (40, in `adapter_base.py`); exceeding it raises `RuntimeError` instead of recursing unboundedly.
+
 - `OpenAIAdapter`
   - Responses API based chat flow
   - Sync + async request methods
   - Tool calling with recursive loop
   - Supports `web_search`, `code_execution`, structured output parsing, reasoning/text parameter pass-through
+  - Background-mode models (`background_mode: true`) are polled to completion on both the sync and async paths (`_poll_background_response` / `_poll_background_response_async`)
+  - Image-generation output is parsed as a single base64 string per `image_generation_call` (the Responses API `result` field)
   - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch
 - `AnthropicAdapter`
   - Sync only
   - Non-streaming and streaming execution paths
   - Streaming auto-enabled for large `max_tokens` (>= 21000)
   - Recursive tool-use loop
-  - Supports web search, code execution, reasoning controls, structured output (non-streaming)
+  - Supports web search, code execution, reasoning controls, structured output (non-streaming; when the configured `max_tokens` would force streaming, it is capped to 20 000 with a warning so structured output still works with the YAML defaults)
+  - Tool lookup supports both `BaseTool` instances and plain callables (via `AdapterBase._tool_name`); a tool call whose name is not found is answered with an error `tool_result` instead of being dropped (dropping it made the model retry forever)
   - Thinking mode is chosen per model from the `adaptive_thinking` flag in `models_config.yaml`: flagged models (Opus 4.7/4.8, Sonnet 4.6) use `thinking: {type: "adaptive"}` + `output_config.effort`; others use legacy `thinking: {type: "enabled", budget_tokens}`. (Models such as Opus 4.8 reject `enabled`/`budget_tokens` with a 400.)
   - Automatic prompt caching is always on: `_prepare_request_kwargs` sets a single top-level `cache_control: {type: "ephemeral"}` (applied to every request path), so the stable system + tools + history prefix is served from cache across turns and tool-use loops. Prompts below the model's minimum cacheable length are silently left uncached. Usage reports the cache breakdown in `cache_read_tokens` / `cache_creation_tokens`, and `prompt_tokens` is the full input (uncached + cache read + cache write) since the API's `input_tokens` counts only the uncached remainder when caching is active.
   - Performs max-token correction against context window
@@ -188,7 +193,9 @@ These per-model capability flags follow the `adaptive_thinking` precedent: enabl
   - Supports web search and code execution tools in xAI SDK
   - Supports structured output through xAI SDK `response_format` for both standard requests and tool-enabled requests on models flagged `structured_output_with_tools` (the Grok 4 family)
 - `MistralAdapter`
-  - Sync chat and recursive function-calling
+  - Sync chat and recursive function-calling (`tool_choice: "auto"`, bounded by `MAX_TOOL_ROUNDS`); the final assistant message is appended and returned by the tool loop itself
+  - Tool-call history is serialized in Chat Completions shape (`function_call_to_openai_chat` / `function_response_to_openai_chat`, parsed back via `function_call_from_openai_chat`), matching the OpenAI-compatible adapters
+  - Request parameters (`temperature`, `max_tokens`, passthrough keys, filtered by `MISTRAL_RESERVED_KEYS`) are applied on both the plain-chat and function-calling paths
 - `DeepSeekAdapter`, `OpenRouterAdapter`, `ZaiAdapter`
   - Thin subclasses of `OpenAICompatibleAdapter`. `DeepSeekAdapter` / `OpenRouterAdapter` declare only `BASE_URL` / `ENV_VAR` and use the OpenAI client against the provider base URL; `ZaiAdapter` (GLM models) additionally overrides `_build_client` to use the official `zai-sdk` `ZaiClient`, which exposes the same OpenAI-compatible `chat.completions.create` surface. Temperature suppression is driven by the per-model `suppress_temperature` flag in the base rather than a name-based override
   - Shared OpenAI-compatible chat path: text/image/audio/document conversion, parameter marshalling, and usage extraction live in the base. Tool-call history is serialized in Chat Completions shape (`function_call_to_openai_chat` / `function_response_to_openai_chat`): tool calls nested under `tool_calls[].function` on the assistant message, tool results sent as standalone `role: "tool"` messages
@@ -285,7 +292,7 @@ From `requirements.txt`:
 3. Adapter resolves and executes local tool callable(s).
 4. Tool outputs are captured as `FunctionResponse` records.
 5. Conversation is updated with tool call/response records.
-6. Adapter recursively calls provider until final non-tool assistant output is produced.
+6. Adapter recursively calls provider until final non-tool assistant output is produced, bounded by `MAX_TOOL_ROUNDS` (40); exceeding the bound raises `RuntimeError`.
 
 ### 14.3 Gemini Deep Research flow
 1. Client calls a model such as `deep-research-preview-04-2026` or `deep-research-max-preview-04-2026`.

@@ -164,6 +164,11 @@ class AdapterBase(ABC):
             "prompt_tokens": getattr(usage, prompt_attr, 0) if usage is not None else 0,
         }
 
+    @staticmethod
+    def _tool_name(func) -> str:
+        """Declared tool name for a ``BaseTool`` instance or a plain callable."""
+        return func.name if isinstance(func, BaseTool) else getattr(func, "__name__", str(func))
+
     def _callable_to_json_schema(self, func: Callable) -> Dict:
         """Introspect a plain Python callable into a canonical JSON-schema tool definition.
 

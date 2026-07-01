@@ -27,7 +27,7 @@ from llm_platform.adapters.serializers import (
     thinking_response_to_anthropic,
 )
 
-from .adapter_base import AdapterBase, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
+from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
 from llm_platform.types import AdditionalParameters
 
 # --- Constants ---
@@ -197,11 +197,16 @@ class AnthropicAdapter(AdapterBase):
         use_streaming = max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD
 
         if use_streaming and additional_parameters.get("structured_output", None):
-            raise ValueError(
-                f"Streaming is required for max_tokens >= {MAX_TOKENS_STREAMING_THRESHOLD}, "
-                f"but streaming does not support structured output. "
-                f"Please reduce max_tokens below {MAX_TOKENS_STREAMING_THRESHOLD} or remove structured output."
+            # Structured output is only supported on the non-streaming path. Cap
+            # max_tokens below the streaming threshold instead of failing, so the
+            # config-default max_tokens (64k/128k) still works with structured output.
+            capped_max_tokens = MAX_TOKENS_STREAMING_THRESHOLD - RESPONSE_TOKEN_BUFFER
+            logger.warning(
+                f"structured_output requires a non-streaming request; capping max_tokens "
+                f"from {max_tokens} to {capped_max_tokens}."
             )
+            additional_parameters["max_tokens"] = capped_max_tokens
+            use_streaming = False
 
         if use_streaming:
             if functions:
@@ -316,9 +321,15 @@ class AnthropicAdapter(AdapterBase):
         functions: List[BaseTool],
         tool_output_callback: Callable,
         additional_parameters: AdditionalParameters,
+        _tool_round: int = 0,
         **kwargs,
     ) -> ClaudeStreamProcessor:
         """Handles the recursive, non-streaming tool-use loop."""
+        if _tool_round >= MAX_TOOL_ROUNDS:
+            raise RuntimeError(
+                f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+            )
+
         history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
         tools = [self._convert_function_to_tool(func) for func in functions]
         if additional_parameters.get("web_search", False):
@@ -339,7 +350,8 @@ class AnthropicAdapter(AdapterBase):
         if processor.stop_reason == "tool_use":
             self._handle_tool_calls(processor, conversation, functions, tool_output_callback)
             return self._request_llm_with_tools(
-                model, conversation, functions, tool_output_callback, additional_parameters, **kwargs
+                model, conversation, functions, tool_output_callback, additional_parameters,
+                _tool_round=_tool_round + 1, **kwargs
             )
 
         return processor
@@ -385,9 +397,15 @@ class AnthropicAdapter(AdapterBase):
         functions: List[BaseTool],
         tool_output_callback: Callable,
         additional_parameters: AdditionalParameters,
+        _tool_round: int = 0,
         **kwargs,
     ) -> ClaudeStreamProcessor:
         """Handles the recursive, streaming tool-use loop."""
+        if _tool_round >= MAX_TOOL_ROUNDS:
+            raise RuntimeError(
+                f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+            )
+
         history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
         tools = [self._convert_function_to_tool(func) for func in functions]
         if additional_parameters.get("web_search", False):
@@ -413,7 +431,8 @@ class AnthropicAdapter(AdapterBase):
             self._handle_tool_calls(processor, conversation, functions, tool_output_callback)
             # Recursively call to get the final response after tool execution.
             return self._request_llm_with_tools_streaming(
-                model, conversation, functions, tool_output_callback, additional_parameters, **kwargs
+                model, conversation, functions, tool_output_callback, additional_parameters,
+                _tool_round=_tool_round + 1, **kwargs
             )
 
         # If no tool use, return the final processor state.
@@ -431,16 +450,21 @@ class AnthropicAdapter(AdapterBase):
         function_responses = []
 
         for tool_call in processor.tool_uses:
-            try:
-                # Find the function to execute by its name.
-                function_to_call = next(f for f in functions if f.name == tool_call["name"])
-            except StopIteration:
-                logger.error(f"Function '{tool_call['name']}' not found in provided tools.")
-                continue
+            # Find the function to execute by its name (BaseTool exposes `.name`,
+            # plain callables `__name__`).
+            function_to_call = next(
+                (f for f in functions if self._tool_name(f) == tool_call["name"]), None
+            )
 
-            # Execute the function with keyword arguments for robustness.
             parameters = tool_call.get("parameters", {})
-            response = function_to_call(**parameters)
+            if function_to_call is None:
+                # Every tool_use must get a tool_result: report the failure to the
+                # model instead of dropping the call, which would make it retry forever.
+                logger.error(f"Function '{tool_call['name']}' not found in provided tools.")
+                response = {"error": f"Tool '{tool_call['name']}' not found in provided tools."}
+            else:
+                # Execute the function with keyword arguments for robustness.
+                response = function_to_call(**parameters)
 
             # Record the call and response for the conversation history.
             function_calls.append(FunctionCall(id=tool_call['id'], name=tool_call['name'], arguments=parameters))
