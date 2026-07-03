@@ -171,7 +171,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic, Google, Grok, Mistral, Z.A
   - Non-streaming and streaming execution paths
   - Streaming auto-enabled for large `max_tokens` (>= 21000)
   - Recursive tool-use loop
-  - Supports web search, code execution, reasoning controls, structured output (non-streaming; when the configured `max_tokens` would force streaming, it is capped to 20 000 with a warning so structured output still works with the YAML defaults)
+  - Supports web search, code execution, reasoning controls, structured output (on both the streaming and non-streaming paths)
   - Tool lookup supports both `BaseTool` instances and plain callables (via `AdapterBase._tool_name`); a tool call whose name is not found is answered with an error `tool_result` instead of being dropped (dropping it made the model retry forever)
   - Thinking mode is chosen per model from the `adaptive_thinking` flag in `models_config.yaml`: flagged models (Opus 4.7/4.8, Sonnet 4.6) use `thinking: {type: "adaptive"}` + `output_config.effort`; others use legacy `thinking: {type: "enabled", budget_tokens}`. (Models such as Opus 4.8 reject `enabled`/`budget_tokens` with a 400.)
   - Automatic prompt caching is always on: `_prepare_request_kwargs` sets a single top-level `cache_control: {type: "ephemeral"}` (applied to every request path), so the stable system + tools + history prefix is served from cache across turns and tool-use loops. Prompts below the model's minimum cacheable length are silently left uncached. Usage reports the cache breakdown in `cache_read_tokens` / `cache_creation_tokens`, and `prompt_tokens` is the full input (uncached + cache read + cache write) since the API's `input_tokens` counts only the uncached remainder when caching is active.

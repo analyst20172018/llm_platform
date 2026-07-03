@@ -189,24 +189,13 @@ class AnthropicAdapter(AdapterBase):
         Sends a request to the LLM, handling simple responses and tool use.
 
         Uses streaming for requests with max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD
-        to avoid HTTP timeouts. Uses non-streaming otherwise, which enables structured output.
+        to avoid HTTP timeouts. All features, including structured output, work on
+        both paths.
         """
         additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
 
         max_tokens = additional_parameters.get("max_tokens") or 0
         use_streaming = max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD
-
-        if use_streaming and additional_parameters.get("structured_output", None):
-            # Structured output is only supported on the non-streaming path. Cap
-            # max_tokens below the streaming threshold instead of failing, so the
-            # config-default max_tokens (64k/128k) still works with structured output.
-            capped_max_tokens = MAX_TOKENS_STREAMING_THRESHOLD - RESPONSE_TOKEN_BUFFER
-            logger.warning(
-                f"structured_output requires a non-streaming request; capping max_tokens "
-                f"from {max_tokens} to {capped_max_tokens}."
-            )
-            additional_parameters["max_tokens"] = capped_max_tokens
-            use_streaming = False
 
         if use_streaming:
             if functions:
