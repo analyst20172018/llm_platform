@@ -40,17 +40,33 @@ class OpenAICompatibleAdapter(AdapterBase):
     """Shared adapter for providers exposing an OpenAI-compatible Chat Completions API.
 
     Subclasses only declare ``BASE_URL`` and ``ENV_VAR`` (and optionally override
-    ``_suppress_temperature``); everything else — client construction, conversation
-    conversion, parameter marshalling, usage extraction — is shared here. Tool
-    calling is not supported (inherits the base ``request_llm_with_functions``).
+    ``_suppress_temperature``); everything else — sync and async client
+    construction, conversation conversion, parameter marshalling, usage
+    extraction — is shared here. Tool calling is not supported (inherits the
+    base ``request_llm_with_functions``).
     """
 
     BASE_URL: str = None
     ENV_VAR: str = None
 
+    def __init__(self):
+        super().__init__()
+        self._async_client = None
+
     def _build_client(self):
         from openai import OpenAI
         return OpenAI(base_url=self.BASE_URL, api_key=os.getenv(self.ENV_VAR))
+
+    def _build_async_client(self):
+        from openai import AsyncOpenAI
+        return AsyncOpenAI(base_url=self.BASE_URL, api_key=os.getenv(self.ENV_VAR))
+
+    @property
+    def async_client(self):
+        """Async SDK client, constructed lazily once on first access."""
+        if self._async_client is None:
+            self._async_client = self._build_async_client()
+        return self._async_client
 
     def _suppress_temperature(self, model: str) -> bool:
         """Whether to drop the ``temperature`` parameter for a given model.
@@ -151,6 +167,36 @@ class OpenAICompatibleAdapter(AdapterBase):
         request_params.update(history_kwargs)
 
         response = self.client.chat.completions.create(
+            model=model,
+            messages=history,
+            **request_params,
+        )
+
+        usage = self._build_usage(getattr(response, "usage", None), model)
+        message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
+        the_conversation.messages.append(message)
+        return message
+
+    async def request_llm_async(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[BaseTool] = None,
+        tool_output_callback: Callable = None,
+        additional_parameters: AdditionalParameters | None = None,
+        **kwargs,
+    ) -> Message:
+        """Async counterpart of `request_llm`, backed by the native `AsyncOpenAI` client."""
+        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
+
+        if functions:
+            raise NotImplementedError(f"{type(self).__name__} does not support tool calling")
+
+        request_params = self._build_request_params(model, additional_parameters)
+        history, history_kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model)
+        request_params.update(history_kwargs)
+
+        response = await self.async_client.chat.completions.create(
             model=model,
             messages=history,
             **request_params,

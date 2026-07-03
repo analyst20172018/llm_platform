@@ -1,4 +1,4 @@
-import asyncio
+import inspect
 import json
 from loguru import logger
 import os
@@ -171,8 +171,19 @@ class ClaudeStreamProcessor:
 class AnthropicAdapter(AdapterBase):
     """Adapter for interacting with the Anthropic Claude API."""
 
+    def __init__(self):
+        super().__init__()
+        self._async_client = None
+
     def _build_client(self):
         return anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    @property
+    def async_client(self):
+        """Async SDK client, constructed lazily once on first access."""
+        if self._async_client is None:
+            self._async_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        return self._async_client
 
     # --- Main Public Methods ---
 
@@ -231,6 +242,55 @@ class AnthropicAdapter(AdapterBase):
                     additional_parameters=additional_parameters,
                     **kwargs,
                 )
+
+        response_message = Message(
+            role="assistant",
+            content=processor.response_text,
+            thinking_responses=processor.thinking_responses,
+            usage=processor.usage,
+        )
+        the_conversation.messages.append(response_message)
+        return response_message
+
+    async def request_llm_async(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[BaseTool] = None,
+        tool_output_callback: Callable = None,
+        additional_parameters: AdditionalParameters | None = None,
+        **kwargs,
+    ) -> Message:
+        """
+        Async counterpart of `request_llm`, backed by the native `AsyncAnthropic` client.
+
+        Follows the same dispatch rules: streaming is used for requests with
+        max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD, and tool use runs the
+        recursive tool-calling loop.
+        """
+        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
+
+        max_tokens = additional_parameters.get("max_tokens") or 0
+        use_streaming = max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD
+
+        if functions:
+            processor = await self._request_llm_with_tools_async(
+                model=model,
+                conversation=the_conversation,
+                functions=functions,
+                tool_output_callback=tool_output_callback,
+                additional_parameters=additional_parameters,
+                stream=use_streaming,
+                **kwargs,
+            )
+        else:
+            processor = await self._request_llm_simple_async(
+                model=model,
+                conversation=the_conversation,
+                additional_parameters=additional_parameters,
+                stream=use_streaming,
+                **kwargs,
+            )
 
         response_message = Message(
             role="assistant",
@@ -427,6 +487,107 @@ class AnthropicAdapter(AdapterBase):
         # If no tool use, return the final processor state.
         return processor
 
+    async def _request_llm_simple_async(
+        self,
+        model: str,
+        conversation: Conversation,
+        additional_parameters: AdditionalParameters,
+        stream: bool,
+        **kwargs,
+    ) -> ClaudeStreamProcessor:
+        """Async counterpart of the simple request paths (non-streaming and streaming)."""
+        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
+        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
+
+        if 'max_tokens' in request_kwargs:
+            request_kwargs['max_tokens'] = await self.correct_max_tokens_async(
+                model, history, request_kwargs['max_tokens']
+            )
+
+        tools = []
+        if additional_parameters.get("web_search", False):
+            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
+        if additional_parameters.get("code_execution", False):
+            tools.append({"type": "code_execution_20250825", "name": "code_execution"})
+
+        if stream:
+            events = await self.async_client.beta.messages.create(
+                model=model,
+                system=conversation.system_prompt,
+                messages=history,
+                tools=tools,
+                stream=True,
+                **request_kwargs,
+            )
+            processor = ClaudeStreamProcessor()
+            async for event in events:
+                processor.process_event(event)
+            return processor
+
+        response = await self.async_client.beta.messages.create(
+            model=model,
+            system=conversation.system_prompt,
+            messages=history,
+            tools=tools,
+            **request_kwargs,
+        )
+        return self._parse_non_streaming_response(response)
+
+    async def _request_llm_with_tools_async(
+        self,
+        model: str,
+        conversation: Conversation,
+        functions: List[BaseTool],
+        tool_output_callback: Callable,
+        additional_parameters: AdditionalParameters,
+        stream: bool,
+        _tool_round: int = 0,
+        **kwargs,
+    ) -> ClaudeStreamProcessor:
+        """Async counterpart of the recursive tool-use loops (non-streaming and streaming)."""
+        if _tool_round >= MAX_TOOL_ROUNDS:
+            raise RuntimeError(
+                f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+            )
+
+        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
+        tools = [self._convert_function_to_tool(func) for func in functions]
+        if additional_parameters.get("web_search", False):
+            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
+
+        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
+
+        if stream:
+            events = await self.async_client.beta.messages.create(
+                model=model,
+                system=conversation.system_prompt,
+                messages=history,
+                tools=tools,
+                stream=True,
+                **request_kwargs,
+            )
+            processor = ClaudeStreamProcessor()
+            async for event in events:
+                processor.process_event(event)
+        else:
+            response = await self.async_client.beta.messages.create(
+                model=model,
+                system=conversation.system_prompt,
+                messages=history,
+                tools=tools,
+                **request_kwargs,
+            )
+            processor = self._parse_non_streaming_response(response)
+
+        if processor.stop_reason == "tool_use":
+            await self._handle_tool_calls_async(processor, conversation, functions, tool_output_callback)
+            return await self._request_llm_with_tools_async(
+                model, conversation, functions, tool_output_callback, additional_parameters,
+                stream, _tool_round=_tool_round + 1, **kwargs
+            )
+
+        return processor
+
     def _handle_tool_calls(
         self,
         processor: ClaudeStreamProcessor,
@@ -435,34 +596,74 @@ class AnthropicAdapter(AdapterBase):
         tool_output_callback: Callable,
     ):
         """Executes tool calls requested by the model and updates the conversation."""
-        function_calls = []
-        function_responses = []
-
+        exchanges = []
         for tool_call in processor.tool_uses:
-            # Find the function to execute by its name (BaseTool exposes `.name`,
-            # plain callables `__name__`).
-            function_to_call = next(
-                (f for f in functions if self._tool_name(f) == tool_call["name"]), None
-            )
-
+            function_to_call = self._find_tool_function(tool_call["name"], functions)
             parameters = tool_call.get("parameters", {})
             if function_to_call is None:
-                # Every tool_use must get a tool_result: report the failure to the
-                # model instead of dropping the call, which would make it retry forever.
-                logger.error(f"Function '{tool_call['name']}' not found in provided tools.")
-                response = {"error": f"Tool '{tool_call['name']}' not found in provided tools."}
+                response = self._missing_tool_response(tool_call["name"])
             else:
                 # Execute the function with keyword arguments for robustness.
                 response = function_to_call(**parameters)
 
-            # Record the call and response for the conversation history.
-            function_calls.append(FunctionCall(id=tool_call['id'], name=tool_call['name'], arguments=parameters))
-            function_responses.append(FunctionResponse(id=tool_call['id'], name=tool_call['name'], response=response))
+            if tool_output_callback:
+                tool_output_callback(tool_call['name'], parameters, response)
+            exchanges.append((tool_call, parameters, response))
+
+        self._append_tool_exchange_message(processor, conversation, exchanges)
+
+    async def _handle_tool_calls_async(
+        self,
+        processor: ClaudeStreamProcessor,
+        conversation: Conversation,
+        functions: List[BaseTool],
+        tool_output_callback: Callable,
+    ):
+        """Async counterpart of `_handle_tool_calls`; additionally supports coroutine tools."""
+        exchanges = []
+        for tool_call in processor.tool_uses:
+            function_to_call = self._find_tool_function(tool_call["name"], functions)
+            parameters = tool_call.get("parameters", {})
+            if function_to_call is None:
+                response = self._missing_tool_response(tool_call["name"])
+            elif inspect.iscoroutinefunction(function_to_call):
+                response = await function_to_call(**parameters)
+            else:
+                response = function_to_call(**parameters)
 
             if tool_output_callback:
                 tool_output_callback(tool_call['name'], parameters, response)
+            exchanges.append((tool_call, parameters, response))
 
-        # Add the assistant's message (requesting the tool use) and the tool results to the conversation.
+        self._append_tool_exchange_message(processor, conversation, exchanges)
+
+    def _find_tool_function(self, name: str, functions: List[BaseTool]) -> BaseTool | Callable | None:
+        """Finds the local function for a tool call by its name (BaseTool exposes
+        `.name`, plain callables `__name__`)."""
+        return next((f for f in functions if self._tool_name(f) == name), None)
+
+    def _missing_tool_response(self, name: str) -> Dict:
+        """Error result for a tool call whose function was not provided.
+
+        Every tool_use must get a tool_result: report the failure to the model
+        instead of dropping the call, which would make it retry forever.
+        """
+        logger.error(f"Function '{name}' not found in provided tools.")
+        return {"error": f"Tool '{name}' not found in provided tools."}
+
+    def _append_tool_exchange_message(
+        self,
+        processor: ClaudeStreamProcessor,
+        conversation: Conversation,
+        exchanges: List[Tuple[Dict, Dict, Any]],
+    ):
+        """Adds the assistant's message (requesting the tool use) and the tool results to the conversation."""
+        function_calls = []
+        function_responses = []
+        for tool_call, parameters, response in exchanges:
+            function_calls.append(FunctionCall(id=tool_call['id'], name=tool_call['name'], arguments=parameters))
+            function_responses.append(FunctionResponse(id=tool_call['id'], name=tool_call['name'], response=response))
+
         assistant_message = Message(
             role="assistant",
             content=processor.response_text,
@@ -645,10 +846,17 @@ class AnthropicAdapter(AdapterBase):
 
     def count_tokens(self, model: str, messages: List[Dict], tools: List[Dict] | None = None) -> int:
         """Counts the number of input tokens for a given model, message list, and tools."""
-        if tools is None:
-            tools = []
         try:
-            response = self.client.messages.count_tokens(model=model, messages=messages, tools=tools)
+            response = self.client.messages.count_tokens(model=model, messages=messages, tools=tools or [])
+            return response.input_tokens
+        except Exception as e:
+            logger.warning(f"Could not count tokens for model {model}: {e}")
+            return 0
+
+    async def count_tokens_async(self, model: str, messages: List[Dict], tools: List[Dict] | None = None) -> int:
+        """Async counterpart of `count_tokens`."""
+        try:
+            response = await self.async_client.messages.count_tokens(model=model, messages=messages, tools=tools or [])
             return response.input_tokens
         except Exception as e:
             logger.warning(f"Could not count tokens for model {model}: {e}")
@@ -656,9 +864,16 @@ class AnthropicAdapter(AdapterBase):
 
     def correct_max_tokens(self, model: str, messages: List[Dict], max_tokens: int, tools: List[Dict] | None = None) -> int:
         """Adjusts max_tokens to prevent exceeding the model's context window."""
-        if tools is None:
-            tools = []
         request_tokens = self.count_tokens(model, messages, tools)
+        return self._clamp_max_tokens(model, request_tokens, max_tokens)
+
+    async def correct_max_tokens_async(self, model: str, messages: List[Dict], max_tokens: int, tools: List[Dict] | None = None) -> int:
+        """Async counterpart of `correct_max_tokens`."""
+        request_tokens = await self.count_tokens_async(model, messages, tools)
+        return self._clamp_max_tokens(model, request_tokens, max_tokens)
+
+    def _clamp_max_tokens(self, model: str, request_tokens: int, max_tokens: int) -> int:
+        """Clamps max_tokens against the model's own limit and remaining context window."""
         specific_model_object = self.model_config[model]
         context_window = specific_model_object.context_window
 

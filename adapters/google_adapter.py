@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import json
 import os
 import time
@@ -55,6 +57,12 @@ class GoogleAdapter(AdapterBase):
             raise ValueError("GOOGLE_GEMINI_API_KEY environment variable not set.")
         from google import genai
         return genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
+
+    @property
+    def async_client(self):
+        """Async surface of the SDK client (``client.aio``): every method is a
+        native-async twin of its sync counterpart."""
+        return self.client.aio
 
     # ------------------------------------------------------------------
     # File / content conversion
@@ -499,6 +507,69 @@ class GoogleAdapter(AdapterBase):
         )
 
     # ------------------------------------------------------------------
+    # Tool execution
+    # ------------------------------------------------------------------
+
+    def _execute_function_calls(
+        self,
+        function_calls: List[FunctionCall],
+        functions: List[BaseTool],
+        tool_output_callback: Callable,
+    ) -> List[FunctionResponse]:
+        """Executes the model's function calls locally and returns the response records.
+
+        Execution failures are reported back to the model as an error result
+        rather than raised, so the conversation can continue.
+        """
+        function_responses = []
+        for fc in function_calls:
+            function_to_call = next((f for f in functions if f.__name__ == fc.name), None)
+            if not function_to_call:
+                raise ValueError(f"Function '{fc.name}' not found in provided tools.")
+
+            args: Dict = {}
+            try:
+                args = json.loads(fc.arguments)
+                result = function_to_call(**args)
+            except Exception as e:
+                result = {"error": f"Execution failed: {e}"}
+                logger.error(f"Error executing function '{fc.name}': {e}")
+
+            function_responses.append(FunctionResponse(name=fc.name, response=result, id=fc.id))
+            if tool_output_callback:
+                tool_output_callback(fc.name, args, result)
+        return function_responses
+
+    async def _execute_function_calls_async(
+        self,
+        function_calls: List[FunctionCall],
+        functions: List[BaseTool],
+        tool_output_callback: Callable,
+    ) -> List[FunctionResponse]:
+        """Async counterpart of `_execute_function_calls`; additionally awaits coroutine tools."""
+        function_responses = []
+        for fc in function_calls:
+            function_to_call = next((f for f in functions if f.__name__ == fc.name), None)
+            if not function_to_call:
+                raise ValueError(f"Function '{fc.name}' not found in provided tools.")
+
+            args: Dict = {}
+            try:
+                args = json.loads(fc.arguments)
+                if inspect.iscoroutinefunction(function_to_call):
+                    result = await function_to_call(**args)
+                else:
+                    result = function_to_call(**args)
+            except Exception as e:
+                result = {"error": f"Execution failed: {e}"}
+                logger.error(f"Error executing function '{fc.name}': {e}")
+
+            function_responses.append(FunctionResponse(name=fc.name, response=result, id=fc.id))
+            if tool_output_callback:
+                tool_output_callback(fc.name, args, result)
+        return function_responses
+
+    # ------------------------------------------------------------------
     # Deep Research path
     # ------------------------------------------------------------------
 
@@ -527,12 +598,12 @@ class GoogleAdapter(AdapterBase):
 
         return interaction_input
 
-    def _create_deep_research_interaction(
+    def _deep_research_interaction_params(
         self,
         model: str,
         the_conversation: Conversation,
         additional_parameters: AdditionalParameters,
-    ):
+    ) -> Dict:
         interaction_params = {
             "input": self._convert_conversation_to_interaction_input(the_conversation),
             "agent": model,
@@ -545,12 +616,19 @@ class GoogleAdapter(AdapterBase):
             agent_config.setdefault("type", "deep-research")
             interaction_params["agent_config"] = agent_config
 
-        return self.client.interactions.create(**interaction_params)
+        return interaction_params
 
     def _poll_deep_research_interaction(self, interaction):
         while getattr(interaction, "status", None) not in self.DEEP_RESEARCH_TERMINAL_STATUSES:
             time.sleep(self.DEEP_RESEARCH_POLL_INTERVAL_SECONDS)
             interaction = self.client.interactions.get(interaction.id)
+        return interaction
+
+    async def _poll_deep_research_interaction_async(self, interaction):
+        """Async counterpart of `_poll_deep_research_interaction`."""
+        while getattr(interaction, "status", None) not in self.DEEP_RESEARCH_TERMINAL_STATUSES:
+            await asyncio.sleep(self.DEEP_RESEARCH_POLL_INTERVAL_SECONDS)
+            interaction = await self.async_client.interactions.get(interaction.id)
         return interaction
 
     def _parse_deep_research_interaction(self, interaction, model_name: str) -> Message:
@@ -592,12 +670,32 @@ class GoogleAdapter(AdapterBase):
         if functions:
             logger.warning("Gemini Deep Research agents do not support custom function tools.")
 
-        interaction = self._create_deep_research_interaction(
-            model=model,
-            the_conversation=the_conversation,
-            additional_parameters=additional_parameters,
+        interaction = self.client.interactions.create(
+            **self._deep_research_interaction_params(model, the_conversation, additional_parameters)
         )
         interaction = self._poll_deep_research_interaction(interaction)
+        assistant_message = self._parse_deep_research_interaction(
+            interaction=interaction,
+            model_name=model,
+        )
+        the_conversation.messages.append(assistant_message)
+        return assistant_message
+
+    async def _request_deep_research_async(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[BaseTool],
+        additional_parameters: AdditionalParameters,
+    ) -> Message:
+        """Async counterpart of `_request_deep_research`."""
+        if functions:
+            logger.warning("Gemini Deep Research agents do not support custom function tools.")
+
+        interaction = await self.async_client.interactions.create(
+            **self._deep_research_interaction_params(model, the_conversation, additional_parameters)
+        )
+        interaction = await self._poll_deep_research_interaction_async(interaction)
         assistant_message = self._parse_deep_research_interaction(
             interaction=interaction,
             model_name=model,
@@ -638,6 +736,13 @@ class GoogleAdapter(AdapterBase):
         while getattr(interaction, "status", None) not in self.AGENT_POLL_STOP_STATUSES:
             time.sleep(self.AGENT_POLL_INTERVAL_SECONDS)
             interaction = self.client.interactions.get(interaction.id)
+        return interaction
+
+    async def _poll_agent_interaction_async(self, interaction):
+        """Async counterpart of `_poll_agent_interaction`."""
+        while getattr(interaction, "status", None) not in self.AGENT_POLL_STOP_STATUSES:
+            await asyncio.sleep(self.AGENT_POLL_INTERVAL_SECONDS)
+            interaction = await self.async_client.interactions.get(interaction.id)
         return interaction
 
     def _request_antigravity(
@@ -698,22 +803,71 @@ class GoogleAdapter(AdapterBase):
             if not custom_calls:
                 return assistant_message
 
-            function_responses = []
-            for fc in custom_calls:
-                function_to_call = next((f for f in functions if f.__name__ == fc.name), None)
-                args: Dict = {}
-                try:
-                    args = json.loads(fc.arguments)
-                    result = function_to_call(**args)
-                except Exception as e:
-                    result = {"error": f"Execution failed: {e}"}
-                    logger.error(f"Error executing function '{fc.name}': {e}")
-                function_responses.append(FunctionResponse(name=fc.name, response=result, id=fc.id))
-                if tool_output_callback:
-                    tool_output_callback(fc.name, args, result)
+            function_responses = self._execute_function_calls(
+                custom_calls, functions, tool_output_callback
+            )
             assistant_message.function_responses = function_responses
 
             interaction = self.client.interactions.create(
+                input=[self._function_result_entry(fr) for fr in function_responses],
+                previous_interaction_id=interaction.id,
+                environment=getattr(interaction, "environment_id", None) or "remote",
+                **base_kwargs,
+            )
+
+        raise RuntimeError(
+            f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+        )
+
+    async def _request_antigravity_async(
+        self,
+        model: str,
+        the_conversation: Conversation,
+        functions: List[BaseTool],
+        tool_output_callback: Callable,
+        additional_parameters: AdditionalParameters,
+    ) -> Message:
+        """Async counterpart of `_request_antigravity` (same flow on `client.aio`)."""
+        base_kwargs = self._build_antigravity_kwargs(
+            model, the_conversation, functions, additional_parameters
+        )
+        model_object = self.model_config[model]
+        background = bool(model_object and model_object["background_mode"])
+        if background:
+            base_kwargs["background"] = True
+            base_kwargs["store"] = True
+
+        custom_function_names = {f.__name__ for f in functions}
+
+        interaction = await self.async_client.interactions.create(
+            input=self._build_input_from_conversation(the_conversation),
+            environment="remote",
+            **base_kwargs,
+        )
+
+        for _tool_round in range(MAX_TOOL_ROUNDS):
+            if background:
+                interaction = await self._poll_agent_interaction_async(interaction)
+
+            assistant_message = self._parse_interaction_response(interaction, model)
+
+            # Keep only the calls the platform is responsible for executing.
+            custom_calls = [
+                fc for fc in assistant_message.function_calls
+                if fc.name in custom_function_names
+            ]
+            assistant_message.function_calls = custom_calls
+            the_conversation.messages.append(assistant_message)
+
+            if not custom_calls:
+                return assistant_message
+
+            function_responses = await self._execute_function_calls_async(
+                custom_calls, functions, tool_output_callback
+            )
+            assistant_message.function_responses = function_responses
+
+            interaction = await self.async_client.interactions.create(
                 input=[self._function_result_entry(fr) for fr in function_responses],
                 previous_interaction_id=interaction.id,
                 environment=getattr(interaction, "environment_id", None) or "remote",
@@ -808,28 +962,100 @@ class GoogleAdapter(AdapterBase):
                 return assistant_message
 
             # --- Execute tools and continue with previous_interaction_id ---
-            function_responses = []
-            for fc in assistant_message.function_calls:
-                function_to_call = next((f for f in functions if f.__name__ == fc.name), None)
-                if not function_to_call:
-                    raise ValueError(f"Function '{fc.name}' not found in provided tools.")
-
-                args: Dict = {}
-                try:
-                    args = json.loads(fc.arguments)
-                    result = function_to_call(**args)
-                except Exception as e:
-                    result = {"error": f"Execution failed: {e}"}
-                    logger.error(f"Error executing function '{fc.name}': {e}")
-
-                function_responses.append(FunctionResponse(name=fc.name, response=result, id=fc.id))
-                if tool_output_callback:
-                    tool_output_callback(fc.name, args, result)
-
+            function_responses = self._execute_function_calls(
+                assistant_message.function_calls, functions, tool_output_callback
+            )
             assistant_message.function_responses = function_responses
 
             result_inputs = [self._function_result_entry(fr) for fr in function_responses]
             interaction = self.client.interactions.create(
+                input=result_inputs,
+                previous_interaction_id=interaction.id,
+                **base_kwargs,
+            )
+
+        raise RuntimeError(
+            f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
+        )
+
+    async def request_llm_async(
+            self,
+            model: str,
+            the_conversation: Conversation,
+            functions: List[BaseTool] = None,
+            tool_output_callback: Callable = None,
+            additional_parameters: AdditionalParameters | None = None,
+            **kwargs,
+        ) -> Message:
+        """
+        Async counterpart of `request_llm`, backed by the SDK's native async
+        surface (``client.aio``). Follows the same dispatch rules: Deep
+        Research and Antigravity agent models route to their dedicated paths,
+        everything else runs the standard Interactions chat/tool loop with
+        ``previous_interaction_id`` chaining.
+        """
+        functions = functions or []
+        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
+
+        model_object = self.model_config[model]
+        if (
+            model_object
+            and model_object["background_mode"]
+            and model_object["agent_type"] == "deep_research"
+        ):
+            return await self._request_deep_research_async(
+                model=model,
+                the_conversation=the_conversation,
+                functions=functions,
+                additional_parameters=additional_parameters,
+            )
+
+        if model_object and model_object["agent_type"] == "antigravity":
+            return await self._request_antigravity_async(
+                model=model,
+                the_conversation=the_conversation,
+                functions=functions,
+                tool_output_callback=tool_output_callback,
+                additional_parameters=additional_parameters,
+            )
+
+        base_kwargs = self._build_interaction_kwargs(
+            model=model,
+            the_conversation=the_conversation,
+            functions=functions,
+            additional_parameters=additional_parameters,
+        )
+
+        prev_interaction_id = the_conversation.last_assistant_id
+        if prev_interaction_id:
+            input_items = self._build_input_from_latest_user_message(the_conversation)
+            interaction = await self.async_client.interactions.create(
+                input=input_items,
+                previous_interaction_id=prev_interaction_id,
+                **base_kwargs,
+            )
+        else:
+            input_items = self._build_input_from_conversation(the_conversation)
+            interaction = await self.async_client.interactions.create(
+                input=input_items,
+                **base_kwargs,
+            )
+
+        for _tool_round in range(MAX_TOOL_ROUNDS):
+            assistant_message = self._parse_interaction_response(interaction, model)
+            the_conversation.messages.append(assistant_message)
+
+            if not assistant_message.function_calls:
+                return assistant_message
+
+            # --- Execute tools and continue with previous_interaction_id ---
+            function_responses = await self._execute_function_calls_async(
+                assistant_message.function_calls, functions, tool_output_callback
+            )
+            assistant_message.function_responses = function_responses
+
+            result_inputs = [self._function_result_entry(fr) for fr in function_responses]
+            interaction = await self.async_client.interactions.create(
                 input=result_inputs,
                 previous_interaction_id=interaction.id,
                 **base_kwargs,

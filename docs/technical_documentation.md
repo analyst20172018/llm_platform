@@ -156,7 +156,7 @@ These per-model capability flags follow the `adaptive_thinking` precedent: enabl
 ## 7. Adapter capability matrix
 
 ### 7.1 Text and tool orchestration adapters
-All tool-calling loops (OpenAI sync/async, Anthropic, Google, Grok, Mistral, Z.AI) are bounded by the shared `MAX_TOOL_ROUNDS` constant (40, in `adapter_base.py`); exceeding it raises `RuntimeError` instead of recursing unboundedly.
+All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/async, Grok, Mistral, Z.AI) are bounded by the shared `MAX_TOOL_ROUNDS` constant (40, in `adapter_base.py`); exceeding it raises `RuntimeError` instead of recursing unboundedly.
 
 - `OpenAIAdapter`
   - Responses API based chat flow
@@ -167,10 +167,11 @@ All tool-calling loops (OpenAI sync/async, Anthropic, Google, Grok, Mistral, Z.A
   - Image-generation output is parsed as a single base64 string per `image_generation_call` (the Responses API `result` field)
   - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch
 - `AnthropicAdapter`
-  - Sync only
+  - Sync + native async request methods (`request_llm_async` backed by a lazily constructed `anthropic.AsyncAnthropic` client; the async side mirrors the sync dispatch in two helpers — `_request_llm_simple_async` / `_request_llm_with_tools_async` — each taking a `stream` flag instead of separate streaming methods)
   - Non-streaming and streaming execution paths
   - Streaming auto-enabled for large `max_tokens` (>= 21000)
-  - Recursive tool-use loop
+  - Recursive tool-use loop; the async loop (`_handle_tool_calls_async`) additionally awaits coroutine tools, while sync callables run as-is
+  - Token counting/max-token correction have async counterparts (`count_tokens_async` / `correct_max_tokens_async` on the async client) sharing the clamp logic (`_clamp_max_tokens`), so the async path never blocks the event loop
   - Supports web search, code execution, reasoning controls, structured output (on both the streaming and non-streaming paths)
   - Tool lookup supports both `BaseTool` instances and plain callables (via `AdapterBase._tool_name`); a tool call whose name is not found is answered with an error `tool_result` instead of being dropped (dropping it made the model retry forever)
   - Thinking mode is chosen per model from the `adaptive_thinking` flag in `models_config.yaml`: flagged models (Opus 4.7/4.8, Sonnet 4.6) use `thinking: {type: "adaptive"}` + `output_config.effort`; others use legacy `thinking: {type: "enabled", budget_tokens}`. (Models such as Opus 4.8 reject `enabled`/`budget_tokens` with a 400.)
@@ -178,6 +179,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic, Google, Grok, Mistral, Z.A
   - Performs max-token correction against context window
 - `GoogleAdapter`
   - Built entirely on the Gemini **Interactions API** (`client.interactions.create`); the legacy `client.models.generate_content` surface is no longer used
+  - Sync + native async request methods: `request_llm_async` runs on the SDK's native async surface (`client.aio`, exposed via the adapter's `async_client` property) and mirrors the sync dispatch — standard chat/tool loop (`_execute_function_calls_async`, which additionally awaits coroutine tools), Deep Research (`_request_deep_research_async` + `_poll_deep_research_interaction_async`), and Antigravity (`_request_antigravity_async` + `_poll_agent_interaction_async` with `asyncio.sleep` polling). Request building and response parsing are shared with the sync path (pure helpers, no I/O)
   - Conversation history is converted into the Interactions `step_list` input array: every entry is a typed Step — `user_input` / `model_output` (each carrying a `content` array) for plain exchanges, plus `function_call` / `function_result` for prior tool round-trips. Legacy role-keyed Turn objects (`{"role": ..., "content": [...]}`) are rejected by the steps-based API.
   - System prompt is sent as the top-level `system_instruction` parameter; tools, system instructions, and `generation_config` are re-supplied on every call (interaction-scoped per the API contract)
   - Server-side conversation state is reused across turns via `previous_interaction_id`. The first turn sends the full converted history; the returned `interaction.id` is stored on the assistant `Message`. On every subsequent turn the adapter resolves the prior id through `Conversation.previous_interaction_id_for_google` and sends only the new `user_input` (mirroring the `previous_response_id_for_openai` pattern used by `OpenAIAdapter`).
@@ -200,6 +202,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic, Google, Grok, Mistral, Z.A
   - Thin subclasses of `OpenAICompatibleAdapter`. `DeepSeekAdapter` / `OpenRouterAdapter` declare only `BASE_URL` / `ENV_VAR` and use the OpenAI client against the provider base URL; `ZaiAdapter` (GLM models) additionally overrides `_build_client` to use the official `zai-sdk` `ZaiClient`, which exposes the same OpenAI-compatible `chat.completions.create` surface. Temperature suppression is driven by the per-model `suppress_temperature` flag in the base rather than a name-based override
   - Shared OpenAI-compatible chat path: text/image/audio/document conversion, parameter marshalling, and usage extraction live in the base. Tool-call history is serialized in Chat Completions shape (`function_call_to_openai_chat` / `function_response_to_openai_chat`): tool calls nested under `tool_calls[].function` on the assistant message, tool results sent as standalone `role: "tool"` messages
   - `DeepSeekAdapter` / `OpenRouterAdapter` do not implement tool calling: they inherit the uniform `AdapterBase.request_llm_with_functions` that raises `NotImplementedError`
+  - `OpenAICompatibleAdapter` provides a native async path: `request_llm_async` mirrors the sync chat flow on a lazily constructed `AsyncOpenAI` client (`_build_async_client` / `async_client`), inherited as-is by `DeepSeekAdapter` and `OpenRouterAdapter`. `ZaiAdapter` explicitly pins `request_llm_async` back to the thread-offloaded `AdapterBase` default: the base's async path is backed by `AsyncOpenAI` (not the official `ZaiClient`) and has no tool calling, so inheriting it would regress Z.AI's async function-calling support
   - `ZaiAdapter` adds tool calling and web search on top of the shared base:
     - **Function calling**: `request_llm` routes to a recursive `request_llm_with_functions` loop (request → execute local `BaseTool`/callable tools → append `FunctionCall`/`FunctionResponse` records → re-ask) until the model stops emitting `tool_calls`. Function tools are emitted as `{"type": "function", "function": {...}}` via `_convert_function_to_tool` (reusing `BaseTool.to_params(provider="openai")` or `_callable_to_json_schema`)
     - **Web search**: Z.AI's built-in server-side `web_search` tool, enabled by the `web_search` additional parameter. `_build_request_params` is overridden to attach the built-in tool (`{"type": "web_search", "web_search": {"enable": True, "search_engine": "search-prime", "search_result": True}}`) so both the plain-chat and function-calling paths pick it up. No static `search_query` is sent — GLM derives queries from the conversation. Built-in and function tools are merged on the same request
@@ -207,7 +210,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic, Google, Grok, Mistral, Z.A
 ### 7.2 Async support
 `AdapterBase` provides a default `request_llm_async` that runs the adapter's synchronous `request_llm` off the event loop via `asyncio.to_thread`. As a result `APIHandler.request_async` / `request_llm_async` work for every adapter rather than only OpenAI.
 
-`OpenAIAdapter` overrides the default with a native async implementation (`request_llm_async`, `request_llm_with_functions_async`) backed by the async OpenAI client; all other adapters inherit the thread-offloaded default.
+`OpenAIAdapter` overrides the default with a native async implementation (`request_llm_async`, `request_llm_with_functions_async`) backed by the async OpenAI client. `AnthropicAdapter` likewise overrides it with a native implementation backed by `anthropic.AsyncAnthropic` (covering the simple, streaming, and tool-use paths, including async token counting). `GoogleAdapter` overrides it with a native implementation on the google-genai async surface `client.aio` (covering the standard Interactions chat/tool loop, Deep Research, and Antigravity paths, with async polling). `OpenAICompatibleAdapter` overrides it with a native `AsyncOpenAI`-backed chat path, giving `DeepSeekAdapter` and `OpenRouterAdapter` native async for free. The remaining adapters (Grok, Mistral, and Z.AI — which deliberately pins itself back to the default, see §7.1) use the thread-offloaded fallback.
 
 ## 8. Multimodal behavior by adapter (implemented)
 - OpenAI: text, image, audio, document inputs

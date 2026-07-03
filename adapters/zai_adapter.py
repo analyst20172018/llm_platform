@@ -7,7 +7,7 @@ from llm_platform.tools.base import BaseTool
 from llm_platform.adapters.serializers import function_call_from_openai_chat
 from llm_platform.types import AdditionalParameters
 
-from .adapter_base import MAX_TOOL_ROUNDS
+from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
 from .openai_compatible_adapter import OpenAICompatibleAdapter
 
 
@@ -30,6 +30,12 @@ class ZaiAdapter(OpenAICompatibleAdapter):
 
     BASE_URL = "https://api.z.ai/api/paas/v4/"
     ENV_VAR = "ZAI_API_KEY"
+
+    # The base's native async path is backed by AsyncOpenAI and has no tool
+    # calling — it would bypass the official ZaiClient and regress this
+    # adapter's async function-calling support. Keep the thread-offloaded
+    # AdapterBase default, which runs the full sync `request_llm` off the loop.
+    request_llm_async = AdapterBase.request_llm_async
 
     def _build_client(self):
         from zai import ZaiClient
