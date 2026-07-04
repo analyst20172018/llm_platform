@@ -552,7 +552,7 @@ class OpenAIAdapter(AdapterBase):
             )
 
             # For Structured model outputs
-            if additional_parameters.get("structured_output", None):
+            if "text_format" in parameters:
                 response = self.client.responses.parse(**parameters)
             # For all other outputs
             else:
@@ -616,7 +616,13 @@ class OpenAIAdapter(AdapterBase):
             parameters = self._create_parameters_for_calling_llm(
                 model, the_conversation, additional_parameters, use_previous_response_id=True
             )
-            response = await self.async_client.responses.create(**parameters)
+
+            # For Structured model outputs
+            if "text_format" in parameters:
+                response = await self.async_client.responses.parse(**parameters)
+            # For all other outputs
+            else:
+                response = await self.async_client.responses.create(**parameters)
 
             if parameters.get("background"):
                 logger.info(f"Background task initiated")
@@ -718,7 +724,10 @@ class OpenAIAdapter(AdapterBase):
         parameters["tools"].extend(tools)
 
         # 1. Get response from the model
-        response = await self.async_client.responses.create(**parameters)
+        if "text_format" in parameters:
+            response = await self.async_client.responses.parse(**parameters)
+        else:
+            response = await self.async_client.responses.create(**parameters)
 
         if parameters.get("background"):
             logger.info(f"Background task initiated. Response ID: {response.id}")

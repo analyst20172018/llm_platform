@@ -162,7 +162,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Responses API based chat flow
   - Sync + async request methods
   - Tool calling with recursive loop
-  - Supports `web_search`, `code_execution`, structured output parsing, reasoning/text parameter pass-through
+  - Supports `web_search`, `code_execution`, structured output parsing, reasoning/text parameter pass-through. Structured output sets `text_format`, which only `responses.parse()` accepts, so all four request paths (sync/async, with/without tools) branch on `"text_format" in parameters` to choose `parse` vs `create` (covered by `tests/test_openai_structured_output.py`)
   - Background-mode models (`background_mode: true`) are polled to completion on both the sync and async paths (`_poll_background_response` / `_poll_background_response_async`)
   - Image-generation output is parsed as a single base64 string per `image_generation_call` (the Responses API `result` field)
   - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch
