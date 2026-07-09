@@ -162,8 +162,116 @@ models:
         request_key: reasoning.effort
 
 
+  - name: gpt-5.6-sol
+    display_name: GPT-5.6 Sol 👍
+    adapter: OpenAIAdapter
+    pricing:
+      input: 5 # USD/1M tokens
+      output: 30 # USD/1M tokens
+    context_window: 1_050_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 128000
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, high, xhigh, max]
+        default: none
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+      verbosity:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Verbosity
+        request_key: text.verbosity
+    visible: true
+
+  - name: gpt-5.6-terra
+    display_name: GPT-5.6 Terra
+    adapter: OpenAIAdapter
+    pricing:
+      input: 2.5 # USD/1M tokens
+      output: 15 # USD/1M tokens
+    context_window: 1_050_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 128000
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, high, xhigh, max]
+        default: none
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+      verbosity:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Verbosity
+        request_key: text.verbosity
+    visible: true
+
+  - name: gpt-5.6-luna
+    display_name: GPT-5.6 Luna
+    adapter: OpenAIAdapter
+    pricing:
+      input: 1 # USD/1M tokens
+      output: 6 # USD/1M tokens
+    context_window: 1_050_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 128000
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, high, xhigh, max]
+        default: none
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+      verbosity:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Verbosity
+        request_key: text.verbosity
+    visible: true
+
   - name: gpt-5.5
-    display_name: GPT-5.5 👍
+    display_name: GPT-5.5
     adapter: OpenAIAdapter
     pricing:
       input: 5 # USD/1M tokens
@@ -196,28 +304,6 @@ models:
         ui: select
         label: Verbosity
         request_key: text.verbosity
-    visible: true
-
-  - name: chat-latest
-    display_name: Latest ChatGPT Instant
-    adapter: OpenAIAdapter
-    pricing:
-      input: 5 # USD/1M tokens
-      output: 30 # USD/1M tokens
-    context_window: 400_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_output_tokens
-        default: 128000
-      web_search: *param_web_search
-      code_execution: *param_code_execution
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
     visible: true
 
   - name: gpt-5.4-mini
@@ -254,98 +340,6 @@ models:
         ui: select
         label: Verbosity
         request_key: text.verbosity
-    visible: false
-
-  - name: gpt-5.4-nano
-    display_name: GPT-5.4 nano
-    adapter: OpenAIAdapter
-    pricing:
-      input: 0.2 # USD/1M tokens
-      output: 1.25 # USD/1M tokens
-    context_window: 400_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_output_tokens
-        default: 128000
-      web_search: *param_web_search
-      code_execution: *param_code_execution
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      reasoning_effort:
-        type: enum
-        options: [none, low, medium, high, xhigh]
-        default: low
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
-      verbosity:
-        type: enum
-        options: [low, medium, high]
-        default: low
-        ui: select
-        label: Verbosity
-        request_key: text.verbosity
-    visible: false
-
-  - name: o3-deep-research
-    display_name: o3-deep-research 💰
-    adapter: OpenAIAdapter
-    pricing:
-      input: 10 # USD/1M tokens
-      output: 40 # USD/1M tokens
-    context_window: 200_000
-    inputs:
-      - image
-      - text
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_output_tokens
-        default: 100000
-      web_search: *param_web_search
-      structured_output: *param_structured_output
-      reasoning_effort:
-        type: enum
-        options: [medium]
-        default: medium
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
-    background_mode: true
-    visible: true
-
-  - name: gpt-5.5-pro
-    display_name: GPT-5.5 pro 💰💰💰
-    adapter: OpenAIAdapter
-    pricing:
-      input: 30 # USD/1M tokens
-      output: 180 # USD/1M tokens
-    context_window: 1_050_000
-    inputs:
-      - image
-      - text
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_output_tokens
-        default: 128000
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      reasoning_effort:
-        type: enum
-        options: [high]
-        default: high
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
-    background_mode: true
     visible: false
 
 
@@ -519,13 +513,13 @@ models:
     background_mode: true
 
 
-  - name: grok-4.3
-    display_name: Grok 4.3
+  - name: grok-4.5
+    display_name: Grok 4.5
     adapter: GrokAdapter
     structured_output_with_tools: true
     pricing:
-      input: 1.25 # USD/1M tokens
-      output: 2.5 # USD/1M tokens
+      input: 2 # USD/1M tokens
+      output: 6 # USD/1M tokens
     context_window: 1_000_000
     inputs:
       - text
