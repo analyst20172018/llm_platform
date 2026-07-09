@@ -3,6 +3,7 @@ from typing import Any, List, TypedDict
 
 class ReasoningParameters(TypedDict, total=False):
     effort: str  # e.g. "none", "low", "medium", "high"
+    mode: str  # OpenAI execution mode: "standard" or "pro" (GPT-5.6+)
     summary: str  # OpenAI responses API summary mode (e.g. "auto")
 
 

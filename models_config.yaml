@@ -41,6 +41,14 @@ parameter_templates:
     type: integer
     ui: hidden
     request_key: max_output_tokens
+  reasoning_mode: &param_reasoning_mode # OpenAI GPT-5.6+ pro mode
+    type: enum
+    options: [standard, pro]
+    default: standard
+    ui: select
+    label: Pro Mode
+    send_default: false # API defaults to standard; send only when user selects a mode
+    request_key: reasoning.mode
 
 models:
   - name: claude-sonnet-5
@@ -189,6 +197,7 @@ models:
         ui: select
         label: Reasoning
         request_key: reasoning.effort
+      reasoning_mode: *param_reasoning_mode
       verbosity:
         type: enum
         options: [low, medium, high]
@@ -225,6 +234,7 @@ models:
         ui: select
         label: Reasoning
         request_key: reasoning.effort
+      reasoning_mode: *param_reasoning_mode
       verbosity:
         type: enum
         options: [low, medium, high]
@@ -261,6 +271,7 @@ models:
         ui: select
         label: Reasoning
         request_key: reasoning.effort
+      reasoning_mode: *param_reasoning_mode
       verbosity:
         type: enum
         options: [low, medium, high]
