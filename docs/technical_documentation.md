@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-07-01
+Version: 2026-07-09
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -163,6 +163,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Sync + async request methods
   - Tool calling with recursive loop
   - Supports `web_search`, `code_execution`, structured output parsing, reasoning/text parameter pass-through. GPT-5.6 pro mode is exposed as the `reasoning_mode` additional parameter (enum `standard`/`pro`, `request_key: reasoning.mode`, sent only when explicitly selected) — pure YAML/normalizer configuration, no adapter code. Structured output sets `text_format`, which only `responses.parse()` accepts, so all four request paths (sync/async, with/without tools) branch on `"text_format" in parameters` to choose `parse` vs `create` (covered by `tests/test_openai_structured_output.py`)
+  - Multi-agent (beta, GPT-5.6 family) is exposed as the `agent_count` additional parameter (enum `0/2/3/5/8`, default `0` = single agent, `send_default: false`; the same friendly key `types.py` already defines for Grok's multi-agent models). When > 0, `_create_parameters_for_calling_llm` sends `multi_agent: {enabled: true, max_concurrent_subagents: N}` through `extra_body` plus the `OpenAI-Beta: responses_multi_agent=v1` header — the stable OpenAI SDK has no typed multi-agent surface yet, so this bypasses it the same way `GoogleAdapter` uses `extra_body` for `response_format`. Orchestration (spawning, messaging, waiting) is hosted by the Responses API, so the adapter's request/response flow is unchanged: function calls emitted by any agent in the tree are executed by the existing tool loop and continued via the standard `previous_response_id` path. Two guards: `reasoning.summary` is not requested when multi-agent is on (unsupported combination), and combining with `structured_output` raises `ValueError`. `_parse_response` skips internal agent items via `_is_internal_agent_item` (subagent-attributed output and root messages outside the `final_answer` phase), so only the root agent's final answer is user-facing; hosted orchestration items (`multi_agent_call`, `multi_agent_call_output`, `agent_message`) fall through the type checks and are ignored (covered by `tests/test_openai_multi_agent.py`)
   - Background-mode models (`background_mode: true`) are polled to completion on both the sync and async paths (`_poll_background_response` / `_poll_background_response_async`)
   - Image-generation output is parsed as a single base64 string per `image_generation_call` (the Responses API `result` field)
   - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch

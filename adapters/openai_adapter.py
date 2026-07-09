@@ -195,6 +195,12 @@ class OpenAIAdapter(AdapterBase):
 
         model_object = self.model_config[model]
 
+        # Multi-agent (beta): agent_count > 0 enables hosted subagent
+        # orchestration with that many concurrent subagents.
+        agent_count = int(additional_parameters.get("agent_count") or 0)
+        if agent_count and additional_parameters.get("structured_output"):
+            raise ValueError("Structured output is not supported together with multi-agent requests.")
+
         tools = []
         if additional_parameters.get("web_search"):
             tools.append({"type": "web_search_preview"})
@@ -218,14 +224,24 @@ class OpenAIAdapter(AdapterBase):
             "code_execution",
             "response_modalities",
             "structured_output",
+            "agent_count",
         }
         for key, value in additional_parameters.items():
             if key in passthrough_keys:
                 continue
             parameters[key] = value
 
-        if "reasoning" in parameters:
+        # reasoning.summary is not supported when Multi-agent is enabled
+        if "reasoning" in parameters and not agent_count:
             parameters["reasoning"]["summary"] = "auto"
+
+        # The stable SDK has no typed surface for Multi-agent yet, so the
+        # payload goes through extra_body with the beta opt-in header.
+        if agent_count:
+            parameters["extra_body"] = {
+                "multi_agent": {"enabled": True, "max_concurrent_subagents": agent_count}
+            }
+            parameters["extra_headers"] = {"OpenAI-Beta": "responses_multi_agent=v1"}
 
         # Use previous_response_id for more efficient, stateful conversations
         if use_previous_response_id and (prev_id := the_conversation.last_assistant_id):
@@ -247,6 +263,26 @@ class OpenAIAdapter(AdapterBase):
             parameters["text_format"] = structured_output_class
 
         return parameters
+
+    @staticmethod
+    def _is_internal_agent_item(output) -> bool:
+        """True for multi-agent output items that are not part of the root
+        agent's final answer: subagent-attributed items and root messages in
+        intermediate phases. Items without agent attribution (standard,
+        single-agent responses) are never internal."""
+        agent = getattr(output, "agent", None)
+        if agent is None:
+            return False
+
+        if isinstance(agent, dict):
+            agent_name = agent.get("agent_name")
+        else:
+            agent_name = getattr(agent, "agent_name", None)
+        if agent_name and agent_name != "/root":
+            return True
+
+        phase = getattr(output, "phase", None)
+        return phase is not None and phase != "final_answer"
 
     def _parse_response(self, response) -> Tuple[str, List[ThinkingResponse], List[MediaFile], List[Dict], Dict]:
         """
@@ -282,6 +318,13 @@ class OpenAIAdapter(AdapterBase):
         thinking_responses = []
 
         for output in outputs:
+            # Multi-agent responses interleave items from subagents and
+            # intermediate root phases; only the root agent's final answer
+            # is user-facing. Hosted orchestration items (multi_agent_call,
+            # agent_message, ...) fall through the type checks below.
+            if self._is_internal_agent_item(output):
+                continue
+
             output_type = getattr(output, "type", "")
 
             # Extract text from message outputs

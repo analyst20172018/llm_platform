@@ -49,6 +49,13 @@ parameter_templates:
     label: Pro Mode
     send_default: false # API defaults to standard; send only when user selects a mode
     request_key: reasoning.mode
+  agent_count: &param_agent_count # OpenAI Multi-agent (beta): max concurrent subagents, 0 = single agent
+    type: enum
+    options: [0, 2, 3, 5, 8]
+    default: 0
+    ui: select
+    label: Parallel Agents
+    send_default: false # send only when the user explicitly enables multi-agent
 
 models:
   - name: claude-sonnet-5
@@ -198,6 +205,7 @@ models:
         label: Reasoning
         request_key: reasoning.effort
       reasoning_mode: *param_reasoning_mode
+      agent_count: *param_agent_count
       verbosity:
         type: enum
         options: [low, medium, high]
@@ -235,6 +243,7 @@ models:
         label: Reasoning
         request_key: reasoning.effort
       reasoning_mode: *param_reasoning_mode
+      agent_count: *param_agent_count
       verbosity:
         type: enum
         options: [low, medium, high]
@@ -272,6 +281,7 @@ models:
         label: Reasoning
         request_key: reasoning.effort
       reasoning_mode: *param_reasoning_mode
+      agent_count: *param_agent_count
       verbosity:
         type: enum
         options: [low, medium, high]

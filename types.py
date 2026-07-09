@@ -22,4 +22,4 @@ class AdditionalParameters(TypedDict, total=False):
     max_tokens: int  # hard cap on response tokens
     reasoning: ReasoningParameters  # reasoning/effort tuning
     text: TextParameters  # text verbosity tuning
-    agent_count: int # parameter for Grok Multi Agent model
+    agent_count: int # number of parallel agents (Grok Heavy; OpenAI Multi-agent subagents, 0 = off)
