@@ -235,13 +235,15 @@ class OpenAIAdapter(AdapterBase):
         if "reasoning" in parameters and not agent_count:
             parameters["reasoning"]["summary"] = "auto"
 
-        # The stable SDK has no typed surface for Multi-agent yet, so the
-        # payload goes through extra_body with the beta opt-in header.
+        # Multi-agent uses the SDK's beta Responses surface. Besides matching
+        # the documented API, this preserves the beta-only ``agent`` and
+        # ``phase`` fields needed to distinguish root and subagent messages.
         if agent_count:
-            parameters["extra_body"] = {
-                "multi_agent": {"enabled": True, "max_concurrent_subagents": agent_count}
+            parameters["multi_agent"] = {
+                "enabled": True,
+                "max_concurrent_subagents": agent_count,
             }
-            parameters["extra_headers"] = {"OpenAI-Beta": "responses_multi_agent=v1"}
+            parameters["betas"] = ["responses_multi_agent=v1"]
 
         # Use previous_response_id for more efficient, stateful conversations
         if use_previous_response_id and (prev_id := the_conversation.last_assistant_id):
@@ -263,6 +265,22 @@ class OpenAIAdapter(AdapterBase):
             parameters["text_format"] = structured_output_class
 
         return parameters
+
+    def _create_response(self, parameters: Dict):
+        """Send a synchronous Responses request through the correct SDK surface."""
+        if "text_format" in parameters:
+            return self.client.responses.parse(**parameters)
+        if "multi_agent" in parameters:
+            return self.client.beta.responses.create(**parameters)
+        return self.client.responses.create(**parameters)
+
+    async def _create_response_async(self, parameters: Dict):
+        """Send an asynchronous Responses request through the correct SDK surface."""
+        if "text_format" in parameters:
+            return await self.async_client.responses.parse(**parameters)
+        if "multi_agent" in parameters:
+            return await self.async_client.beta.responses.create(**parameters)
+        return await self.async_client.responses.create(**parameters)
 
     @staticmethod
     def _is_internal_agent_item(output) -> bool:
@@ -316,6 +334,7 @@ class OpenAIAdapter(AdapterBase):
         files_from_response = []
         container_file_citations = []
         thinking_responses = []
+        seen_agent_message_texts = set()
 
         for output in outputs:
             # Multi-agent responses interleave items from subagents and
@@ -329,22 +348,38 @@ class OpenAIAdapter(AdapterBase):
 
             # Extract text from message outputs
             if output_type == MESSAGE_CALL_TYPE:
-                for content in (getattr(output, "content", []) or []):
-                    if getattr(content, "type", "") == TEXT_OUTPUT_TYPE:
-                        if answer_text:
-                            answer_text += "\n"
-                        answer_text += content.text
+                contents = getattr(output, "content", []) or []
+                message_text = "\n".join(
+                    content.text
+                    for content in contents
+                    if getattr(content, "type", "") == TEXT_OUTPUT_TYPE
+                )
+                is_agent_message = getattr(output, "agent", None) is not None
+                is_duplicate = (
+                    is_agent_message
+                    and message_text
+                    and message_text in seen_agent_message_texts
+                )
 
-                    # Collect container-file citations as metadata only. The bytes
-                    # are fetched separately (see `_retrieve_container_files`) so that
-                    # parsing stays pure and the async path does not block on network IO.
-                    for annotation in (getattr(content, "annotations", []) or []):
-                        if getattr(annotation, "type", "") == "container_file_citation":
-                            container_file_citations.append({
-                                "container_id": annotation.container_id,
-                                "file_id": annotation.file_id,
-                                "filename": annotation.filename,
-                            })
+                if message_text and not is_duplicate:
+                    if answer_text:
+                        answer_text += "\n"
+                    answer_text += message_text
+                    if is_agent_message:
+                        seen_agent_message_texts.add(message_text)
+
+                if not is_duplicate:
+                    for content in contents:
+                        # Collect container-file citations as metadata only. The bytes
+                        # are fetched separately (see `_retrieve_container_files`) so that
+                        # parsing stays pure and the async path does not block on network IO.
+                        for annotation in (getattr(content, "annotations", []) or []):
+                            if getattr(annotation, "type", "") == "container_file_citation":
+                                container_file_citations.append({
+                                    "container_id": annotation.container_id,
+                                    "file_id": annotation.file_id,
+                                    "filename": annotation.filename,
+                                })
 
 
             # Extract image output from message outputs. `result` is a single
@@ -594,12 +629,7 @@ class OpenAIAdapter(AdapterBase):
                 model, the_conversation, additional_parameters, use_previous_response_id=True
             )
 
-            # For Structured model outputs
-            if "text_format" in parameters:
-                response = self.client.responses.parse(**parameters)
-            # For all other outputs
-            else:
-                response = self.client.responses.create(**parameters)
+            response = self._create_response(parameters)
 
             if parameters.get("background"):
                 logger.info(f"Background task initiated")
@@ -660,12 +690,7 @@ class OpenAIAdapter(AdapterBase):
                 model, the_conversation, additional_parameters, use_previous_response_id=True
             )
 
-            # For Structured model outputs
-            if "text_format" in parameters:
-                response = await self.async_client.responses.parse(**parameters)
-            # For all other outputs
-            else:
-                response = await self.async_client.responses.create(**parameters)
+            response = await self._create_response_async(parameters)
 
             if parameters.get("background"):
                 logger.info(f"Background task initiated")
@@ -710,10 +735,7 @@ class OpenAIAdapter(AdapterBase):
         parameters["tools"].extend(tools)
 
         # 1. Get response from the model
-        if "text_format" in parameters:
-            response = self.client.responses.parse(**parameters)
-        else:
-            response = self.client.responses.create(**parameters)
+        response = self._create_response(parameters)
 
         if parameters.get("background"):
             logger.info(f"Background task initiated. Response ID: {response.id}")
@@ -767,10 +789,7 @@ class OpenAIAdapter(AdapterBase):
         parameters["tools"].extend(tools)
 
         # 1. Get response from the model
-        if "text_format" in parameters:
-            response = await self.async_client.responses.parse(**parameters)
-        else:
-            response = await self.async_client.responses.create(**parameters)
+        response = await self._create_response_async(parameters)
 
         if parameters.get("background"):
             logger.info(f"Background task initiated. Response ID: {response.id}")

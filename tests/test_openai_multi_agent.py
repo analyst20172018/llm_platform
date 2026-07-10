@@ -1,13 +1,14 @@
 """Tests for OpenAI Multi-agent (beta) support in OpenAIAdapter.
 
-`agent_count` > 0 enables hosted subagent orchestration: the request gains
-the `multi_agent` payload (via extra_body) and the beta opt-in header, the
-unsupported `reasoning.summary` is not requested, and response parsing keeps
-only the root agent's final answer as user-facing text.
+`agent_count` > 0 enables hosted subagent orchestration through the beta
+Responses client, the unsupported `reasoning.summary` is not requested, and
+response parsing keeps only one copy of the root agent's final answer as
+user-facing text.
 """
 
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -16,7 +17,7 @@ from llm_platform.adapters.openai_adapter import OpenAIAdapter
 from llm_platform.services.conversation import Conversation, Message
 
 MODEL = "gpt-test"
-BETA_HEADER = {"OpenAI-Beta": "responses_multi_agent=v1"}
+BETA_FEATURES = ["responses_multi_agent=v1"]
 
 
 class Answer(BaseModel):
@@ -32,6 +33,11 @@ def make_adapter() -> OpenAIAdapter:
 
     adapter._client = MagicMock()
     adapter._client.responses.create.return_value = fake_response
+    adapter._client.beta.responses.create.return_value = fake_response
+
+    adapter._async_client = MagicMock()
+    adapter._async_client.responses.create = AsyncMock(return_value=fake_response)
+    adapter._async_client.beta.responses.create = AsyncMock(return_value=fake_response)
     return adapter
 
 
@@ -55,12 +61,14 @@ def test_agent_count_enables_multi_agent_payload():
     adapter = make_adapter()
     adapter.request_llm(MODEL, make_conversation(), additional_parameters={"agent_count": 3})
 
-    kwargs = adapter._client.responses.create.call_args.kwargs
-    assert kwargs["extra_body"] == {
-        "multi_agent": {"enabled": True, "max_concurrent_subagents": 3}
+    kwargs = adapter._client.beta.responses.create.call_args.kwargs
+    assert kwargs["multi_agent"] == {
+        "enabled": True,
+        "max_concurrent_subagents": 3,
     }
-    assert kwargs["extra_headers"] == BETA_HEADER
+    assert kwargs["betas"] == BETA_FEATURES
     assert "agent_count" not in kwargs
+    adapter._client.responses.create.assert_not_called()
 
 
 def test_agent_count_accepts_string_values():
@@ -68,8 +76,8 @@ def test_agent_count_accepts_string_values():
     adapter = make_adapter()
     adapter.request_llm(MODEL, make_conversation(), additional_parameters={"agent_count": "5"})
 
-    kwargs = adapter._client.responses.create.call_args.kwargs
-    assert kwargs["extra_body"]["multi_agent"]["max_concurrent_subagents"] == 5
+    kwargs = adapter._client.beta.responses.create.call_args.kwargs
+    assert kwargs["multi_agent"]["max_concurrent_subagents"] == 5
 
 
 @pytest.mark.parametrize("agent_count", [None, 0, "0"])
@@ -79,8 +87,23 @@ def test_multi_agent_off_sends_standard_request(agent_count):
     adapter.request_llm(MODEL, make_conversation(), additional_parameters=additional_parameters)
 
     kwargs = adapter._client.responses.create.call_args.kwargs
-    assert "extra_body" not in kwargs
-    assert "extra_headers" not in kwargs
+    assert "multi_agent" not in kwargs
+    assert "betas" not in kwargs
+    adapter._client.beta.responses.create.assert_not_called()
+
+
+def test_multi_agent_async_uses_beta_responses_client():
+    adapter = make_adapter()
+    asyncio.run(
+        adapter.request_llm_async(
+            MODEL,
+            make_conversation(),
+            additional_parameters={"agent_count": 2},
+        )
+    )
+
+    adapter._async_client.beta.responses.create.assert_awaited_once()
+    adapter._async_client.responses.create.assert_not_awaited()
 
 
 def test_reasoning_summary_suppressed_with_multi_agent():
@@ -91,7 +114,7 @@ def test_reasoning_summary_suppressed_with_multi_agent():
         additional_parameters={"agent_count": 3, "reasoning": {"effort": "high"}},
     )
 
-    kwargs = adapter._client.responses.create.call_args.kwargs
+    kwargs = adapter._client.beta.responses.create.call_args.kwargs
     assert kwargs["reasoning"] == {"effort": "high"}
 
 
@@ -135,6 +158,38 @@ def test_parse_response_keeps_only_root_final_answer():
 
     answer_text, _, _, _, _ = adapter._parse_response(response)
     assert answer_text == "Final answer."
+
+
+def test_parse_response_deduplicates_repeated_root_final_answer():
+    adapter = make_adapter()
+    response = SimpleNamespace(
+        id="resp_1",
+        model=MODEL,
+        usage=None,
+        output=[
+            message_item("Final answer.", agent_name="/root", phase="final_answer"),
+            message_item("Final answer.", agent_name="/root", phase="final_answer"),
+        ],
+    )
+
+    answer_text, _, _, _, _ = adapter._parse_response(response)
+    assert answer_text == "Final answer."
+
+
+def test_parse_response_keeps_distinct_root_final_fragments():
+    adapter = make_adapter()
+    response = SimpleNamespace(
+        id="resp_1",
+        model=MODEL,
+        usage=None,
+        output=[
+            message_item("Part one.", agent_name="/root", phase="final_answer"),
+            message_item("Part two.", agent_name="/root", phase="final_answer"),
+        ],
+    )
+
+    answer_text, _, _, _, _ = adapter._parse_response(response)
+    assert answer_text == "Part one.\nPart two."
 
 
 def test_parse_response_unchanged_for_standard_responses():

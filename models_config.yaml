@@ -204,8 +204,6 @@ models:
         ui: select
         label: Reasoning
         request_key: reasoning.effort
-      reasoning_mode: *param_reasoning_mode
-      agent_count: *param_agent_count
       verbosity:
         type: enum
         options: [low, medium, high]
@@ -213,6 +211,8 @@ models:
         ui: select
         label: Verbosity
         request_key: text.verbosity
+      reasoning_mode: *param_reasoning_mode
+      agent_count: *param_agent_count
     visible: true
 
   - name: gpt-5.6-terra
@@ -242,8 +242,6 @@ models:
         ui: select
         label: Reasoning
         request_key: reasoning.effort
-      reasoning_mode: *param_reasoning_mode
-      agent_count: *param_agent_count
       verbosity:
         type: enum
         options: [low, medium, high]
@@ -251,6 +249,8 @@ models:
         ui: select
         label: Verbosity
         request_key: text.verbosity
+      reasoning_mode: *param_reasoning_mode
+      agent_count: *param_agent_count
     visible: true
 
   - name: gpt-5.6-luna
@@ -280,8 +280,6 @@ models:
         ui: select
         label: Reasoning
         request_key: reasoning.effort
-      reasoning_mode: *param_reasoning_mode
-      agent_count: *param_agent_count
       verbosity:
         type: enum
         options: [low, medium, high]
@@ -289,6 +287,8 @@ models:
         ui: select
         label: Verbosity
         request_key: text.verbosity
+      reasoning_mode: *param_reasoning_mode
+      agent_count: *param_agent_count
     visible: true
 
   - name: gpt-5.5
