@@ -20,7 +20,7 @@
 - [License](#license)
 
 ## Overview
-LLM Platform streamlines application development across large language model providers. It wraps the quirks of each vendor SDK (OpenAI, Anthropic, Google Gemini, DeepSeek, Grok, OpenRouter, Mistral, and more) behind a single Python surface. The platform keeps conversation state, negotiates function calls, normalises multimodal payloads, and exposes thoughtful defaults with escape hatches when direct SDK access is required.
+LLM Platform streamlines application development across large language model providers. It wraps the quirks of each vendor SDK (OpenAI, Anthropic, Google Gemini, Kimi, DeepSeek, Grok, OpenRouter, Mistral, and more) behind a single Python surface. The platform keeps conversation state, negotiates function calls, normalises multimodal payloads, and exposes thoughtful defaults with escape hatches when direct SDK access is required.
 
 Use it to:
 - Prototype and ship LLM-backed product features without committing to a single provider.
@@ -98,6 +98,7 @@ DEEPSEEK_API_KEY=...
 XAI_API_KEY=...
 OPENROUTER_API_KEY=...
 MISTRAL_API_KEY=...
+MOONSHOT_API_KEY=...
 ```
 Only the keys for providers you call are required at runtime.
 

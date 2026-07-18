@@ -22,6 +22,7 @@ ADAPTER_IMPORT_PATHS = {
     "DeepSeekAdapter": "llm_platform.adapters.deepseek_adapter:DeepSeekAdapter",
     "MistralAdapter": "llm_platform.adapters.mistral_adapter:MistralAdapter",
     "ZaiAdapter": "llm_platform.adapters.zai_adapter:ZaiAdapter",
+    "KimiAdapter": "llm_platform.adapters.kimi_adapter:KimiAdapter",
 }
 
 class APIHandler:

@@ -20,6 +20,8 @@ class AdditionalParameters(TypedDict, total=False):
     structured_output: Any  # pydantic model class for schema parsing
     temperature: float  # sampling temperature
     max_tokens: int  # hard cap on response tokens
+    reasoning_effort: str  # provider-native top-level effort (Kimi K3: "max")
+    tool_choice: str  # function selection policy, e.g. "auto", "none", "required"
     reasoning: ReasoningParameters  # reasoning/effort tuning
     text: TextParameters  # text verbosity tuning
     agent_count: int # number of parallel agents (Grok Heavy; OpenAI Multi-agent subagents, 0 = off)
