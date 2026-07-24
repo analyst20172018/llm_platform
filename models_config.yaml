@@ -88,8 +88,8 @@ models:
         label: Reasoning
         request_key: reasoning.effort
 
-  - name: claude-opus-4-8
-    display_name: Claude Opus 4.8 💰
+  - name: claude-opus-5
+    display_name: Claude Opus 5 💰
     adapter: AnthropicAdapter
     adaptive_thinking: true
     pricing:
@@ -117,34 +117,6 @@ models:
         ui: select
         label: Reasoning
         request_key: reasoning.effort
-
-  - name: claude-haiku-4-5
-    display_name: Claude Haiku 4.5
-    adapter: AnthropicAdapter
-    pricing:
-      input: 1 # USD/1M tokens
-      output: 5 # USD/1M tokens
-    context_window: 200_000
-    inputs:
-      - image
-      - text
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_tokens
-        default: 64000
-      web_search: *param_web_search
-      citations_enabled: *param_citations_enabled
-      function_calling: *param_function_calling
-      reasoning_effort:
-        type: enum
-        options: [none, low, medium, high]
-        default: none
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
-    visible: false
 
   - name: claude-fable-5
     display_name: Claude Fable 5 💰💰💰
@@ -291,78 +263,6 @@ models:
       agent_count: *param_agent_count
     visible: true
 
-  - name: gpt-5.5
-    display_name: GPT-5.5
-    adapter: OpenAIAdapter
-    pricing:
-      input: 5 # USD/1M tokens
-      output: 30 # USD/1M tokens
-    context_window: 1_050_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_output_tokens
-        default: 128000
-      web_search: *param_web_search
-      code_execution: *param_code_execution
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      reasoning_effort:
-        type: enum
-        options: [none, low, medium, high, xhigh]
-        default: none
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
-      verbosity:
-        type: enum
-        options: [low, medium, high]
-        default: low
-        ui: select
-        label: Verbosity
-        request_key: text.verbosity
-    visible: true
-
-  - name: gpt-5.4-mini
-    display_name: GPT-5.4 mini
-    adapter: OpenAIAdapter
-    pricing:
-      input: 0.75 # USD/1M tokens
-      output: 4.5 # USD/1M tokens
-    context_window: 400_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_output_tokens
-        default: 128000
-      web_search: *param_web_search
-      code_execution: *param_code_execution
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      reasoning_effort:
-        type: enum
-        options: [none, low, medium, high, xhigh]
-        default: low
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
-      verbosity:
-        type: enum
-        options: [low, medium, high]
-        default: low
-        ui: select
-        label: Verbosity
-        request_key: text.verbosity
-    visible: false
-
 
   - name: gemini-3.1-pro-preview
     display_name: Gemini 3.1 Pro 👍
@@ -399,7 +299,7 @@ models:
     visible: true
 
   - name: gemini-3.6-flash
-    display_name: Gemini 3.5 Flash
+    display_name: Gemini 3.6 Flash
     adapter: GoogleAdapter
     uses_thinking_level: true
     pricing:
@@ -424,7 +324,7 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [minimal, low, medium, high]
+        options: [low, high]
         default: minimal
         ui: select
         label: Reasoning
@@ -458,7 +358,7 @@ models:
       temperature: *param_temperature_fixed_1
       reasoning_effort:
         type: enum
-        options: [minimal, low, medium, high]
+        options: [low, high]
         default: low
         ui: select
         label: Reasoning
@@ -542,35 +442,6 @@ models:
       input: 2 # USD/1M tokens
       output: 6 # USD/1M tokens
     context_window: 1_000_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_tokens
-        default: 64000
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      web_search: *param_web_search
-      code_execution: *param_code_execution
-      reasoning_effort:
-        type: enum
-        options: [none, low, medium, high]
-        default: low
-        ui: select
-        label: Reasoning
-        request_key: reasoning.effort
-    visible: true
-
-  - name: grok-build-0.1
-    display_name: Grok Build 0.1
-    adapter: GrokAdapter
-    pricing:
-      input: 1 # USD/1M tokens
-      output: 2 # USD/1M tokens
-    context_window: 256_000
     inputs:
       - text
       - image
