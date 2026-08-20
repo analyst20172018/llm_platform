@@ -1,7 +1,7 @@
 import os
 from typing import Any, Callable, Dict, List
 
-from llm_platform.services.conversation import Conversation, Message
+from llm_platform.services.conversation import Conversation, Message, ThinkingResponse
 from llm_platform.services.files import (
     AudioFile,
     ExcelDocumentFile,
@@ -148,6 +148,26 @@ class OpenAICompatibleAdapter(AdapterBase):
 
         return request_params
 
+    def _message_from_response(self, model: str, response) -> Message:
+        """Build the assistant message, capturing reasoning when the provider returns it.
+
+        Reasoning models on OpenAI-compatible endpoints (e.g. DeepSeek) return the
+        chain of thought in ``reasoning_content``, alongside ``content``.
+        """
+        assistant_message = response.choices[0].message
+        reasoning_content = getattr(assistant_message, "reasoning_content", None)
+        thinking_responses = (
+            [ThinkingResponse(content=reasoning_content, id=getattr(response, "id", None))]
+            if reasoning_content
+            else []
+        )
+        return Message(
+            role="assistant",
+            content=assistant_message.content,
+            thinking_responses=thinking_responses,
+            usage=self._build_usage(getattr(response, "usage", None), model),
+        )
+
     def request_llm(
         self,
         model: str,
@@ -172,8 +192,7 @@ class OpenAICompatibleAdapter(AdapterBase):
             **request_params,
         )
 
-        usage = self._build_usage(getattr(response, "usage", None), model)
-        message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
+        message = self._message_from_response(model, response)
         the_conversation.messages.append(message)
         return message
 
@@ -202,7 +221,6 @@ class OpenAICompatibleAdapter(AdapterBase):
             **request_params,
         )
 
-        usage = self._build_usage(getattr(response, "usage", None), model)
-        message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
+        message = self._message_from_response(model, response)
         the_conversation.messages.append(message)
         return message

@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-07-18
+Version: 2026-08-13
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -202,8 +202,14 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Request parameters (`temperature`, `max_tokens`, passthrough keys, filtered by `MISTRAL_RESERVED_KEYS`) are applied on both the plain-chat and function-calling paths
 - `DeepSeekAdapter`, `OpenRouterAdapter`, `ZaiAdapter`
   - Thin subclasses of `OpenAICompatibleAdapter`. `DeepSeekAdapter` / `OpenRouterAdapter` declare only `BASE_URL` / `ENV_VAR` and use the OpenAI client against the provider base URL; `ZaiAdapter` (GLM models) additionally overrides `_build_client` to use the official `zai-sdk` `ZaiClient`, which exposes the same OpenAI-compatible `chat.completions.create` surface. Temperature suppression is driven by the per-model `suppress_temperature` flag in the base rather than a name-based override
-  - Shared OpenAI-compatible chat path: text/image/audio/document conversion, parameter marshalling, and usage extraction live in the base. Tool-call history is serialized in Chat Completions shape (`function_call_to_openai_chat` / `function_response_to_openai_chat`): tool calls nested under `tool_calls[].function` on the assistant message, tool results sent as standalone `role: "tool"` messages
-  - `DeepSeekAdapter` / `OpenRouterAdapter` do not implement tool calling: they inherit the uniform `AdapterBase.request_llm_with_functions` that raises `NotImplementedError`
+  - Shared OpenAI-compatible chat path: text/image/audio/document conversion, parameter marshalling, response→`Message` construction (`_message_from_response`), and usage extraction live in the base. A provider that returns `reasoning_content` on the assistant message has it captured as a `ThinkingResponse` (used by DeepSeek). Tool-call history is serialized in Chat Completions shape (`function_call_to_openai_chat` / `function_response_to_openai_chat`): tool calls nested under `tool_calls[].function` on the assistant message, tool results sent as standalone `role: "tool"` messages
+  - `DeepSeekAdapter` adds DeepSeek V4 thinking-mode support (`deepseek-v4-flash` / `deepseek-v4-pro`, both 1M context):
+    - Two YAML parameters drive it — `thinking_mode` (enum `enabled`/`disabled`, `request_key: thinking.type`, matching the API default `enabled`) and `reasoning_effort` (enum `low`/`high`/`max`, default `high`). Both are normalizer-mapped; only the `extra_body` relocation below is adapter code
+    - `reasoning_effort` is a regular OpenAI SDK argument and is forwarded as-is. The `thinking` object is *not* part of the SDK's `chat.completions.create` signature, so `_build_request_params` moves it into `extra_body` (as DeepSeek's own SDK guidance prescribes)
+    - Thinking mode ignores `temperature`, `top_p`, `presence_penalty`, and `frequency_penalty` (the API accepts them silently but they have no effect), so the adapter drops them whenever thinking is not disabled
+    - The chain of thought comes back in `reasoning_content` and is captured as a `ThinkingResponse` by the shared base
+    - Covered by `tests/test_deepseek_adapter.py`
+  - `DeepSeekAdapter` / `OpenRouterAdapter` do not implement tool calling: they inherit the uniform `AdapterBase.request_llm_with_functions` that raises `NotImplementedError`. Note for a future DeepSeek tool loop: with `tools` present, `reasoning_content` must be replayed on every subsequent request or the API returns 400
   - `OpenAICompatibleAdapter` provides a native async path: `request_llm_async` mirrors the sync chat flow on a lazily constructed `AsyncOpenAI` client (`_build_async_client` / `async_client`), inherited as-is by `DeepSeekAdapter` and `OpenRouterAdapter`. `ZaiAdapter` explicitly pins `request_llm_async` back to the thread-offloaded `AdapterBase` default: the base's async path is backed by `AsyncOpenAI` (not the official `ZaiClient`) and has no tool calling, so inheriting it would regress Z.AI's async function-calling support
   - `ZaiAdapter` adds tool calling and web search on top of the shared base:
     - **Function calling**: `request_llm` routes to a recursive `request_llm_with_functions` loop (request → execute local `BaseTool`/callable tools → append `FunctionCall`/`FunctionResponse` records → re-ask) until the model stops emitting `tool_calls`. Function tools are emitted as `{"type": "function", "function": {...}}` via `_convert_function_to_tool` (reusing `BaseTool.to_params(provider="openai")` or `_callable_to_json_schema`)

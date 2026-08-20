@@ -11,6 +11,10 @@ class TextParameters(TypedDict, total=False):
     verbosity: str  # e.g. "low", "medium", "high"
 
 
+class ThinkingParameters(TypedDict, total=False):
+    type: str  # DeepSeek thinking mode: "enabled" or "disabled"
+
+
 class AdditionalParameters(TypedDict, total=False):
     response_modalities: List[str]  # e.g. ["text", "image", "audio"]
     web_search: bool  # allow integrated web search when supported
@@ -20,8 +24,10 @@ class AdditionalParameters(TypedDict, total=False):
     structured_output: Any  # pydantic model class for schema parsing
     temperature: float  # sampling temperature
     max_tokens: int  # hard cap on response tokens
-    reasoning_effort: str  # provider-native top-level effort (Kimi K3: "max")
+    reasoning_effort: str  # provider-native top-level effort (Kimi K3: "max"; DeepSeek: "low"/"high"/"max")
+    thinking_mode: str  # DeepSeek thinking mode toggle: "enabled" or "disabled"
     tool_choice: str  # function selection policy, e.g. "auto", "none", "required"
     reasoning: ReasoningParameters  # reasoning/effort tuning
     text: TextParameters  # text verbosity tuning
+    thinking: ThinkingParameters  # DeepSeek thinking mode (mapped from thinking_mode)
     agent_count: int # number of parallel agents (Grok Heavy; OpenAI Multi-agent subagents, 0 = off)
