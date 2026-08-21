@@ -17,6 +17,7 @@ ADAPTER_IMPORT_PATHS = {
     "OpenAIAdapter": "llm_platform.adapters.openai_adapter:OpenAIAdapter",
     "AnthropicAdapter": "llm_platform.adapters.anthropic_adapter:AnthropicAdapter",
     "OpenRouterAdapter": "llm_platform.adapters.openrouter_adapter:OpenRouterAdapter",
+    "OrcarouterAdapter": "llm_platform.adapters.orcarouter_adapter:OrcarouterAdapter",
     "GoogleAdapter": "llm_platform.adapters.google_adapter:GoogleAdapter",
     "GrokAdapter": "llm_platform.adapters.grok_adapter:GrokAdapter",
     "DeepSeekAdapter": "llm_platform.adapters.deepseek_adapter:DeepSeekAdapter",

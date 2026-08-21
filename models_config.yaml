@@ -577,13 +577,13 @@ models:
     visible: true
 
 
-  - name: qwen/qwen3.8-27b
-    display_name: Qwen3.8 27B
-    adapter: OpenRouterAdapter
+  - name: obsidian/Qwen3.8-27B
+    display_name: Qwen3.8 27B Uncensored
+    adapter: OrcarouterAdapter
     pricing:
       input: 0.4 # USD/1M tokens
-      output: 3 # USD/1M tokens
-    context_window: 262_000
+      output: 4.21 # USD/1M tokens
+    context_window: 262_144
     inputs:
       - text
       - image
