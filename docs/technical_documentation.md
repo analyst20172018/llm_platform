@@ -28,6 +28,7 @@ Primary modules:
 - `core/parameter_normalizer.py`: `ParameterNormalizer` — normalizes `additional_parameters` against a model's YAML schema (extracted from the facade)
 - `adapters/adapter_base.py`: `AdapterBase` contract plus provider-agnostic helpers shared by the adapters (parameter merge, usage extraction, callable→JSON-schema, tool-name resolution `_tool_name`, content-block formatting, PDF/tool-round constants). `load_dotenv()` runs once at module import (not per adapter construction)
 - `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter, OrcaRouter, Z.AI)
+- `adapters/wiro_ai_adapter.py`: `WiroAIAdapter` for WiroAI's asynchronous Run/Task HTTP API
 - `adapters/*.py`: provider-specific translation and API calls
 - `services/conversation.py`: provider-agnostic conversation/message/function-call domain model + platform-internal persistence (provider wire serialization lives in `adapters/serializers.py`)
 - `services/files.py`: file abstractions and format conversion/extraction
@@ -62,6 +63,7 @@ Registered adapter classes include:
 - `DeepSeekAdapter`
 - `OpenRouterAdapter`
 - `OrcarouterAdapter`
+- `WiroAIAdapter`
 - `MistralAdapter`
 - `ZaiAdapter`
 - `KimiAdapter`
@@ -127,9 +129,9 @@ The byte-backed subclasses differ only in their `text` extraction property; the 
 File: `helpers/model_config.py`, config in `models_config.yaml`
 
 ### 6.1 Current catalog summary
-- Total models: 23
-- Visible models: 18
-- Adapter families: 9
+- Total models: 20
+- Visible models: 17
+- Adapter families: 10
 
 Models are grouped by `adapter`, with metadata:
 - `name`, `display_name`
@@ -217,6 +219,14 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
     - **Function calling**: `request_llm` routes to a recursive `request_llm_with_functions` loop (request → execute local `BaseTool`/callable tools → append `FunctionCall`/`FunctionResponse` records → re-ask) until the model stops emitting `tool_calls`. Function tools are emitted as `{"type": "function", "function": {...}}` via `_convert_function_to_tool` (reusing `BaseTool.to_params(provider="openai")` or `_callable_to_json_schema`)
     - **Web search**: Z.AI's built-in server-side `web_search` tool, enabled by the `web_search` additional parameter. `_build_request_params` is overridden to attach the built-in tool (`{"type": "web_search", "web_search": {"enable": True, "search_engine": "search-prime", "search_result": True}}`) so both the plain-chat and function-calling paths pick it up. No static `search_query` is sent — GLM derives queries from the conversation. Built-in and function tools are merged on the same request
 
+- `WiroAIAdapter`
+  - Uses WiroAI's JSON HTTP API at `https://api.wiro.ai/v1`: it submits `POST /Run/{owner}/{model}` once, then polls the returned task through `POST /Task/Detail` with exponential backoff until a terminal status. The adapter never resubmits a generation while polling.
+  - Supports API-key-only projects through `WIRO_API_KEY` and signature-auth projects when `WIRO_API_SECRET` is also set. Signature headers use WiroAI's documented HMAC-SHA256 scheme. `WIRO_API_BASE_URL` optionally overrides the endpoint.
+  - Registers the text model `Qwen3.8-27B-Uncensored`, routed to WiroAI's live `Qwen/Qwen3.8-27B-Uncensored` slug. Provider route metadata lives in `models_config.yaml` (`wiro_owner` / `wiro_model`) so additional WiroAI models can reuse the adapter.
+  - Sends the system prompt through WiroAI's `system_prompt` parameter. The platform-owned conversation is serialized into each `prompt`, avoiding hidden provider session state when a conversation is cleared, restored, or switched between adapters. Document attachments are included as extracted text; media files are rejected explicitly because this catalog entry is text-only.
+  - Parses the final raw LLM output into answer text and separate `ThinkingResponse` records. WiroAI does not report token counts, so token usage fields are zero; the task's actual `totalcost` is preserved as `usage.costs`.
+  - Uses the `AdapterBase` thread-offloaded async fallback and does not support tool calling.
+
 - `KimiAdapter`
   - Uses Moonshot AI's OpenAI-compatible Chat Completions endpoint at `https://api.moonshot.ai/v1` through the existing `openai` dependency and `MOONSHOT_API_KEY`
   - Registers `kimi-k3` with its 1,048,576-token context window, text/image/video input, cached/uncached input pricing, and output pricing
@@ -229,9 +239,9 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
 ### 7.2 Async support
 `AdapterBase` provides a default `request_llm_async` that runs the adapter's synchronous `request_llm` off the event loop via `asyncio.to_thread`. As a result `APIHandler.request_async` / `request_llm_async` work for every adapter rather than only OpenAI.
 
-`OpenAIAdapter` overrides the default with a native async implementation (`request_llm_async`, `request_llm_with_functions_async`) backed by the async OpenAI client. `AnthropicAdapter` likewise overrides it with a native implementation backed by `anthropic.AsyncAnthropic` (covering the simple, streaming, and tool-use paths, including async token counting). `GoogleAdapter` overrides it with a native implementation on the google-genai async surface `client.aio` (covering the standard Interactions chat/tool loop, Deep Research, and Antigravity paths, with async polling). `OpenAICompatibleAdapter` overrides it with a native `AsyncOpenAI`-backed chat path, giving `DeepSeekAdapter`, `OpenRouterAdapter`, and `OrcarouterAdapter` native async for free. The remaining adapters (Grok, Mistral, and Z.AI — which deliberately pins itself back to the default, see §7.1) use the thread-offloaded fallback.
+`OpenAIAdapter` overrides the default with a native async implementation (`request_llm_async`, `request_llm_with_functions_async`) backed by the async OpenAI client. `AnthropicAdapter` likewise overrides it with a native implementation backed by `anthropic.AsyncAnthropic` (covering the simple, streaming, and tool-use paths, including async token counting). `GoogleAdapter` overrides it with a native implementation on the google-genai async surface `client.aio` (covering the standard Interactions chat/tool loop, Deep Research, and Antigravity paths, with async polling). `OpenAICompatibleAdapter` overrides it with a native `AsyncOpenAI`-backed chat path, giving `DeepSeekAdapter`, `OpenRouterAdapter`, and `OrcarouterAdapter` native async for free. The remaining adapters (Grok, Mistral, WiroAI, and Z.AI — which deliberately pins itself back to the default, see §7.1) use the thread-offloaded fallback.
 
-`KimiAdapter` also uses a native `AsyncOpenAI` client and adds an async tool loop that awaits coroutine tools directly.
+`KimiAdapter` also uses a native `AsyncOpenAI` client and adds an async tool loop that awaits coroutine tools directly. `WiroAIAdapter` uses the thread-offloaded fallback because its implementation is backed by synchronous `requests` polling.
 
 ## 8. Multimodal behavior by adapter (implemented)
 - OpenAI: text, image, audio, document inputs
@@ -242,6 +252,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
 - DeepSeek/OpenRouter/OrcaRouter: text + image/document conversion (OpenAI-compatible payload)
 - Z.AI (GLM-5.2): text (OpenAI-compatible payload via `zai-sdk` `ZaiClient`); supports function calling and the built-in `web_search` tool
 - Kimi (Kimi K3): text/image/video input (base64 data URLs for local visual media), extracted document text, structured output, reasoning preservation, and custom function calling
+- WiroAI (Qwen3.8-27B-Uncensored): text input plus extracted document text; structured answer/thinking output; no media or tool calling
 
 ## 9. Tools subsystem
 Files: `tools/base.py` and concrete tools in `tools/*.py`
@@ -279,6 +290,9 @@ Current code expects:
 - `DEEPSEEK_API_KEY`
 - `OPENROUTER_API_KEY`
 - `ORCAROUTER_API_KEY`
+- `WIRO_API_KEY`
+- `WIRO_API_SECRET` (optional; signature-auth projects)
+- `WIRO_API_BASE_URL` (optional endpoint override)
 - `MISTRAL_API_KEY`
 - `ZAI_API_KEY`
 - `MOONSHOT_API_KEY`
@@ -298,7 +312,7 @@ From `requirements.txt`:
 - Some adapter methods remain `NotImplemented` and will raise directly.
 
 ## 13. Known implementation gaps and inconsistencies
-1. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral/Z.AI/Kimi, not in DeepSeek/OpenRouter/OrcaRouter).
+1. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral/Z.AI/Kimi, not in DeepSeek/OpenRouter/OrcaRouter/WiroAI).
 2. Mutable default arguments still exist in the `Message` initializer (`[]` defaults); the adapter and `APIHandler` method signatures that previously shared this pattern have been migrated to `None` defaults.
 3. The `README.md` environment-variable list now matches the adapter code (`GOOGLE_GEMINI_API_KEY`, `XAI_API_KEY`).
 
@@ -360,6 +374,7 @@ From `requirements.txt`:
 - `adapters/adapter_base.py`: `AdapterBase` contract + shared adapter helpers
 - `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base (DeepSeek, OpenRouter, OrcaRouter, Z.AI, Kimi)
 - `adapters/orcarouter_adapter.py`: `OrcarouterAdapter` — OrcaRouter models through the OpenAI-compatible endpoint using `ORCAROUTER_API_KEY`
+- `adapters/wiro_ai_adapter.py`: `WiroAIAdapter` — WiroAI Run/Task submission, polling, authentication, and structured LLM output parsing
 - `adapters/zai_adapter.py`: `ZaiAdapter` — Z.AI GLM models via the official `zai-sdk` `ZaiClient` (OpenAI-compatible); adds function calling (recursive tool loop) and the built-in `web_search` tool
 - `adapters/kimi_adapter.py`: `KimiAdapter` — Kimi models through Moonshot AI's OpenAI-compatible endpoint; adds K3 parameter rules, reasoning preservation, image/video input, structured output, and sync/async function calling
 - `adapters/*.py`: provider integrations

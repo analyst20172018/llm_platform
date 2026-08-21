@@ -23,7 +23,13 @@ class AdditionalParameters(TypedDict, total=False):
     citations_enabled: bool  # request citations for supported providers
     structured_output: Any  # pydantic model class for schema parsing
     temperature: float  # sampling temperature
+    top_p: float  # nucleus-sampling probability threshold
+    top_k: int  # sample from the K most likely tokens
+    repetition_penalty: float  # discourage repeated tokens or phrases
+    length_penalty: float  # provider-specific response-length preference
     max_tokens: int  # hard cap on response tokens
+    min_tokens: int  # provider-specific minimum response-token count
+    thinking_enabled: bool  # enable WiroAI thinking output
     reasoning_effort: str  # provider-native top-level effort (Kimi K3: "max"; DeepSeek: "low"/"high"/"max")
     thinking_mode: str  # DeepSeek thinking mode toggle: "enabled" or "disabled"
     tool_choice: str  # function selection policy, e.g. "auto", "none", "required"
