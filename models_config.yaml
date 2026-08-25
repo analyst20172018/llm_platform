@@ -166,8 +166,8 @@ models:
     display_name: GPT-5.6 Sol 💰👍
     adapter: OpenAIAdapter
     pricing:
-      input: 5 # USD/1M tokens
-      output: 30 # USD/1M tokens
+      input: 4 # USD/1M tokens
+      output: 20 # USD/1M tokens
     context_window: 1_050_000
     inputs:
       - text
@@ -517,6 +517,53 @@ models:
       thinking_mode: *param_thinking_mode
       reasoning_effort: *param_reasoning_effort_deepseek
 
+  - name: deepseek-v4-flash-vision-exp
+    display_name: DeepSeek-V4-Flash-Vision
+    adapter: DeepSeekAdapter
+    pricing:
+      input: 0.44 # USD/1M tokens
+      output: 1.32 # USD/1M tokens
+    context_window: 1_000_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 384_000
+      thinking_mode: *param_thinking_mode
+      reasoning_effort: *param_reasoning_effort_deepseek
+    visible: true
+
+
+  - name: stealth/ox-alpha
+    display_name: Ox Alpha
+    adapter: OpenRouterAdapter
+    pricing:
+      input: 0 # USD/1M tokens
+      output: 0 # USD/1M tokens
+    context_window: 1_000_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_enabled: # OpenRouter unified reasoning toggle -> {"reasoning": {"enabled": ...}}
+        type: boolean
+        default: true
+        ui: toggle
+        label: Reasoning
+        request_key: reasoning.enabled
+      max_tokens:
+        <<: *param_max_tokens
+        default: 131_072
+    visible: true
+
 
   - name: glm-5.3
     display_name: GLM 5.3
@@ -574,53 +621,6 @@ models:
         ui: select
         label: Tool Choice
         send_default: false
-    visible: true
-
-
-  - name: Qwen3.8-27B-Uncensored
-    display_name: Qwen3.8 27B Uncensored
-    adapter: WiroAIAdapter
-    wiro_owner: Qwen
-    wiro_model: Qwen3.8-27B-Uncensored
-    context_window: 262_144
-    inputs:
-      - text
-    outputs:
-      - text
-    additional_parameters:
-      thinking_enabled:
-        type: boolean
-        default: true
-        ui: toggle
-        label: Thinking
-        request_key: enableThinking
-      temperature:
-        type: float
-        default: 0.7
-        ui: input
-      top_p:
-        type: float
-        default: 0.95
-        ui: input
-      top_k:
-        type: integer
-        default: 0
-        ui: input
-      repetition_penalty:
-        type: float
-        default: 1.0
-        ui: input
-      length_penalty:
-        type: float
-        default: 1.0
-        ui: input
-      min_tokens:
-        type: integer
-        default: 0
-        ui: input
-      max_tokens:
-        <<: *param_max_tokens
-        default: 0
     visible: true
 
 

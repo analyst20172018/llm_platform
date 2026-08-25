@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-08-20
+Version: 2026-08-25
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -213,6 +213,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
     - The chain of thought comes back in `reasoning_content` and is captured as a `ThinkingResponse` by the shared base
     - Covered by `tests/test_deepseek_adapter.py`
   - `DeepSeekAdapter` / `OpenRouterAdapter` / `OrcarouterAdapter` do not implement tool calling: they inherit the uniform `AdapterBase.request_llm_with_functions` that raises `NotImplementedError`. Note for a future DeepSeek tool loop: with `tools` present, `reasoning_content` must be replayed on every subsequent request or the API returns 400
+  - `OpenRouterAdapter` sends the unified OpenRouter `reasoning` object through the OpenAI SDK's `extra_body`. The `stealth/ox-alpha` model enables reasoning by default with `{enabled: true}` through its YAML parameter schema.
   - `OpenAICompatibleAdapter` provides a native async path: `request_llm_async` mirrors the sync chat flow on a lazily constructed `AsyncOpenAI` client (`_build_async_client` / `async_client`), inherited as-is by `DeepSeekAdapter`, `OpenRouterAdapter`, and `OrcarouterAdapter`. `ZaiAdapter` explicitly pins `request_llm_async` back to the thread-offloaded `AdapterBase` default: the base's async path is backed by `AsyncOpenAI` (not the official `ZaiClient`) and has no tool calling, so inheriting it would regress Z.AI's async function-calling support
   - `OrcarouterAdapter` targets `https://api.orcarouter.ai/v1` with `ORCAROUTER_API_KEY`. The registered `obsidian/Qwen3.8-27B` model exposes text/image chat through the shared platform adapter; OrcaRouter's catalog also advertises upstream video and tool capabilities that this thin adapter does not yet implement
   - `ZaiAdapter` adds tool calling and web search on top of the shared base:
