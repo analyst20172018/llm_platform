@@ -538,33 +538,6 @@ models:
     visible: true
 
 
-  - name: stealth/ox-alpha
-    display_name: Ox Alpha
-    adapter: OpenRouterAdapter
-    pricing:
-      input: 0 # USD/1M tokens
-      output: 0 # USD/1M tokens
-    context_window: 1_000_000
-    inputs:
-      - text
-      - image
-    outputs:
-      - text
-    additional_parameters:
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      reasoning_enabled: # OpenRouter unified reasoning toggle -> {"reasoning": {"enabled": ...}}
-        type: boolean
-        default: true
-        ui: toggle
-        label: Reasoning
-        request_key: reasoning.enabled
-      max_tokens:
-        <<: *param_max_tokens
-        default: 131_072
-    visible: true
-
-
   - name: glm-5.3
     display_name: GLM 5.3
     adapter: ZaiAdapter
@@ -580,6 +553,38 @@ models:
       max_tokens:
         <<: *param_max_tokens
         default: 128000
+      function_calling: *param_function_calling
+      web_search: *param_web_search
+    visible: true
+
+  - name: glm-5.3-flash
+    display_name: GLM-5.3-Flash
+    adapter: ZaiAdapter
+    pricing:
+      input: 0.075 # USD/1M tokens
+      output: 0.25 # USD/1M tokens
+    context_window: 1_000_000
+    inputs:
+      - text
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 128000
+      # GLM-5.3-Flash uses forced thinking; the API rejects "disabled".
+      thinking_mode:
+        type: enum
+        options: [enabled]
+        default: enabled
+        ui: hidden
+        request_key: thinking.type
+      reasoning_effort:
+        type: enum
+        options: [low, high, max]
+        default: max
+        ui: select
+        label: Reasoning
       function_calling: *param_function_calling
       web_search: *param_web_search
     visible: true
