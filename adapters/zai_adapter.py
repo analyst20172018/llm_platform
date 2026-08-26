@@ -15,14 +15,20 @@ class ZaiAdapter(OpenAICompatibleAdapter):
     """Z.AI adapter (GLM models) built on the official ``zai-sdk`` ``ZaiClient``.
 
     ``ZaiClient`` exposes the same OpenAI-compatible ``chat.completions.create``
-    surface as the shared base, so plain text chat is inherited unchanged. On
-    top of it this adapter adds the two tool features Z.AI exposes through the
-    standard Chat Completions ``tools`` array:
+    surface as the shared base. This adapter reuses that common serialization
+    and adds Z.AI's provider-specific thinking, tool, and structured-output
+    behavior:
 
     * **Function calling** — a recursive tool-use loop (request -> execute local
       tools -> re-ask) mirroring the other tool-capable adapters.
     * **Web search** — Z.AI's built-in server-side ``web_search`` tool, enabled
       via the ``web_search`` additional parameter.
+    * **Preserved thinking** — prior ``reasoning_content`` is replayed exactly
+      so interleaved thinking remains coherent across tool rounds and turns.
+    * **Structured output** — Z.AI JSON mode is enabled with
+      ``response_format={"type": "json_object"}``; Pydantic/JSON schemas are
+      added to the system instruction because the API does not accept a schema
+      inside ``response_format``.
 
     Both tool kinds coexist: the built-in web-search tool is merged with any
     declared function tools on the same request.
@@ -70,7 +76,87 @@ class ZaiAdapter(OpenAICompatibleAdapter):
         builtin_tools = self._build_builtin_tools(additional_parameters)
         if builtin_tools:
             request_params["tools"] = builtin_tools
+
+        if additional_parameters.get("structured_output"):
+            request_params["response_format"] = {"type": "json_object"}
+
         return request_params
+
+    @staticmethod
+    def _structured_output_schema(structured_output: Any) -> Dict[str, Any] | None:
+        """Return the requested JSON Schema, if the caller supplied one."""
+        if structured_output is True:
+            return None
+
+        if hasattr(structured_output, "model_json_schema"):
+            return structured_output.model_json_schema()
+
+        if not isinstance(structured_output, dict):
+            raise TypeError(
+                "structured_output must be True, a Pydantic model class, "
+                "or a JSON Schema dict"
+            )
+
+        if structured_output.get("type") == "json_object":
+            return None
+        if structured_output.get("type") == "json_schema":
+            json_schema = structured_output.get("json_schema", {})
+            schema = json_schema.get("schema") if isinstance(json_schema, dict) else None
+            if not isinstance(schema, dict):
+                raise TypeError("structured_output json_schema must contain a schema dict")
+            return schema
+
+        return structured_output
+
+    def convert_conversation_history_to_adapter_format(
+        self,
+        the_conversation: Conversation,
+        model: str,
+        **kwargs,
+    ):
+        """Serialize history and preserve Z.AI reasoning blocks verbatim."""
+        history, history_kwargs = super().convert_conversation_history_to_adapter_format(
+            the_conversation,
+            model,
+            **kwargs,
+        )
+
+        history_index = 1  # The shared serializer puts the system message first.
+        for message in the_conversation.messages:
+            if message.role == "assistant" and message.thinking_responses:
+                history[history_index]["reasoning_content"] = "".join(
+                    response.content for response in message.thinking_responses
+                )
+            history_index += 1 + len(message.function_responses)
+
+        return history, history_kwargs
+
+    def _prepare_history(
+        self,
+        the_conversation: Conversation,
+        model: str,
+        structured_output: Any = None,
+    ):
+        history, history_kwargs = self.convert_conversation_history_to_adapter_format(
+            the_conversation,
+            model,
+        )
+        if not structured_output:
+            return history, history_kwargs
+
+        schema = self._structured_output_schema(structured_output)
+        instruction = "Return only a valid JSON object."
+        if schema is not None:
+            instruction += (
+                " The JSON object must match this JSON Schema:\n"
+                f"{json.dumps(schema, ensure_ascii=False)}"
+            )
+
+        system_content = history[0].get("content") or ""
+        history[0]["content"] = (
+            f"{system_content}\n\n{instruction}" if system_content else instruction
+        )
+        return history, history_kwargs
 
     def _convert_function_to_tool(self, func: BaseTool | Callable) -> Dict:
         """Convert a ``BaseTool`` or plain callable into a Chat Completions function tool."""
@@ -133,12 +219,22 @@ class ZaiAdapter(OpenAICompatibleAdapter):
                 additional_parameters=additional_parameters,
             )
 
-        # Plain chat (web search, if requested, is injected via _build_request_params).
-        return super().request_llm(
-            model=model,
-            the_conversation=the_conversation,
-            additional_parameters=additional_parameters,
+        request_params = self._build_request_params(model, additional_parameters)
+        history, history_kwargs = self._prepare_history(
+            the_conversation,
+            model,
+            additional_parameters.get("structured_output"),
         )
+        request_params.update(history_kwargs)
+
+        response = self.client.chat.completions.create(
+            model=model,
+            messages=history,
+            **request_params,
+        )
+        message = self._message_from_response(model, response)
+        the_conversation.messages.append(message)
+        return message
 
     def request_llm_with_functions(
         self,
@@ -164,7 +260,11 @@ class ZaiAdapter(OpenAICompatibleAdapter):
         request_params["tools"] = request_params.get("tools", []) + tools
         request_params["tool_choice"] = "auto"
 
-        history, history_kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model)
+        history, history_kwargs = self._prepare_history(
+            the_conversation,
+            model,
+            additional_parameters.get("structured_output"),
+        )
         request_params.update(history_kwargs)
 
         response = self.client.chat.completions.create(
@@ -172,12 +272,11 @@ class ZaiAdapter(OpenAICompatibleAdapter):
             messages=history,
             **request_params,
         )
-        usage = self._build_usage(getattr(response, "usage", None), model)
         assistant_message = response.choices[0].message
 
         # No tool calls -> final answer; record it and finish.
         if not getattr(assistant_message, "tool_calls", None):
-            message = Message(role="assistant", content=assistant_message.content, usage=usage)
+            message = self._message_from_response(model, response)
             the_conversation.messages.append(message)
             return message
 
@@ -188,15 +287,11 @@ class ZaiAdapter(OpenAICompatibleAdapter):
             function_calls, functions, tools, tool_output_callback
         )
 
-        the_conversation.messages.append(
-            Message(
-                role="assistant",
-                content=assistant_message.content or "",
-                function_calls=function_calls,
-                function_responses=function_responses,
-                usage=usage,
-            )
-        )
+        message = self._message_from_response(model, response)
+        message.content = assistant_message.content or ""
+        message.function_calls = function_calls
+        message.function_responses = function_responses
+        the_conversation.messages.append(message)
 
         # Re-ask with the tool results appended until the model stops calling tools.
         return self.request_llm_with_functions(

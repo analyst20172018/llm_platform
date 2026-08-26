@@ -13,7 +13,8 @@ class TextParameters(TypedDict, total=False):
 
 
 class ThinkingParameters(TypedDict, total=False):
-    type: str  # DeepSeek thinking mode: "enabled" or "disabled"
+    type: str  # provider thinking mode: "enabled" or "disabled"
+    clear_thinking: bool  # Z.AI: omit prior reasoning when true
 
 
 class AdditionalParameters(TypedDict, total=False):
@@ -33,6 +34,7 @@ class AdditionalParameters(TypedDict, total=False):
     thinking_enabled: bool  # enable WiroAI thinking output
     reasoning_effort: str  # provider-native top-level effort (Kimi K3: "max"; DeepSeek: "low"/"high"/"max")
     thinking_mode: str  # DeepSeek thinking mode toggle: "enabled" or "disabled"
+    clear_thinking: bool  # Z.AI preserved-thinking control
     tool_choice: str  # function selection policy, e.g. "auto", "none", "required"
     reasoning: ReasoningParameters  # reasoning/effort tuning
     text: TextParameters  # text verbosity tuning

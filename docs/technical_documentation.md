@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-08-25
+Version: 2026-08-26
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -216,9 +216,10 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - `OpenRouterAdapter` sends the unified OpenRouter `reasoning` object through the OpenAI SDK's `extra_body`. The `stealth/ox-alpha` model enables reasoning by default with `{enabled: true}` through its YAML parameter schema.
   - `OpenAICompatibleAdapter` provides a native async path: `request_llm_async` mirrors the sync chat flow on a lazily constructed `AsyncOpenAI` client (`_build_async_client` / `async_client`), inherited as-is by `DeepSeekAdapter`, `OpenRouterAdapter`, and `OrcarouterAdapter`. `ZaiAdapter` explicitly pins `request_llm_async` back to the thread-offloaded `AdapterBase` default: the base's async path is backed by `AsyncOpenAI` (not the official `ZaiClient`) and has no tool calling, so inheriting it would regress Z.AI's async function-calling support
   - `OrcarouterAdapter` targets `https://api.orcarouter.ai/v1` with `ORCAROUTER_API_KEY`. The registered `obsidian/Qwen3.8-27B` model exposes text/image chat through the shared platform adapter; OrcaRouter's catalog also advertises upstream video and tool capabilities that this thin adapter does not yet implement
-  - `ZaiAdapter` adds tool calling and web search on top of the shared base:
-    - `glm-5.3-flash` exposes its forced-thinking contract through YAML: `thinking_mode` is fixed to `enabled` and mapped to `thinking.type`, while `reasoning_effort` offers `low`/`high`/`max` with the provider default `max`. Preserved thinking (`thinking.clear_thinking: false`) is not enabled because the shared conversation serializer does not yet replay prior `reasoning_content`.
-    - **Function calling**: `request_llm` routes to a recursive `request_llm_with_functions` loop (request → execute local `BaseTool`/callable tools → append `FunctionCall`/`FunctionResponse` records → re-ask) until the model stops emitting `tool_calls`. Function tools are emitted as `{"type": "function", "function": {...}}` via `_convert_function_to_tool` (reusing `BaseTool.to_params(provider="openai")` or `_callable_to_json_schema`)
+  - `ZaiAdapter` adds preserved thinking, tool calling, structured output, and web search on top of the shared base:
+    - `glm-5.3-flash` exposes its forced-thinking contract through YAML: `thinking_mode` is fixed to `enabled` and mapped to `thinking.type`, `clear_thinking` defaults to `false` as recommended for coding/agent tasks, and `reasoning_effort` offers `low`/`high`/`max` with the provider default `max`. The adapter captures `reasoning_content` on every response and replays it verbatim in assistant history, including intermediate tool rounds, so preserved/interleaved thinking remains coherent.
+    - **Function calling**: `request_llm` routes to a recursive `request_llm_with_functions` loop (request → execute local `BaseTool`/callable tools → append `FunctionCall`/`FunctionResponse` plus the assistant thinking block → re-ask) until the model stops emitting `tool_calls`. Function tools are emitted as `{"type": "function", "function": {...}}` via `_convert_function_to_tool` (reusing `BaseTool.to_params(provider="openai")` or `_callable_to_json_schema`)
+    - **Structured output**: `structured_output` enables Z.AI JSON mode through `response_format: {type: "json_object"}` on both plain and tool-enabled requests. When the caller supplies a Pydantic model class or JSON Schema dict, the adapter adds that schema to the system instruction, following Z.AI's documented JSON-mode pattern (the API accepts `json_object`, not an embedded strict schema).
     - **Web search**: Z.AI's built-in server-side `web_search` tool, enabled by the `web_search` additional parameter. `_build_request_params` is overridden to attach the built-in tool (`{"type": "web_search", "web_search": {"enable": True, "search_engine": "search-prime", "search_result": True}}`) so both the plain-chat and function-calling paths pick it up. No static `search_query` is sent — GLM derives queries from the conversation. Built-in and function tools are merged on the same request
 
 - `WiroAIAdapter`
@@ -252,7 +253,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
 - Grok: text/image/document in chat
 - Mistral: text/image/document chat
 - DeepSeek/OpenRouter/OrcaRouter: text + image/document conversion (OpenAI-compatible payload)
-- Z.AI (GLM-5.2): text (OpenAI-compatible payload via `zai-sdk` `ZaiClient`); supports function calling and the built-in `web_search` tool
+- Z.AI (GLM-5.3/GLM-5.3-Flash): text (OpenAI-compatible payload via `zai-sdk` `ZaiClient`); supports preserved thinking, function calling, structured JSON output, and the built-in `web_search` tool
 - Kimi (Kimi K3): text/image/video input (base64 data URLs for local visual media), extracted document text, structured output, reasoning preservation, and custom function calling
 - WiroAI (Qwen3.8-27B-Uncensored): text input plus extracted document text; structured answer/thinking output; no media or tool calling
 
@@ -377,7 +378,7 @@ From `requirements.txt`:
 - `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base (DeepSeek, OpenRouter, OrcaRouter, Z.AI, Kimi)
 - `adapters/orcarouter_adapter.py`: `OrcarouterAdapter` — OrcaRouter models through the OpenAI-compatible endpoint using `ORCAROUTER_API_KEY`
 - `adapters/wiro_ai_adapter.py`: `WiroAIAdapter` — WiroAI Run/Task submission, polling, authentication, and structured LLM output parsing
-- `adapters/zai_adapter.py`: `ZaiAdapter` — Z.AI GLM models via the official `zai-sdk` `ZaiClient` (OpenAI-compatible); adds function calling (recursive tool loop) and the built-in `web_search` tool
+- `adapters/zai_adapter.py`: `ZaiAdapter` — Z.AI GLM models via the official `zai-sdk` `ZaiClient` (OpenAI-compatible); adds preserved/interleaved thinking, function calling (recursive tool loop), structured JSON output, and the built-in `web_search` tool
 - `adapters/kimi_adapter.py`: `KimiAdapter` — Kimi models through Moonshot AI's OpenAI-compatible endpoint; adds K3 parameter rules, reasoning preservation, image/video input, structured output, and sync/async function calling
 - `adapters/*.py`: provider integrations
 - `tools/base.py`: `BaseTool` contract + per-provider declaration emission
