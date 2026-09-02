@@ -16,8 +16,8 @@ class WiroAIAdapter(AdapterBase):
     """Adapter for WiroAI's asynchronous Run/Task API."""
 
     BASE_URL = "https://api.wiro.ai/v1"
-    HTTP_TIMEOUT_SECONDS = 30
-    TASK_TIMEOUT_SECONDS = 120
+    HTTP_TIMEOUT_SECONDS = 600
+    TASK_TIMEOUT_SECONDS = 1200
     INITIAL_POLL_INTERVAL_SECONDS = 2
     MAX_POLL_INTERVAL_SECONDS = 10
     TERMINAL_STATUSES = {"task_postprocess_end", "task_error", "task_cancel"}

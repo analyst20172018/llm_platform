@@ -131,8 +131,8 @@ models:
         label: Reasoning
         request_key: reasoning.effort
 
-  - name: claude-fable-5
-    display_name: Claude Fable 5 💰💰💰
+  - name: claude-fable-5-1
+    display_name: Claude Fable 5.1 💰💰💰
     adapter: AnthropicAdapter
     adaptive_thinking: true
     pricing:
@@ -147,7 +147,7 @@ models:
     additional_parameters:
       max_tokens:
         <<: *param_max_tokens
-        default: 128000
+        default: 128_000
       web_search: *param_web_search
       code_execution: *param_code_execution
       citations_enabled: *param_citations_enabled
@@ -311,8 +311,8 @@ models:
         request_key: reasoning.effort
     visible: true
 
-  - name: gemini-3.7-flash
-    display_name: Gemini 3.7 Flash
+  - name: gemini-3.8-flash
+    display_name: Gemini 3.8 Flash
     adapter: GoogleAdapter
     uses_thinking_level: true
     pricing:
@@ -329,7 +329,7 @@ models:
     additional_parameters:
       max_tokens:
         <<: *param_max_output_tokens
-        default: 65536
+        default: 65_536
       function_calling: *param_function_calling
       web_search: *param_web_search
       code_execution: *param_code_execution
@@ -496,7 +496,7 @@ models:
         default: 384_000
       thinking_mode: *param_thinking_mode
       reasoning_effort: *param_reasoning_effort_deepseek
-    visible: false
+    visible: true
 
   - name: deepseek-v4-pro
     display_name: DeepSeek-V4-Pro
@@ -632,6 +632,53 @@ models:
         ui: select
         label: Tool Choice
         send_default: false
+    visible: true
+
+
+  - name: Qwen3.8-27B-Uncensored
+    display_name: Qwen3.8 27B Uncensored
+    adapter: WiroAIAdapter
+    wiro_owner: Qwen
+    wiro_model: Qwen3.8-27B-Uncensored
+    context_window: 262_144
+    inputs:
+      - text
+    outputs:
+      - text
+    additional_parameters:
+      thinking_enabled:
+        type: boolean
+        default: true
+        ui: toggle
+        label: Thinking
+        request_key: enableThinking
+      temperature:
+        type: float
+        default: 0.7
+        ui: input
+      top_p:
+        type: float
+        default: 0.95
+        ui: input
+      top_k:
+        type: integer
+        default: 0
+        ui: input
+      repetition_penalty:
+        type: float
+        default: 1.0
+        ui: input
+      length_penalty:
+        type: float
+        default: 1.0
+        ui: input
+      min_tokens:
+        type: integer
+        default: 500
+        ui: input
+      max_tokens:
+        <<: *param_max_tokens
+        default: 0
     visible: true
 
 

@@ -367,7 +367,20 @@ From `requirements.txt`:
 3. Implement `__call__`.
 4. Pass tool instance in `APIHandler.request(..., functions=[...])`.
 
-## 16. File and package map
+## 16. Self-improving agents: Archon pipeline
+File: `self_improving_agents/archon.py`
+
+An implementation of the Archon inference-time architecture ("Archon: An Architecture Search Framework for Inference-Time Techniques", PDF in `docs/`). Instead of one LLM call, a prompt flows through a pipeline of LLM components that generate, critique, filter, and merge candidate answers. Every LLM call goes through the platform facade (`APIHandler`), so any model in `models_config.yaml` can play any role.
+
+- `Archon(generator_models, fuser_model, critic_model=None, ranker_model=None, verifier_model=None, unit_test_model=None, samples_per_generator=1, top_k=3, num_unit_tests=5, system_prompt=...)` — pipeline configuration; each optional component is enabled by supplying a model name for it.
+- `generate(prompt, files=None, generator_parameters=None) -> ArchonResult` (sync wrapper over `asyncio.run`) and `generate_async(...)` for callers already inside an event loop.
+- Pipeline order follows the paper's construction rules: **Generators** (first layer, run in parallel via `request_async`) → **Critic** (one call producing strengths/weaknesses per candidate) → **Ranker** (orders candidates, keeps `top_k`) → **Verifier** (two-stage reasoning + `[Correct]`/`[Incorrect]` verdict per candidate, run in parallel) → **Unit Test Generator/Evaluator** (writes assertions from the prompt, scores each candidate, keeps the best-scoring ones) → a single final **Fuser** (always the last layer; uses the with-critiques prompt variant when critiques exist).
+- Component prompts are module constants transcribed from Tables 10–23 of the paper; the verifier stage-2 verdict prompt follows the two-stage procedure described in the paper's Section 3.1.
+- Each call uses a fresh `APIHandler` so component calls are isolated conversations; `files` (e.g. `ImageFile`) are passed to every component so critics/rankers/fusers can judge candidates against the attachment; `generator_parameters` are normalized per model by the facade and applied to generator calls only.
+- Robustness behavior: failed generators are logged and skipped (error only if all fail); unparseable ranker output falls back to original order; an unparseable verifier verdict fails open (candidate kept); if the verifier rejects everything, all candidates are kept; each dropped candidate records `dropped_by` (`ranker`/`verifier`/`unit_tests`) in the returned `ArchonResult.candidates` trace.
+- Imported as a regular subpackage: `from llm_platform.self_improving_agents.archon import Archon`.
+
+## 17. File and package map
 - `core/llm_handler.py`: orchestration facade (lazy adapter registry, conversation state, sync/async routing)
 - `core/parameter_normalizer.py`: `ParameterNormalizer` parameter pipeline
 - `helpers/model_config.py`: YAML model registry (cached + name-indexed) and parameter normalization
@@ -381,6 +394,7 @@ From `requirements.txt`:
 - `adapters/zai_adapter.py`: `ZaiAdapter` — Z.AI GLM models via the official `zai-sdk` `ZaiClient` (OpenAI-compatible); adds preserved/interleaved thinking, function calling (recursive tool loop), structured JSON output, and the built-in `web_search` tool
 - `adapters/kimi_adapter.py`: `KimiAdapter` — Kimi models through Moonshot AI's OpenAI-compatible endpoint; adds K3 parameter rules, reasoning preservation, image/video input, structured output, and sync/async function calling
 - `adapters/*.py`: provider integrations
+- `self_improving_agents/archon.py`: `Archon` inference-time pipeline (generate → critique → rank → verify → unit-test → fuse) built on `APIHandler` (see §16)
 - `tools/base.py`: `BaseTool` contract + per-provider declaration emission
 - `tools/ssh_command.py`: `SSHCommandTool` base for SSH admin tools
 - `tools/*.py`: callable tool implementations
