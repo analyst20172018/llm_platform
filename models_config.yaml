@@ -72,7 +72,7 @@ parameter_templates:
 
 models:
   - name: claude-sonnet-5
-    display_name: Claude Sonnet 5 👍
+    display_name: Claude Sonnet 5 
     adapter: AnthropicAdapter
     adaptive_thinking: true
     pricing:
@@ -161,6 +161,44 @@ models:
         label: Reasoning
         request_key: reasoning.effort
 
+
+  - name: gpt-6-astra
+    display_name: GPT-6 Astra 💰💰💰👍
+    adapter: OpenAIAdapter
+    pricing:
+      input: 10 # USD/1M tokens
+      output: 50 # USD/1M tokens
+    context_window: 1_050_000
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_output_tokens
+        default: 128_000
+      web_search: *param_web_search
+      code_execution: *param_code_execution
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [low, medium, high, xhigh, max]
+        default: low
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+      verbosity:
+        type: enum
+        options: [low, medium, high]
+        default: low
+        ui: select
+        label: Verbosity
+        request_key: text.verbosity
+      reasoning_mode: *param_reasoning_mode
+      agent_count: *param_agent_count
+    visible: true
 
   - name: gpt-5.6-sol
     display_name: GPT-5.6 Sol 💰👍
@@ -679,6 +717,34 @@ models:
       max_tokens:
         <<: *param_max_tokens
         default: 0
+    visible: true
+
+
+
+  - name: meta/muse-spark-1.3
+    display_name: Muse Spark 1.3
+    adapter: OpenRouterAdapter
+    pricing:
+      input: 1.25 # USD/1M tokens
+      output: 4.25 # USD/1M tokens
+    context_window: 1_048_576
+    inputs:
+      - text
+      - image
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 943_718
+      # Reasoning is mandatory for this model; only the effort level is selectable.
+      reasoning_effort:
+        type: enum
+        options: [minimal, low, medium, high, xhigh]
+        default: medium
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
     visible: true
 
 

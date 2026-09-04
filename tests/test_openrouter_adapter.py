@@ -2,16 +2,16 @@ from llm_platform.adapters.openrouter_adapter import OpenRouterAdapter
 from llm_platform.core.llm_handler import APIHandler
 
 
-MODEL = "stealth/ox-alpha"
+MODEL = "meta/muse-spark-1.3"
 
 
-def test_reasoning_is_enabled_by_default_for_ox_alpha():
+def test_reasoning_effort_defaults_for_muse_spark():
     handler = APIHandler()
 
     assert isinstance(handler.get_adapter(MODEL), OpenRouterAdapter)
     assert handler._prepare_additional_parameters(MODEL, None) == {
-        "reasoning": {"enabled": True},
-        "max_tokens": 131_072,
+        "reasoning": {"effort": "medium"},
+        "max_tokens": 943_718,
     }
 
 
@@ -22,11 +22,11 @@ def test_reasoning_is_sent_in_openrouter_extra_body():
         MODEL,
         {
             "max_tokens": 123,
-            "reasoning": {"enabled": True},
+            "reasoning": {"effort": "high"},
         },
     )
 
     assert request_params == {
         "max_tokens": 123,
-        "extra_body": {"reasoning": {"enabled": True}},
+        "extra_body": {"reasoning": {"effort": "high"}},
     }
