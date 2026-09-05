@@ -64,7 +64,7 @@ parameter_templates:
     label: Reasoning
   agent_count: &param_agent_count # OpenAI Multi-agent (beta): max concurrent subagents, 0 = single agent
     type: enum
-    options: [0, 2, 3, 5, 8]
+    options: [0, 2, 3]
     default: 0
     ui: select
     label: Parallel Agents
@@ -96,7 +96,7 @@ models:
       reasoning_effort:
         type: enum
         options: [low, medium, high, max]
-        default: low
+        default: high
         ui: select
         label: Reasoning
         request_key: reasoning.effort
@@ -126,7 +126,7 @@ models:
       reasoning_effort:
         type: enum
         options: [low, medium, high, xhigh, max]
-        default: low
+        default: medium
         ui: select
         label: Reasoning
         request_key: reasoning.effort
@@ -156,7 +156,7 @@ models:
       reasoning_effort:
         type: enum
         options: [low, medium, high, xhigh, max]
-        default: low
+        default: medium
         ui: select
         label: Reasoning
         request_key: reasoning.effort
@@ -192,7 +192,7 @@ models:
       verbosity:
         type: enum
         options: [low, medium, high]
-        default: low
+        default: medium
         ui: select
         label: Verbosity
         request_key: text.verbosity
@@ -230,7 +230,7 @@ models:
       verbosity:
         type: enum
         options: [low, medium, high]
-        default: low
+        default: medium
         ui: select
         label: Verbosity
         request_key: text.verbosity
@@ -525,7 +525,6 @@ models:
     context_window: 1_000_000
     inputs:
       - text
-      - image
     outputs:
       - text
     additional_parameters:
@@ -545,7 +544,6 @@ models:
     context_window: 1_000_000
     inputs:
       - text
-      - image
     outputs:
       - text
     additional_parameters:
@@ -625,7 +623,7 @@ models:
       reasoning_effort:
         type: enum
         options: [low, high, max]
-        default: max
+        default: high
         ui: select
         label: Reasoning
       function_calling: *param_function_calling

@@ -203,7 +203,7 @@ class OpenAIAdapter(AdapterBase):
 
         tools = []
         if additional_parameters.get("web_search"):
-            tools.append({"type": "web_search_preview"})
+            tools.append({"type": "web_search"})
         if additional_parameters.get("code_execution"):
             tools.append({
                 "type": "code_interpreter",
