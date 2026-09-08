@@ -37,7 +37,7 @@ def test_wiro_ai_model_is_registered_with_lazy_adapter():
         "top_k": 0,
         "repetition_penalty": 1.0,
         "length_penalty": 1.0,
-        "min_tokens": 0,
+        "min_tokens": 500,
         "max_tokens": 0,
     }
 
@@ -124,19 +124,19 @@ def test_wiro_ai_request_runs_polls_and_parses_structured_llm_output(monkeypatch
                 "system_prompt": "Be helpful.",
             },
             headers=headers,
-            timeout=30,
+            timeout=WiroAIAdapter.HTTP_TIMEOUT_SECONDS,
         ),
         call(
             "https://api.wiro.ai/v1/Task/Detail",
             json={"tasktoken": "token"},
             headers=headers,
-            timeout=30,
+            timeout=WiroAIAdapter.HTTP_TIMEOUT_SECONDS,
         ),
         call(
             "https://api.wiro.ai/v1/Task/Detail",
             json={"tasktoken": "token"},
             headers=headers,
-            timeout=30,
+            timeout=WiroAIAdapter.HTTP_TIMEOUT_SECONDS,
         ),
     ]
     sleep.assert_called_once_with(2)

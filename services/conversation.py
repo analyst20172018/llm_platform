@@ -254,6 +254,9 @@ class Conversation:
             total_usage["prompt_tokens"] += self._usage_value(message, "prompt_tokens")
             total_usage["completion_tokens"] += self._usage_value(message, "completion_tokens")
             total_usage["costs"] += self._usage_value(message, "costs")
+            for key in ("cache_read_tokens", "cache_creation_tokens", "reasoning_tokens"):
+                if message.usage and message.usage.get(key) is not None:
+                    total_usage[key] = total_usage.get(key, 0) + self._usage_value(message, key)
         return total_usage
 
     @property

@@ -1,4 +1,5 @@
 import inspect
+from copy import deepcopy
 import json
 from loguru import logger
 import os
@@ -136,6 +137,7 @@ class ClaudeStreamProcessor:
         self.id = getattr(message, "id", None)
         self.container = provider_dump(getattr(message, "container", None))
         usage = message.usage
+        self.usage["provider_usage"] = provider_dump(usage)
         cache_read = getattr(usage, 'cache_read_input_tokens', 0) or 0
         cache_creation = getattr(usage, 'cache_creation_input_tokens', 0) or 0
         self.usage["model"] = message.model
@@ -198,6 +200,7 @@ class ClaudeStreamProcessor:
         self._current_block_type = None
 
     def _handle_message_delta(self, event: Any):
+        self.usage.setdefault("provider_usage", {}).update(provider_dump(event.usage) or {})
         self.usage["completion_tokens"] = getattr(event.usage, 'output_tokens', 0)
         self.stop_reason = getattr(event.delta, 'stop_reason', None) or self.stop_reason
         if getattr(event.delta, "container", None) is not None:
@@ -226,9 +229,23 @@ class AnthropicAdapter(AdapterBase):
     def _build_tools(self, functions, parameters):
         tools = [self._convert_function_to_tool(func) for func in functions or []]
         if parameters.get("web_search"):
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
+            options = deepcopy(parameters.get("web_search_options") or {})
+            allowed = {"max_uses", "allowed_domains", "blocked_domains", "user_location",
+                       "allowed_callers", "response_inclusion"}
+            if not isinstance(options, dict) or options.keys() - allowed:
+                raise ValueError("Unsupported Claude web_search_options")
+            if "allowed_domains" in options and "blocked_domains" in options:
+                raise ValueError("Use allowed_domains or blocked_domains, not both")
+            if "max_uses" in options and (type(options["max_uses"]) is not int or options["max_uses"] < 1):
+                raise ValueError("web_search_options.max_uses must be a positive integer")
+            if options.get("response_inclusion", "full") not in {"full", "excluded"}:
+                raise ValueError("web_search_options.response_inclusion must be full or excluded")
+            tools.append({"type": "web_search_20260318", "name": "web_search",
+                          "max_uses": 10, **options})
         if parameters.get("code_execution"):
-            tools.append({"type": "code_execution_20250825", "name": "code_execution"})
+            tools.append({"type": "code_execution_20260521", "name": "code_execution"})
+        if parameters.get("web_search_options") and not parameters.get("web_search"):
+            raise ValueError("web_search_options requires web_search=True")
         return tools
 
     def _message_from_processor(self, processor, **kwargs):
@@ -348,6 +365,7 @@ class AnthropicAdapter(AdapterBase):
         processor.usage["completion_tokens"] = response.usage.output_tokens
         processor.usage["cache_read_tokens"] = cache_read
         processor.usage["cache_creation_tokens"] = cache_creation
+        processor.usage["provider_usage"] = provider_dump(response.usage)
         processor.stop_reason = response.stop_reason
 
         for block in response.content:

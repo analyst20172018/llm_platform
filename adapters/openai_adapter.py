@@ -8,6 +8,7 @@ for the OpenAI platform. It supports standard chat completions and function call
 """
 
 import asyncio
+from copy import deepcopy
 import inspect
 import json
 from typing import Callable, Dict, List, Tuple, Union
@@ -229,11 +230,12 @@ class OpenAIAdapter(AdapterBase):
             "response_modalities",
             "structured_output",
             "agent_count",
+            "prompt_cache_breakpoints",
         }
         for key, value in additional_parameters.items():
             if key in passthrough_keys:
                 continue
-            parameters[key] = value
+            parameters[key] = deepcopy(value)
 
         # reasoning.summary is not supported when Multi-agent is enabled
         if "reasoning" in parameters and not agent_count:
@@ -250,7 +252,9 @@ class OpenAIAdapter(AdapterBase):
             parameters["betas"] = ["responses_multi_agent=v1"]
 
         state = the_conversation.continuation("openai", model)
-        if use_previous_response_id and parameters.get("store") is not False and state:
+        if (use_previous_response_id and parameters.get("store") is not False and state
+                and not state.get("cache_system_prompt")
+                and not additional_parameters.get("prompt_cache_breakpoints")):
             parameters["previous_response_id"] = state["response_id"]
             parameters["input"] = self.convert_conversation_history_to_adapter_format(
                 the_conversation.messages[state["length"]:], model
@@ -264,7 +268,53 @@ class OpenAIAdapter(AdapterBase):
         if structured_output_class := additional_parameters.get("structured_output", None):
             parameters["text_format"] = structured_output_class
 
+        self._apply_prompt_cache(parameters, the_conversation, additional_parameters)
         return parameters
+
+    def _apply_prompt_cache(self, parameters, conversation, additional_parameters):
+        """Place explicit boundaries on detached input; never edit persisted history.
+
+        Targets are user message IDs, or ``system`` for the system prompt. Explicit
+        boundaries use full replay so their meaning survives remote checkpoints.
+        """
+        options = parameters.get("prompt_cache_options", {})
+        if not isinstance(options, dict) or options.keys() - {"mode", "ttl"}:
+            raise ValueError("prompt_cache_options accepts only mode and ttl")
+        if options.get("mode", "implicit") not in {"implicit", "explicit"}:
+            raise ValueError("prompt_cache_options.mode must be implicit or explicit")
+        if options.get("ttl", "30m") != "30m":
+            raise ValueError("prompt_cache_options.ttl must be 30m")
+        targets = additional_parameters.get("prompt_cache_breakpoints", [])
+        if not isinstance(targets, list) or any(not isinstance(t, str) for t in targets):
+            raise ValueError("prompt_cache_breakpoints must be a list of user message IDs or 'system'")
+        limit = 4 if options.get("mode") == "explicit" else 3
+        if len(targets) != len(set(targets)) or len(targets) > limit:
+            raise ValueError(f"Use at most {limit} distinct explicit cache breakpoints")
+        if not targets:
+            return
+        remaining = set(targets)
+        history = []
+        if "system" in remaining:
+            if not conversation.system_prompt:
+                raise ValueError("Cannot cache an empty system prompt")
+            history.append({"role": "developer", "content": [{
+                "type": "input_text", "text": conversation.system_prompt,
+                "prompt_cache_breakpoint": {"mode": "explicit"},
+            }]})
+            parameters.pop("instructions", None)
+            remaining.remove("system")
+        for message in conversation.messages:
+            items = self.convert_conversation_history_to_adapter_format([message], parameters["model"])
+            if message.id in remaining:
+                if (message.role != "user" or len(items) != 1
+                        or not items[0].get("content")):
+                    raise ValueError("Cache breakpoints must target nonempty user messages")
+                items[0]["content"][-1]["prompt_cache_breakpoint"] = {"mode": "explicit"}
+                remaining.remove(message.id)
+            history.extend(items)
+        if remaining:
+            raise ValueError("Unknown prompt_cache_breakpoints message ID")
+        parameters["input"] = history
 
     def _replay_parameters(self, parameters, conversation):
         replay = {key: value for key, value in parameters.items() if key != "previous_response_id"}
@@ -354,6 +404,15 @@ class OpenAIAdapter(AdapterBase):
             completion_attr="output_tokens",
             prompt_attr="input_tokens",
         )
+        native_usage = provider_dump(getattr(response, "usage", None)) or {}
+        input_details = native_usage.get("input_tokens_details") or {}
+        output_details = native_usage.get("output_tokens_details") or {}
+        usage.update({
+            "cache_read_tokens": input_details.get("cached_tokens"),
+            "cache_creation_tokens": input_details.get("cache_write_tokens"),
+            "reasoning_tokens": output_details.get("reasoning_tokens"),
+            "provider_usage": native_usage,
+        })
 
         outputs = getattr(response, "output", [])
 
@@ -527,6 +586,7 @@ class OpenAIAdapter(AdapterBase):
         response=None,
         model: str | None = None,
         store: bool = True,
+        cache_system_prompt: bool = False,
     ):
         """Appends the assistant's function call and the user's function response messages to the conversation."""
         # 1. Assistant's message with the function call request
@@ -544,7 +604,7 @@ class OpenAIAdapter(AdapterBase):
         )
         the_conversation.messages.append(assistant_message)
         if store:
-            the_conversation.checkpoint("openai", model, response_id)
+            the_conversation.checkpoint("openai", model, response_id, cache_system_prompt=cache_system_prompt)
 
         # 2. User's message containing the function execution results
         user_response_message = Message(
@@ -692,7 +752,10 @@ class OpenAIAdapter(AdapterBase):
         )
         the_conversation.messages.append(message)
         if additional_parameters.get("store") is not False:
-            the_conversation.checkpoint("openai", model, message.id)
+            the_conversation.checkpoint(
+                "openai", model, message.id,
+                cache_system_prompt="system" in additional_parameters.get("prompt_cache_breakpoints", []),
+            )
         return message
 
     async def request_llm_async(
@@ -759,7 +822,10 @@ class OpenAIAdapter(AdapterBase):
         )
         the_conversation.messages.append(message)
         if additional_parameters.get("store") is not False:
-            the_conversation.checkpoint("openai", model, message.id)
+            the_conversation.checkpoint(
+                "openai", model, message.id,
+                cache_system_prompt="system" in additional_parameters.get("prompt_cache_breakpoints", []),
+            )
         return message
 
     def request_llm_with_functions(
@@ -816,6 +882,7 @@ class OpenAIAdapter(AdapterBase):
         self._append_tool_messages_to_conversation(
             the_conversation, response.id, usage, text, function_calls, function_responses, thinking, files,
             response=response, model=model, store=additional_parameters.get("store") is not False,
+            cache_system_prompt="system" in additional_parameters.get("prompt_cache_breakpoints", []),
         )
 
         # 5. Call the model again with the updated history to get the final answer
@@ -878,6 +945,7 @@ class OpenAIAdapter(AdapterBase):
         self._append_tool_messages_to_conversation(
             the_conversation, response.id, usage, text, function_calls, function_responses, thinking, files,
             response=response, model=model, store=additional_parameters.get("store") is not False,
+            cache_system_prompt="system" in additional_parameters.get("prompt_cache_breakpoints", []),
         )
 
         # 5. Call the model again with the updated history to get the final answer

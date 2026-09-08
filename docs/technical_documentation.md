@@ -31,6 +31,7 @@ Primary modules:
 - `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter, OrcaRouter, Z.AI, Kimi); includes opt-in sync/async local-tool loops and JSON output marshalling
 - `adapters/json_output.py`: shared JSON-mode/schema envelopes and system instructions for Mistral, DeepSeek, and OpenRouter
 - `adapters/wiro_ai_adapter.py`: `WiroAIAdapter` for WiroAI's asynchronous Run/Task HTTP API
+- `adapters/wiro_gateway_adapter.py`: opt-in Direct LLM Chat route with authenticated capability discovery and native sync/async OpenAI SDK clients
 - `adapters/*.py`: provider-specific translation and API calls
 - `services/conversation.py`: provider-agnostic conversation/message/function-call domain model + platform-internal persistence (provider wire serialization lives in `adapters/serializers.py`)
 - `services/files.py`: file abstractions and format conversion/extraction
@@ -66,6 +67,7 @@ Registered adapter classes include:
 - `OpenRouterAdapter`
 - `OrcarouterAdapter`
 - `WiroAIAdapter`
+- `WiroGatewayAdapter`
 - `MistralAdapter`
 - `ZaiAdapter`
 - `KimiAdapter`
@@ -167,9 +169,9 @@ The byte-backed subclasses differ only in their `text` extraction property; the 
 File: `helpers/model_config.py`, config in `models_config.yaml`
 
 ### 6.1 Current catalog summary
-- Total models: 23
-- Visible models: 16
-- Adapter families: 10
+- Total models: 24
+- Visible models: 21
+- Adapter families: 11
 
 Models are grouped by `adapter`, with metadata:
 - `name`, `display_name`
@@ -202,6 +204,8 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
 
 - `OpenAIAdapter`
   - Responses API based chat flow
+  - Registered GPT-5.6+ models expose opt-in `prompt_cache_key`, `prompt_cache_options` (`mode: implicit|explicit`, `ttl: 30m`), and `prompt_cache_breakpoints` (a list of user message IDs and/or `"system"`). Explicit targets mark the final content block of a nonempty user message. The system target moves instructions into a developer input block, because the top-level instructions field cannot carry a breakpoint. Targets use full native history replay instead of a continuation ID, preserving boundary placement across tool rounds and restored conversations; calls without targets retain normal delta continuation unless the checkpoint used a system boundary. That checkpoint forces one full replay when returning to ordinary instructions, preventing duplicated system content. The adapter validates targets and the four-write limit (three explicit targets when implicit mode consumes a slot), without modifying saved messages. Explicit mode with no targets is allowed and disables new cache writes. No cache policy is sent by default.
+  - OpenAI usage preserves `cache_read_tokens`, `cache_creation_tokens`, `reasoning_tokens`, and detached `provider_usage`. Input totals already include cache reads/writes; these subsets are not added again. Missing detailed counts remain `None`. Conversation totals sum available detailed counts; they do not imply provider-wide completeness or calculate dollar costs.
   - Sync + async request methods
   - Tool calling with recursive loop
   - The `web_search` toggle enables the current Responses API hosted tool (`{"type": "web_search"}`) on all request paths.
@@ -211,6 +215,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Image-generation output is parsed as a single base64 string per `image_generation_call` (the Responses API `result` field)
   - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch
 - `AnthropicAdapter`
+  - Hosted search uses `web_search_20260318`; code execution uses `code_execution_20260521` across sync/async, streaming, local-tool, and pause-continuation paths. Search defaults to provider dynamic filtering and full result inclusion. Optional `web_search_options` supports `max_uses`, `allowed_domains` or `blocked_domains`, `user_location`, `allowed_callers`, and `response_inclusion: full|excluded`. It requires `web_search=True`; tool identity cannot be overridden. `allowed_callers: [direct]` requests direct search without dynamic filtering. Custom functions remain client-executed. Full native response replay preserves the provider's returned blocks and container; excluded nested results are not reconstructed. Native usage is retained as `provider_usage`, including streamed usage updates.
   - Sync + native async request methods (`request_llm_async` backed by a lazily constructed `anthropic.AsyncAnthropic` client; the async side mirrors the sync dispatch in two helpers — `_request_llm_simple_async` / `_request_llm_with_tools_async` — each taking a `stream` flag instead of separate streaming methods)
   - Non-streaming and streaming execution paths
   - Streaming auto-enabled for large `max_tokens` (>= 21000)
@@ -257,13 +262,18 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - OpenRouter exposes tools and JSON/schema output specifically for the registered Muse Spark 1.3 route. Requests using either feature set `extra_body.provider.require_parameters=True`, so routing must honor the requested parameters. This is a checked registry snapshot, not runtime model discovery or a claim that every OpenRouter route supports the same features.
   - `OpenRouterAdapter` sends the unified OpenRouter `reasoning` object through the OpenAI SDK's `extra_body`. The registered `meta/muse-spark-1.3` model (1M context, text/image) has mandatory reasoning, so its YAML schema exposes only the effort level (`minimal`/`low`/`medium`/`high`/`xhigh`, default `medium`) mapped to `reasoning.effort`.
   - `OpenAICompatibleAdapter` provides a native async path: `request_llm_async` mirrors the sync chat flow on a lazily constructed `AsyncOpenAI` client (`_build_async_client` / `async_client`), inherited as-is by `DeepSeekAdapter`, `OpenRouterAdapter`, and `OrcarouterAdapter`. `ZaiAdapter` explicitly pins `request_llm_async` back to the thread-offloaded `AdapterBase` default: the base's async path is backed by `AsyncOpenAI` (not the official `ZaiClient`), so inheriting it would bypass Z.AI-specific request handling
-  - `OrcarouterAdapter` targets `https://api.orcarouter.ai/v1` with `ORCAROUTER_API_KEY`. No model currently routes to this adapter in the registry; its existing catalog-registration test is out of sync with the YAML
+  - `OrcarouterAdapter` targets `https://api.orcarouter.ai/v1` with `ORCAROUTER_API_KEY`. No model currently routes to this adapter in the registry; tests verify that the old catalog ID fails locally while adapter construction remains lazy.
   - `ZaiAdapter` adds preserved thinking, tool calling, structured output, and web search on top of the shared base:
     - GLM-5.3 remains text-only and exposes forced thinking (`enabled`), effort `low`/`high`/`max` (default `max`), and JSON output. GLM-5.3-Flash exposes images, videos, and native PDF input. Image/video parts use base64 data URLs; PDFs use `file.file_data` plus `filename`. Native PDFs cannot be combined with image/video parts in the same message under the provider contract; this raises explicitly. Other documents keep text extraction, as do PDFs on the text-only model.
     - `glm-5.3-flash` exposes its forced-thinking contract through YAML: `thinking_mode` is fixed to `enabled` and mapped to `thinking.type`, `clear_thinking` defaults to `false` as recommended for coding/agent tasks, and `reasoning_effort` offers `low`/`high`/`max` with the existing platform default `high`. The adapter captures `reasoning_content` on every response and replays it verbatim in assistant history, including intermediate tool rounds, so preserved/interleaved thinking remains coherent.
     - **Function calling**: `request_llm` routes to a recursive `request_llm_with_functions` loop (request → execute local `BaseTool`/callable tools → append `FunctionCall`/`FunctionResponse` plus the assistant thinking block → re-ask) until the model stops emitting `tool_calls`. Function tools are emitted as `{"type": "function", "function": {...}}` via `_convert_function_to_tool` (reusing `BaseTool.to_params(provider="openai")` or `_callable_to_json_schema`)
     - **Structured output**: `structured_output` enables Z.AI JSON mode through `response_format: {type: "json_object"}` on both plain and tool-enabled requests. When the caller supplies a Pydantic model class or JSON Schema dict, the adapter adds that schema to the system instruction, following Z.AI's documented JSON-mode pattern (the API accepts `json_object`, not an embedded strict schema).
     - **Web search**: Z.AI's built-in server-side `web_search` tool, enabled by the `web_search` additional parameter. `_build_request_params` is overridden to attach the built-in tool (`{"type": "web_search", "web_search": {"enable": True, "search_engine": "search-prime", "search_result": True}}`) so both the plain-chat and function-calling paths pick it up. No static `search_query` is sent — GLM derives queries from the conversation. Built-in and function tools are merged on the same request
+
+- `WiroGatewayAdapter`
+  - Separate OpenAI-compatible Chat route at `https://llm.wiro.ai/v1`, using `Authorization: Bearer WIRO_API_KEY` or `Bearer WIRO_API_KEY:WIRO_API_SECRET`. It never uses Run HMAC headers or `WIRO_API_BASE_URL`.
+  - The hidden registry entry `qwen/qwen3-8-27b-uncensored` is an explicit opt-in. Before each top-level request, `models.retrieve` fetches the authenticated contract and requires matching identity, Chat/text eligibility, and support for requested function tools or JSON output. Advertised completion limits are checked. Failure stops generation; no fallback to Run occurs. No unverified pricing or context size is assigned to this route.
+  - The initial route accepts text and extracted documents, token limits (`max_tokens` maps to `max_completion_tokens`), local tools, and JSON/schema output. Media and hosted tools are excluded from this implementation. Tools reuse the shared bounded sync/async loop and native assistant replay. No Responses state or Run session IDs cross into this adapter.
 
 - `WiroAIAdapter`
   - Uses WiroAI's JSON HTTP API at `https://api.wiro.ai/v1`: it submits `POST /Run/{owner}/{model}` once, then polls the returned task through `POST /Task/Detail` with exponential backoff until a terminal status. The adapter never resubmits a generation while polling.
@@ -356,8 +366,8 @@ Current code expects:
 - `OPENROUTER_API_KEY`
 - `ORCAROUTER_API_KEY`
 - `WIRO_API_KEY`
-- `WIRO_API_SECRET` (optional; signature-auth projects)
-- `WIRO_API_BASE_URL` (optional endpoint override)
+- `WIRO_API_SECRET` (optional; Run HMAC or gateway Bearer key/secret pair, depending on adapter)
+- `WIRO_API_BASE_URL` (optional Run endpoint override; does not affect the gateway)
 - `MISTRAL_API_KEY`
 - `ZAI_API_KEY`
 - `MOONSHOT_API_KEY`
@@ -370,6 +380,10 @@ From `requirements.txt`:
 - Data/media: `pandas`, `pillow`, `PyPDF2`, `pydub`, `lxml`
 - Tooling and support: `pydantic`, `python-dotenv`, `PyYAML`, `requests`, `tiktoken`, `loguru`, `rich`, `praw`
 
+Provider requirements have tested lower bounds. `constraints-tested.txt` pins the complete installed runtime/test dependency closure for Windows CPython 3.12: OpenAI 3.9.0, Anthropic 1.4.0, google-genai 2.22.0, Mistral 2.9.4, xai-sdk 1.19.0, zai-sdk 0.2.3, and openai-agents 0.22.1. These are tested baselines, not claims about the earliest compatible versions. Anthropic 1.4.0 uses `httpx2`; OpenAI uses `httpx`. Both transports are included. Install with `python -m pip install -r requirements-test.txt -c constraints-tested.txt`; deployments may use `requirements.txt` with the same constraints. Revalidate the dependency closure on other platforms/Python versions.
+
+`tests/test_provider_modernization.py` checks actual SDK serialization through intercepted HTTP transports, cache persistence/accounting, gateway auth/discovery/tool continuation, and live-runner failure behavior. Existing lifecycle tests exercise the new Claude tool builder across streaming and pause paths. These tests do not establish live acceptance. `scripts/provider_smoke.py` requires one explicit `--run-live` scenario and a report path; no provider calls run on import or pytest collection. It uses public synthetic inputs, capped output tokens, disabled SDK retries, and 60-second transport/orchestration timeouts. Reports contain model/SDK identity, constraint fingerprint, response IDs, usage, and pass/fail status; they retain completed responses on failure and omit provider exception bodies. See [provider feature rollout](provider_feature_rollout.md) for commands and the required pre-deployment checks.
+
 ## 12. Error handling and observability
 - Logging uses `loguru` in orchestration and adapters.
 - `APIHandler.request_llm` / `request_llm_async` let adapter exceptions propagate to the caller, consistently across the sync and async paths; they no longer swallow exceptions into a fabricated assistant message appended to the conversation.
@@ -377,7 +391,7 @@ From `requirements.txt`:
 - Some adapter methods remain `NotImplemented` and will raise directly.
 
 ## 13. Known implementation gaps and inconsistencies
-1. Tool-calling support is partial across adapters (implemented in OpenAI/Anthropic/Google/Grok/Mistral/Z.AI/Kimi/DeepSeek/OpenRouter, not in OrcaRouter/WiroAI).
+1. Tool-calling support is partial across adapters (implemented in OpenAI/Anthropic/Google/Grok/Mistral/Z.AI/Kimi/DeepSeek/OpenRouter/WiroGateway, not in OrcaRouter/WiroAI Run).
 2. Older, unversioned conversation files cannot recover IDs or native response data that were never saved. They load with safe defaults and rebuild history without guessing provider ownership from IDs.
 3. The `README.md` environment-variable list now matches the adapter code (`GOOGLE_GEMINI_API_KEY`, `XAI_API_KEY`).
 

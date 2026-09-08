@@ -19,6 +19,7 @@ ADAPTER_IMPORT_PATHS = {
     "OpenRouterAdapter": "llm_platform.adapters.openrouter_adapter:OpenRouterAdapter",
     "OrcarouterAdapter": "llm_platform.adapters.orcarouter_adapter:OrcarouterAdapter",
     "WiroAIAdapter": "llm_platform.adapters.wiro_ai_adapter:WiroAIAdapter",
+    "WiroGatewayAdapter": "llm_platform.adapters.wiro_gateway_adapter:WiroGatewayAdapter",
     "GoogleAdapter": "llm_platform.adapters.google_adapter:GoogleAdapter",
     "GrokAdapter": "llm_platform.adapters.grok_adapter:GrokAdapter",
     "DeepSeekAdapter": "llm_platform.adapters.deepseek_adapter:DeepSeekAdapter",

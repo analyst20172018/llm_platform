@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+import pytest
 
 from llm_platform.adapters.orcarouter_adapter import OrcarouterAdapter
 from llm_platform.core.llm_handler import APIHandler
@@ -9,21 +10,18 @@ from llm_platform.services.conversation import Conversation, Message
 MODEL = "obsidian/Qwen3.8-27B"
 
 
-def test_orcarouter_model_is_registered_with_lazy_adapter():
+def test_orcarouter_is_available_but_has_no_registered_model():
     handler = APIHandler()
 
-    adapter = handler.get_adapter(MODEL)
-    model = handler.model_config[MODEL]
+    assert handler.model_config[MODEL] is None
+    with pytest.raises(ValueError, match="not defined"):
+        handler.get_adapter(MODEL)
+    adapter = handler._lazy_initialization_of_adapter("OrcarouterAdapter")
 
     assert isinstance(adapter, OrcarouterAdapter)
     assert adapter._client is None
     assert adapter.BASE_URL == "https://api.orcarouter.ai/v1"
     assert adapter.ENV_VAR == "ORCAROUTER_API_KEY"
-    assert model.context_window == 262_144
-    assert model.pricing == {"input": 0.4, "output": 4.21}
-    assert handler._prepare_additional_parameters(MODEL, None) == {
-        "max_tokens": 200_000
-    }
 
 
 def test_orcarouter_request_uses_openai_compatible_chat_completions():

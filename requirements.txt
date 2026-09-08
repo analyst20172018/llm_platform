@@ -1,11 +1,11 @@
 protobuf
-anthropic
-openai-agents
-openai>=2.45.0
-google-genai # 	New library (Recommended). Old library was ´google-generativeai´
-mistralai
-xai_sdk
-zai-sdk
+anthropic>=1.4.0
+openai-agents>=0.22.1
+openai>=3.9.0
+google-genai>=2.22.0
+mistralai>=2.9.4
+xai_sdk>=1.19.0
+zai-sdk>=0.2.3
 lxml
 pandas
 pillow

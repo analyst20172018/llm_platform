@@ -78,6 +78,22 @@ parameter_templates:
     send_default: false # send only when the user explicitly enables multi-agent
 
 models:
+  # Opt-in gateway route. Authenticated model discovery is required before generation.
+  - name: qwen/qwen3-8-27b-uncensored
+    display_name: Qwen 3.8 27B (Wiro Gateway)
+    adapter: WiroGatewayAdapter
+    inputs: [text]
+    outputs: [text]
+    visible: false
+    additional_parameters:
+      max_tokens:
+        type: integer
+        default: 1024
+        request_key: max_completion_tokens
+        ui: hidden
+      function_calling: *param_function_calling
+      tool_choice: *param_tool_choice
+      structured_output: *param_structured_output
   - name: claude-sonnet-5
     display_name: Claude Sonnet 5 
     adapter: AnthropicAdapter
@@ -96,6 +112,7 @@ models:
         <<: *param_max_tokens
         default: 64000
       web_search: *param_web_search
+      web_search_options: {type: object, ui: hidden, send_default: false}
       code_execution: *param_code_execution
       citations_enabled: *param_citations_enabled
       function_calling: *param_function_calling
@@ -126,6 +143,7 @@ models:
         <<: *param_max_tokens
         default: 128000
       web_search: *param_web_search
+      web_search_options: {type: object, ui: hidden, send_default: false}
       code_execution: *param_code_execution
       citations_enabled: *param_citations_enabled
       function_calling: *param_function_calling
@@ -156,6 +174,7 @@ models:
         <<: *param_max_tokens
         default: 128_000
       web_search: *param_web_search
+      web_search_options: {type: object, ui: hidden, send_default: false}
       code_execution: *param_code_execution
       citations_enabled: *param_citations_enabled
       function_calling: *param_function_calling
@@ -182,6 +201,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      prompt_cache_key: {type: string, ui: hidden, send_default: false}
+      prompt_cache_options: {type: object, ui: hidden, send_default: false}
+      prompt_cache_breakpoints: {type: array, ui: hidden, send_default: false}
       max_tokens:
         <<: *param_max_output_tokens
         default: 128_000
@@ -220,6 +242,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      prompt_cache_key: {type: string, ui: hidden, send_default: false}
+      prompt_cache_options: {type: object, ui: hidden, send_default: false}
+      prompt_cache_breakpoints: {type: array, ui: hidden, send_default: false}
       max_tokens:
         <<: *param_max_output_tokens
         default: 128000
@@ -258,6 +283,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      prompt_cache_key: {type: string, ui: hidden, send_default: false}
+      prompt_cache_options: {type: object, ui: hidden, send_default: false}
+      prompt_cache_breakpoints: {type: array, ui: hidden, send_default: false}
       max_tokens:
         <<: *param_max_output_tokens
         default: 128000
@@ -296,6 +324,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      prompt_cache_key: {type: string, ui: hidden, send_default: false}
+      prompt_cache_options: {type: object, ui: hidden, send_default: false}
+      prompt_cache_breakpoints: {type: array, ui: hidden, send_default: false}
       max_tokens:
         <<: *param_max_output_tokens
         default: 128000
