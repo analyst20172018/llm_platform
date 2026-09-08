@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import copy
+import io
 import inspect
 import json
 import os
@@ -31,6 +33,10 @@ class GoogleAdapter(AdapterBase):
 
     REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000, 'low': 4_000, 'dynamic': -1}
     DEEP_RESEARCH_POLL_INTERVAL_SECONDS = 10
+    PDF_MAX_BYTES = 50_000_000
+    PDF_MAX_PAGES = 1_000
+    # Leave room for SDK-added fields within the 20 MB inline HTTP limit.
+    INLINE_REQUEST_MAX_BYTES = 19_000_000
 
     # Background agent polling (e.g. the Antigravity agent). Polling stops both on
     # terminal statuses and on ``requires_action`` (the agent is waiting for a
@@ -105,17 +111,12 @@ class GoogleAdapter(AdapterBase):
                 "mime_type": self._file_mime_type(file),
             }
         if isinstance(file, PDFDocumentFile):
-            # Gemini direct-PDF processing is capped at ~20 MB / ~3.6k pages
-            if file.size < 20_000_000 and file.number_of_pages < 3_600:
-                return {
-                    "type": "document",
-                    "data": file.base64,
-                    "mime_type": self._file_mime_type(file),
-                }
-            logger.info(f"PDF '{file.name}' exceeds size/page limits; sending as text.")
+            if file.size > self.PDF_MAX_BYTES or file.number_of_pages > self.PDF_MAX_PAGES:
+                raise ValueError(f"PDF '{file.name}' exceeds Gemini's 50 MB / 1,000 page limit.")
             return {
-                "type": "text",
-                "text": f'<document name="{file.name}">{file.text}</document>',
+                "type": "document",
+                "data": file.base64,
+                "mime_type": self._file_mime_type(file),
             }
         if isinstance(file, (TextDocumentFile, ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile)):
             return {
@@ -167,6 +168,13 @@ class GoogleAdapter(AdapterBase):
         legacy ``turn_list`` shape and are rejected by the new API.
         """
         input_items: List[Dict] = []
+        pdf_pages = sum(
+            file.number_of_pages
+            for message in conversation.messages for file in message.files or []
+            if isinstance(file, PDFDocumentFile)
+        )
+        if pdf_pages > self.PDF_MAX_PAGES:
+            raise ValueError("Gemini accepts at most 1,000 PDF pages in one request.")
         for message in conversation.messages:
             if message.role == "user":
                 content = self._content_items_for_message(message)
@@ -237,25 +245,83 @@ class GoogleAdapter(AdapterBase):
             self._prepend_research_instructions(params["input"], conversation)
         return params
 
+    def _pdf_upload_candidates(self, kwargs):
+        """Choose largest inline PDFs until the encoded request fits the budget.
+
+        Work on detached wire dictionaries. Uploaded URIs live only in this
+        request; a later full-history replay reuploads the original bytes.
+        """
+        documents = []
+
+        def collect(value):
+            if isinstance(value, dict):
+                if value.get("type") == "document" and value.get("mime_type") == "application/pdf" and value.get("data"):
+                    documents.append(value)
+                else:
+                    for child in value.values():
+                        collect(child)
+            elif isinstance(value, list):
+                for child in value:
+                    collect(child)
+
+        collect(kwargs.get("input"))
+        request_size = len(json.dumps(kwargs, ensure_ascii=True).encode("utf-8"))
+        candidates = []
+        for document in sorted(documents, key=lambda doc: len(doc["data"]), reverse=True):
+            if request_size <= self.INLINE_REQUEST_MAX_BYTES:
+                break
+            candidates.append(document)
+            request_size -= len(document["data"]) - 1024  # conservative URI overhead
+        if candidates and request_size > self.INLINE_REQUEST_MAX_BYTES:
+            raise ValueError("Gemini request exceeds the inline size limit even after PDF uploads.")
+        return candidates
+
+    @staticmethod
+    def _use_uploaded_pdf(document, uploaded):
+        if not uploaded.uri:
+            raise ValueError("Gemini PDF upload returned no file URI.")
+        document.pop("data")
+        document["uri"] = uploaded.uri
+
+    def _prepare_pdf_uploads(self, kwargs):
+        kwargs = copy.deepcopy(kwargs)
+        for document in self._pdf_upload_candidates(kwargs):
+            with io.BytesIO(base64.b64decode(document["data"])) as stream:
+                uploaded = self.client.files.upload(file=stream, config={"mime_type": "application/pdf"})
+            self._use_uploaded_pdf(document, uploaded)
+        return kwargs
+
+    async def _prepare_pdf_uploads_async(self, kwargs):
+        kwargs = copy.deepcopy(kwargs)
+        for document in self._pdf_upload_candidates(kwargs):
+            with io.BytesIO(base64.b64decode(document["data"])) as stream:
+                uploaded = await self.async_client.files.upload(file=stream, config={"mime_type": "application/pdf"})
+            self._use_uploaded_pdf(document, uploaded)
+        return kwargs
+
     def _create_interaction(self, conversation, model_name, **kwargs):
+        prepared = self._prepare_pdf_uploads(kwargs)
         try:
-            return self.client.interactions.create(**kwargs)
+            return self.client.interactions.create(**prepared)
         except Exception as error:
             if "previous_interaction_id" not in kwargs or not missing_continuation(
                 error, "previous_interaction_id", kwargs["previous_interaction_id"]
             ):
                 raise
-            return self.client.interactions.create(**self._replay_interaction_kwargs(conversation, model_name, kwargs))
+            replay = self._replay_interaction_kwargs(conversation, model_name, kwargs)
+            return self.client.interactions.create(**self._prepare_pdf_uploads(replay))
 
     async def _create_interaction_async(self, conversation, model_name, **kwargs):
+        prepared = await self._prepare_pdf_uploads_async(kwargs)
         try:
-            return await self.async_client.interactions.create(**kwargs)
+            return await self.async_client.interactions.create(**prepared)
         except Exception as error:
             if "previous_interaction_id" not in kwargs or not missing_continuation(
                 error, "previous_interaction_id", kwargs["previous_interaction_id"]
             ):
                 raise
-            return await self.async_client.interactions.create(**self._replay_interaction_kwargs(conversation, model_name, kwargs))
+            replay = self._replay_interaction_kwargs(conversation, model_name, kwargs)
+            return await self.async_client.interactions.create(**await self._prepare_pdf_uploads_async(replay))
 
     def _append_interaction(self, conversation, message, interaction, model):
         state = conversation.continuation("google", model) or {}

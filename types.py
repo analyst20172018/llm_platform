@@ -23,7 +23,7 @@ class AdditionalParameters(TypedDict, total=False):
     url_context: bool  # enable URL context tool (Gemini)
     code_execution: bool  # allow code execution tool when supported
     citations_enabled: bool  # request citations for supported providers
-    structured_output: Any  # pydantic model class for schema parsing
+    structured_output: Any  # Pydantic class/JSON Schema; True enables JSON mode where supported
     temperature: float  # sampling temperature
     top_p: float  # nucleus-sampling probability threshold
     top_k: int  # sample from the K most likely tokens
@@ -32,7 +32,7 @@ class AdditionalParameters(TypedDict, total=False):
     max_tokens: int  # hard cap on response tokens
     min_tokens: int  # provider-specific minimum response-token count
     thinking_enabled: bool  # enable WiroAI thinking output
-    reasoning_effort: str  # provider-native top-level effort (Kimi K3: "max"; DeepSeek: "low"/"high"/"max")
+    reasoning_effort: str  # provider-native effort (Kimi K3, GLM, DeepSeek: "low"/"high"/"max")
     thinking_mode: str  # DeepSeek thinking mode toggle: "enabled" or "disabled"
     clear_thinking: bool  # Z.AI preserved-thinking control
     tool_choice: str  # function selection policy, e.g. "auto", "none", "required"

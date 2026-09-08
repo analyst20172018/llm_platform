@@ -50,7 +50,7 @@ def test_glm_flash_reasoning_defaults_are_normalized_from_model_config():
     assert handler._prepare_additional_parameters(MODEL, None) == {
         "max_tokens": 128000,
         "thinking": {"type": "enabled", "clear_thinking": False},
-        "reasoning_effort": "max",
+        "reasoning_effort": "high",
         "web_search": False,
     }
 

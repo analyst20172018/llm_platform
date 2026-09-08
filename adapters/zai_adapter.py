@@ -3,6 +3,7 @@ import os
 from typing import Any, Callable, Dict, List
 
 from llm_platform.services.conversation import Conversation, FunctionCall, FunctionResponse, Message
+from llm_platform.services.files import ImageFile, VideoFile, PDFDocumentFile
 from llm_platform.tools.base import BaseTool
 from llm_platform.adapters.serializers import function_call_from_openai_chat
 from llm_platform.types import AdditionalParameters
@@ -38,15 +39,29 @@ class ZaiAdapter(OpenAICompatibleAdapter):
     BASE_URL = "https://api.z.ai/api/paas/v4/"
     ENV_VAR = "ZAI_API_KEY"
 
-    # The base's native async path is backed by AsyncOpenAI and has no tool
-    # calling — it would bypass the official ZaiClient and regress this
-    # adapter's async function-calling support. Keep the thread-offloaded
+    # The base's native async path is backed by AsyncOpenAI and would bypass
+    # the official ZaiClient and Z.AI-specific request handling. Keep the thread-offloaded
     # AdapterBase default, which runs the full sync `request_llm` off the loop.
     request_llm_async = AdapterBase.request_llm_async
 
     def _build_client(self):
         from zai import ZaiClient
         return ZaiClient(api_key=os.getenv(self.ENV_VAR), base_url=self.BASE_URL)
+
+    def _video_content(self, file, model):
+        return {
+            "type": "video_url",
+            "video_url": {"url": f"data:video/{file.extension};base64,{file.base64}"},
+        }
+
+    def _document_content(self, file, model):
+        model_object = self.model_config[model]
+        if isinstance(file, PDFDocumentFile) and model_object and "pdf" in model_object.inputs:
+            return {"type": "file", "file": {
+                "file_data": f"data:application/pdf;base64,{file.base64}",
+                "filename": file.name or "document.pdf",
+            }}
+        return super()._document_content(file, model)
 
     def _build_builtin_tools(self, additional_parameters: AdditionalParameters) -> List[Dict]:
         """Z.AI server-side tools requested through ``additional_parameters``.
@@ -116,6 +131,17 @@ class ZaiAdapter(OpenAICompatibleAdapter):
         **kwargs,
     ):
         """Serialize history and preserve Z.AI reasoning blocks verbatim."""
+        model_object = self.model_config[model]
+        for message in the_conversation.messages:
+            files = message.files or []
+            if (model_object and "pdf" in model_object.inputs
+                    and any(isinstance(file, PDFDocumentFile) for file in files)
+                    and any(isinstance(file, (ImageFile, VideoFile)) for file in files)):
+                raise ValueError("Z.AI cannot combine native PDF files with images or videos in one message.")
+            for file in files:
+                modality = "image" if isinstance(file, ImageFile) else "video" if isinstance(file, VideoFile) else None
+                if modality and not (model_object and modality in model_object.inputs):
+                    raise ValueError(f"Model {model} does not support {modality} input.")
         history, history_kwargs = super().convert_conversation_history_to_adapter_format(
             the_conversation,
             model,

@@ -62,6 +62,13 @@ parameter_templates:
     default: high
     ui: select
     label: Reasoning
+  tool_choice: &param_tool_choice
+    type: enum
+    options: [auto, none, required]
+    default: auto
+    ui: select
+    label: Tool Choice
+    send_default: false
   agent_count: &param_agent_count # OpenAI Multi-agent (beta): max concurrent subagents, 0 = single agent
     type: enum
     options: [0, 2, 3]
@@ -508,7 +515,7 @@ models:
     pricing:
       input: 2 # USD/1M tokens
       output: 6 # USD/1M tokens
-    context_window: 1_000_000
+    context_window: 500_000
     inputs:
       - text
       - image
@@ -549,6 +556,9 @@ models:
         default: 384_000
       thinking_mode: *param_thinking_mode
       reasoning_effort: *param_reasoning_effort_deepseek
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      tool_choice: *param_tool_choice
     visible: true
 
   - name: deepseek-v4-pro
@@ -568,6 +578,9 @@ models:
         default: 384_000
       thinking_mode: *param_thinking_mode
       reasoning_effort: *param_reasoning_effort_deepseek
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      tool_choice: *param_tool_choice
 
   - name: deepseek-v4-flash-vision-exp
     display_name: DeepSeek-V4-Flash-Vision
@@ -587,6 +600,9 @@ models:
         default: 384_000
       thinking_mode: *param_thinking_mode
       reasoning_effort: *param_reasoning_effort_deepseek
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      tool_choice: *param_tool_choice
     visible: true
 
 
@@ -607,6 +623,19 @@ models:
         default: 128000
       function_calling: *param_function_calling
       web_search: *param_web_search
+      structured_output: *param_structured_output
+      thinking_mode:
+        type: enum
+        options: [enabled]
+        default: enabled
+        ui: hidden
+        request_key: thinking.type
+      reasoning_effort:
+        type: enum
+        options: [low, high, max]
+        default: max
+        ui: select
+        label: Reasoning
     visible: true
 
   - name: glm-5.3-flash
@@ -618,6 +647,9 @@ models:
     context_window: 1_000_000
     inputs:
       - text
+      - image
+      - video
+      - pdf
     outputs:
       - text
     additional_parameters:
@@ -672,7 +704,7 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [max]
+        options: [low, high, max]
         default: max
         ui: select
         label: Reasoning
@@ -748,6 +780,9 @@ models:
     outputs:
       - text
     additional_parameters:
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      tool_choice: *param_tool_choice
       max_tokens:
         <<: *param_max_tokens
         default: 943_718
@@ -773,6 +808,8 @@ models:
       - image
       - text
     additional_parameters:
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
       max_tokens:
         <<: *param_max_tokens
         default: 131000

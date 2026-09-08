@@ -1,5 +1,6 @@
 from .response_metadata import chat_metadata, block_metadata
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
+from .json_output import response_format, add_json_instruction
 import os
 from typing import Any, Callable, Dict, List
 from llm_platform.tools.base import BaseTool
@@ -100,6 +101,9 @@ class MistralAdapter(AdapterBase):
                 for each_response in message.function_responses:
                     history.append(function_response_to_openai_chat(each_response))
 
+        structured_output = kwargs.pop("structured_output", None)
+        if structured_output:
+            add_json_instruction(history, response_format(structured_output))
         return history, kwargs
 
     def _build_request_params(self, additional_parameters: AdditionalParameters) -> Dict[str, Any]:
@@ -114,6 +118,8 @@ class MistralAdapter(AdapterBase):
                 continue
             request_params[key] = value
 
+        if additional_parameters.get("structured_output"):
+            request_params["response_format"] = response_format(additional_parameters["structured_output"])
         return request_params
 
     def request_llm(self, model: str,
@@ -137,7 +143,9 @@ class MistralAdapter(AdapterBase):
 
         # Standard text LLM
         request_params = self._build_request_params(additional_parameters)
-        messages, history_kwargs = self.convert_conversation_history_to_adapter_format(the_conversation, model)
+        messages, history_kwargs = self.convert_conversation_history_to_adapter_format(
+            the_conversation, model, structured_output=additional_parameters.get("structured_output")
+        )
         request_params.update(history_kwargs)
         response = self.client.chat.complete(
                         model=model,
@@ -221,7 +229,9 @@ class MistralAdapter(AdapterBase):
         request_params = self._build_request_params(additional_parameters)
 
         tools = [self._convert_function_to_tool(each_function) for each_function in functions]
-        messages, _ = self.convert_conversation_history_to_adapter_format(the_conversation, model)
+        messages, _ = self.convert_conversation_history_to_adapter_format(
+            the_conversation, model, structured_output=additional_parameters.get("structured_output")
+        )
 
         chat_response = self.client.chat.complete(
             model = model,

@@ -17,6 +17,8 @@ class DeepSeekAdapter(OpenAICompatibleAdapter):
 
     BASE_URL = "https://api.deepseek.com"
     ENV_VAR = "DEEPSEEK_API_KEY"
+    SUPPORTS_TOOLS = True
+    JSON_OUTPUT_MODE = "json_object"
 
     # Thinking mode silently ignores these, so they are dropped instead of sent.
     SAMPLING_PARAMETERS = ("temperature", "top_p", "presence_penalty", "frequency_penalty")
