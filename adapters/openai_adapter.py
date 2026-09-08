@@ -870,9 +870,11 @@ class OpenAIAdapter(AdapterBase):
         return {
             "type": "function",
             "name": schema["name"],
-            "description": schema["description"] or f"Executes the {func.__name__} function.",
-            "parameters": {**schema["parameters"], "additionalProperties": False},
-            "strict": True,
+            "description": schema["description"] or f"Executes the {schema['name']} function.",
+            "parameters": schema["parameters"],
+            # Keep omission/defaults and open dictionaries meaningful. Responses
+            # may normalize an omitted strict flag, so opt out explicitly.
+            "strict": False,
         }
 
     def _convert_function_to_tool(self, func: Union[BaseTool, Callable]) -> Dict:
@@ -892,6 +894,7 @@ class OpenAIAdapter(AdapterBase):
         if isinstance(func, BaseTool):
             tool = func.to_params(provider="openai")
             tool["type"] = "function"
+            tool["strict"] = False
         elif callable(func):
             tool = self._convert_func_to_tool(func)
         else:

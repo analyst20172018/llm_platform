@@ -182,8 +182,8 @@ class MistralAdapter(AdapterBase):
             'function': {
                 'name': schema['name'],
                 'description': schema['description'],
-                'parameters': {**schema['parameters'], "additionalProperties": False},
-                "strict": True,
+                'parameters': schema['parameters'],
+                "strict": False,
             },
         }
 

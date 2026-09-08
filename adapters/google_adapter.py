@@ -1,10 +1,12 @@
 import asyncio
+import copy
 import inspect
 import json
 import os
 import time
 from typing import Any, Callable, Dict, List, Tuple
 from loguru import logger
+from pydantic import TypeAdapter
 
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
 from .serializers import provider_dump, missing_continuation
@@ -270,14 +272,17 @@ class GoogleAdapter(AdapterBase):
 
     def _build_tools(
         self,
-        functions: List[BaseTool],
+        functions: List[BaseTool | Callable],
         additional_parameters: AdditionalParameters,
     ) -> List[Dict]:
         tools: List[Dict] = []
         for func in functions or []:
-            if not isinstance(func, BaseTool):
-                continue
-            decl = func.to_params(provider="google")
+            if isinstance(func, BaseTool):
+                decl = func.to_params(provider="google")
+            elif callable(func):
+                decl = self._callable_to_json_schema(func)
+            else:
+                raise TypeError("func must be either a BaseTool instance or a callable function")
             tools.append({"type": "function", **decl})
 
         if additional_parameters.get("web_search"):
@@ -321,27 +326,16 @@ class GoogleAdapter(AdapterBase):
         self,
         additional_parameters: AdditionalParameters,
     ) -> Dict | None:
-        """Returns the polymorphic ``response_format`` body for structured
-        output, or None.
-
-        We send this via ``extra_body`` rather than as a named kwarg because
-        the installed ``google-genai`` SDK (1.73.x) ships a stale
-        ``TextResponseFormatParam`` schema that aliases ``mime_type`` →
-        ``mimeType`` on the wire, while the new Interactions server expects
-        ``mime_type`` (snake_case) inside the polymorphic dict and
-        ``responseFormat`` (camelCase) at the top level. ``extra_body`` keys
-        are merged verbatim, so we control the exact wire shape.
-        """
-        structured_output_class = additional_parameters.get("structured_output")
-        if not structured_output_class:
+        """Build the Interactions JSON response format without altering its schema."""
+        structured_output = additional_parameters.get("structured_output")
+        if structured_output is None or structured_output is False:
             return None
-        if hasattr(structured_output_class, "model_json_schema"):
-            raw_schema = structured_output_class.model_json_schema()
-            schema = BaseTool.clean_schema(
-                BaseTool.resolve_schema_for_google(raw_schema)
-            )
+        if isinstance(structured_output, dict):
+            schema = copy.deepcopy(structured_output)
+        elif hasattr(structured_output, "model_json_schema"):
+            schema = structured_output.model_json_schema()
         else:
-            schema = structured_output_class
+            schema = TypeAdapter(structured_output).json_schema()
         return {
             "type": "text",
             "mime_type": "application/json",
@@ -371,7 +365,7 @@ class GoogleAdapter(AdapterBase):
             kwargs["generation_config"] = generation_config
 
         if response_format := self._build_structured_output(additional_parameters):
-            kwargs["extra_body"] = {"response_format": response_format}
+            kwargs["response_format"] = response_format
 
         return kwargs
 
@@ -566,7 +560,7 @@ class GoogleAdapter(AdapterBase):
         """
         function_responses = []
         for fc in function_calls:
-            function_to_call = next((f for f in functions if f.__name__ == fc.name), None)
+            function_to_call = next((f for f in functions if self._tool_name(f) == fc.name), None)
             if not function_to_call:
                 raise ValueError(f"Function '{fc.name}' not found in provided tools.")
 
@@ -592,7 +586,7 @@ class GoogleAdapter(AdapterBase):
         """Async counterpart of `_execute_function_calls`; additionally awaits coroutine tools."""
         function_responses = []
         for fc in function_calls:
-            function_to_call = next((f for f in functions if f.__name__ == fc.name), None)
+            function_to_call = next((f for f in functions if self._tool_name(f) == fc.name), None)
             if not function_to_call:
                 raise ValueError(f"Function '{fc.name}' not found in provided tools.")
 
@@ -813,7 +807,7 @@ class GoogleAdapter(AdapterBase):
             base_kwargs["background"] = True
             base_kwargs["store"] = True
 
-        custom_function_names = {f.__name__ for f in functions}
+        custom_function_names = {self._tool_name(f) for f in functions}
 
         interaction = self._create_interaction(
             the_conversation, model,
@@ -874,7 +868,7 @@ class GoogleAdapter(AdapterBase):
             base_kwargs["background"] = True
             base_kwargs["store"] = True
 
-        custom_function_names = {f.__name__ for f in functions}
+        custom_function_names = {self._tool_name(f) for f in functions}
 
         interaction = await self._create_interaction_async(
             the_conversation, model,

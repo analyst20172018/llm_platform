@@ -1,10 +1,12 @@
 import asyncio
+import functools
 import inspect
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, List
 
 from dotenv import load_dotenv
 from loguru import logger
+from pydantic import TypeAdapter
 
 from llm_platform.services.conversation import Conversation, Message
 from llm_platform.tools.base import BaseTool
@@ -16,17 +18,6 @@ from llm_platform.types import AdditionalParameters
 # rather than on every adapter construction.
 load_dotenv()
 
-
-# Python type -> JSON-schema type mapping for converting plain callables to tool schemas
-PYTHON_TYPE_TO_JSON_SCHEMA = {
-    str: "string",
-    int: "integer",
-    float: "number",
-    bool: "boolean",
-    list: "array",
-    dict: "object",
-}
-DEFAULT_JSON_SCHEMA_TYPE = "string"
 
 # A PDF below BOTH thresholds is sent inline (base64); otherwise its extracted text is sent.
 PDF_INLINE_MAX_BYTES = 32_000_000
@@ -167,27 +158,46 @@ class AdapterBase(ABC):
     @staticmethod
     def _tool_name(func) -> str:
         """Declared tool name for a ``BaseTool`` instance or a plain callable."""
-        return func.name if isinstance(func, BaseTool) else getattr(func, "__name__", str(func))
+        if isinstance(func, BaseTool):
+            return func.name
+        if isinstance(func, functools.partial):
+            return AdapterBase._tool_name(func.func)
+        return getattr(func, "__name__", type(func).__name__)
 
     def _callable_to_json_schema(self, func: Callable) -> Dict:
         """Introspect a plain Python callable into a canonical JSON-schema tool definition.
 
-        Returns ``{"name", "description", "parameters": {"type", "properties", "required"}}``;
-        each adapter wraps this in its provider-specific envelope.
+        Pydantic resolves annotations and retains defaults, unions, containers,
+        constraints, and recursive definitions. Unannotated inputs accept any
+        JSON value. Tool arguments are passed as keyword arguments, so signatures
+        that cannot be represented by a fixed keyword object are rejected.
         """
         signature = inspect.signature(func)
-        properties: Dict[str, Dict] = {}
-        required: List[str] = []
         for name, parameter in signature.parameters.items():
-            properties[name] = {
-                "type": PYTHON_TYPE_TO_JSON_SCHEMA.get(parameter.annotation, DEFAULT_JSON_SCHEMA_TYPE)
-            }
-            if parameter.default is inspect.Parameter.empty:
-                required.append(name)
+            if parameter.kind not in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            ):
+                raise TypeError(
+                    f"Tool {self._tool_name(func)!r} parameter {name!r} must be "
+                    "a named keyword-compatible parameter; positional-only and "
+                    "variadic parameters are unsupported."
+                )
+        # Pydantic accepts functions, bound methods, and partials directly;
+        # callable instances expose their annotations on the bound __call__.
+        target = func
+        if not inspect.isroutine(func) and not isinstance(func, functools.partial):
+            target = func.__call__
+        try:
+            parameters = TypeAdapter(target).json_schema()
+        except (TypeError, ValueError, NameError) as exc:
+            raise TypeError(
+                f"Cannot generate JSON Schema for tool {self._tool_name(func)!r}: {exc}"
+            ) from exc
         return {
-            "name": func.__name__,
-            "description": func.__doc__ or "",
-            "parameters": {"type": "object", "properties": properties, "required": required},
+            "name": self._tool_name(func),
+            "description": inspect.getdoc(func) or "",
+            "parameters": BaseTool.clean_schema(parameters),
         }
 
     def _image_data_url(self, file) -> str:
