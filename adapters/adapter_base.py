@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import inspect
+import time
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, List
 
@@ -27,6 +28,15 @@ PDF_INLINE_MAX_PAGES = 100
 MAX_TOOL_ROUNDS = 40
 
 
+class ResponseTimeoutError(TimeoutError):
+    """A polling/continuation deadline expired; the last response remains available."""
+
+    def __init__(self, response=None):
+        self.response = response
+        self.response_id = getattr(response, "id", None)
+        super().__init__(f"Response deadline exceeded (response_id={self.response_id})")
+
+
 class AdapterBase(ABC):
     """Base class for chat-LLM provider adapters.
 
@@ -35,6 +45,15 @@ class AdapterBase(ABC):
     (parameter merging, usage extraction, callable->schema conversion, and
     content-block formatting) live here so the adapters stay thin.
     """
+
+    RESPONSE_TIMEOUT_SECONDS = 1800
+
+    @staticmethod
+    def _check_deadline(deadline, response=None):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ResponseTimeoutError(response)
+        return remaining
 
     def __init__(self):
         self.latest_usage = None

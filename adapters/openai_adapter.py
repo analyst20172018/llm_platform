@@ -32,6 +32,7 @@ from llm_platform.adapters.serializers import (
 )
 from llm_platform.types import AdditionalParameters
 
+from .response_metadata import openai_metadata
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
 
 # Constants for response types
@@ -376,9 +377,9 @@ class OpenAIAdapter(AdapterBase):
             if output_type == MESSAGE_CALL_TYPE:
                 contents = getattr(output, "content", []) or []
                 message_text = "\n".join(
-                    content.text
+                    (getattr(content, "text", None) or getattr(content, "refusal", ""))
                     for content in contents
-                    if getattr(content, "type", "") == TEXT_OUTPUT_TYPE
+                    if getattr(content, "type", "") in {TEXT_OUTPUT_TYPE, "refusal"}
                 )
                 is_agent_message = getattr(output, "agent", None) is not None
                 is_duplicate = (
@@ -429,10 +430,6 @@ class OpenAIAdapter(AdapterBase):
                 thinking_responses.append(
                     ThinkingResponse(content=summary_text, id=output.id)
                 )
-
-            if output_type == CODE_INTERPRETER_CALL_TYPE:
-                code_text = getattr(output, "code", "")
-                answer_text += f"\n```\n{code_text}```\n"
 
         return answer_text, thinking_responses, files_from_response, container_file_citations, usage
 
@@ -489,17 +486,23 @@ class OpenAIAdapter(AdapterBase):
                 files.append(retrieved_file)
         return files
 
-    def _poll_background_response(self, response):
+    def _poll_background_response(self, response, deadline=None):
         """Poll a background-mode response until it leaves the queued/in-progress states."""
+        if deadline is None:
+            deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
         while response.status in {"queued", "in_progress"}:
-            time.sleep(10)  # Poll every 10 seconds
+            time.sleep(min(10, self._check_deadline(deadline, response)))
+            self._check_deadline(deadline, response)
             response = self.client.responses.retrieve(response.id)
         return response
 
-    async def _poll_background_response_async(self, response):
+    async def _poll_background_response_async(self, response, deadline=None):
         """Async counterpart of `_poll_background_response` (uses the async client)."""
+        if deadline is None:
+            deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
         while response.status in {"queued", "in_progress"}:
-            await asyncio.sleep(10)  # Poll every 10 seconds
+            await asyncio.sleep(min(10, self._check_deadline(deadline, response)))
+            self._check_deadline(deadline, response)
             response = await self.async_client.responses.retrieve(response.id)
         return response
 
@@ -536,6 +539,7 @@ class OpenAIAdapter(AdapterBase):
             thinking_responses=thinking_responses,
             files=files_from_response,
             provider="openai", model=model,
+            **openai_metadata(response, self._is_internal_agent_item),
             provider_data={"output": provider_dump(response.output)} if response is not None else {},
         )
         the_conversation.messages.append(assistant_message)
@@ -681,7 +685,9 @@ class OpenAIAdapter(AdapterBase):
             content=answer_text,
             thinking_responses=thinking_responses,
             files=files_from_response,
+            function_calls=self._get_function_calls_from_response(response),
             provider="openai", model=model,
+            **openai_metadata(response, self._is_internal_agent_item),
             provider_data={"output": provider_dump(response.output)},
         )
         the_conversation.messages.append(message)
@@ -746,7 +752,9 @@ class OpenAIAdapter(AdapterBase):
             content=answer_text,
             thinking_responses=thinking_responses,
             files=files_from_response,
+            function_calls=self._get_function_calls_from_response(response),
             provider="openai", model=model,
+            **openai_metadata(response, self._is_internal_agent_item),
             provider_data={"output": provider_dump(response.output)},
         )
         the_conversation.messages.append(message)
@@ -762,9 +770,13 @@ class OpenAIAdapter(AdapterBase):
         tool_output_callback: Callable = None,
         additional_parameters: AdditionalParameters | None = None,
         _tool_round: int = 0,
+        _deadline: float | None = None,
         **kwargs,
     ):
         """Handles the synchronous, recursive logic for tool-use conversations."""
+        if _deadline is None:
+            _deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
+        self._check_deadline(_deadline)
         if _tool_round >= MAX_TOOL_ROUNDS:
             raise RuntimeError(
                 f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
@@ -782,15 +794,18 @@ class OpenAIAdapter(AdapterBase):
 
         if parameters.get("background"):
             logger.info(f"Background task initiated. Response ID: {response.id}")
-            response = self._poll_background_response(response)
+            response = self._poll_background_response(response, _deadline)
 
         text, thinking, files, citations, usage = self._parse_response(response)
-        files = self._retrieve_container_files(citations) + files
         function_calls = self._get_function_calls_from_response(response)
 
         # 2. If no tools were called, the conversation is over.
-        if not function_calls:
+        if not function_calls or openai_metadata(response, self._is_internal_agent_item)["status"] != "requires_action":
             return response
+
+        files = self._retrieve_container_files(citations) + files
+
+        self._check_deadline(_deadline, response)
 
         # 3. Execute the requested tools
         function_responses = self._execute_tool_calls(
@@ -806,7 +821,7 @@ class OpenAIAdapter(AdapterBase):
         # 5. Call the model again with the updated history to get the final answer
         return self.request_llm_with_functions(
             model, the_conversation, functions, tool_output_callback, additional_parameters,
-            _tool_round=_tool_round + 1,
+            _tool_round=_tool_round + 1, _deadline=_deadline,
         )
 
     async def request_llm_with_functions_async(
@@ -817,9 +832,13 @@ class OpenAIAdapter(AdapterBase):
         tool_output_callback: Callable = None,
         additional_parameters: AdditionalParameters | None = None,
         _tool_round: int = 0,
+        _deadline: float | None = None,
         **kwargs,
     ):
         """Handles the asynchronous, recursive logic for tool-use conversations."""
+        if _deadline is None:
+            _deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
+        self._check_deadline(_deadline)
         if _tool_round >= MAX_TOOL_ROUNDS:
             raise RuntimeError(
                 f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
@@ -837,15 +856,18 @@ class OpenAIAdapter(AdapterBase):
 
         if parameters.get("background"):
             logger.info(f"Background task initiated. Response ID: {response.id}")
-            response = await self._poll_background_response_async(response)
+            response = await self._poll_background_response_async(response, _deadline)
 
         text, thinking, files, citations, usage = self._parse_response(response)
-        files = await self._retrieve_container_files_async(citations) + files
         function_calls = self._get_function_calls_from_response(response)
 
         # 2. If no tools were called, the conversation is over.
-        if not function_calls:
+        if not function_calls or openai_metadata(response, self._is_internal_agent_item)["status"] != "requires_action":
             return response
+
+        files = await self._retrieve_container_files_async(citations) + files
+
+        self._check_deadline(_deadline, response)
 
         # 3. Execute the requested tools
         function_responses = await self._execute_tool_calls_async(
@@ -861,7 +883,7 @@ class OpenAIAdapter(AdapterBase):
         # 5. Call the model again with the updated history to get the final answer
         return await self.request_llm_with_functions_async(
             model, the_conversation, functions, tool_output_callback, additional_parameters,
-            _tool_round=_tool_round + 1,
+            _tool_round=_tool_round + 1, _deadline=_deadline,
         )
 
     def _convert_func_to_tool(self, func: Callable) -> Dict:

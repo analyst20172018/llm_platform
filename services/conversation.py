@@ -110,6 +110,12 @@ class Message:
         provider: str | None = None,
         model: str | None = None,
         provider_data: Dict | None = None,
+        status: str = "unknown",
+        finish_reason: str | None = None,
+        error: Any = None,
+        incomplete_details: Any = None,
+        citations: List[Dict] | None = None,
+        hosted_tool_results: List[Dict] | None = None,
     ):
         assert role in ["user", "assistant", "function"]
 
@@ -126,11 +132,19 @@ class Message:
         self.provider = provider
         self.model = model
         self.provider_data = deepcopy(provider_data) if provider_data is not None else {}
+        self.status = status
+        self.finish_reason = finish_reason
+        self.error = deepcopy(error)
+        self.incomplete_details = deepcopy(incomplete_details)
+        self.citations = deepcopy(citations) if citations is not None else []
+        self.hosted_tool_results = deepcopy(hosted_tool_results) if hosted_tool_results is not None else []
         self._replay_fingerprint = self._content_fingerprint()
 
     def _content_fingerprint(self):
         data = Conversation._serialize_message(self)
         for key in ("provider_data", "replay_fingerprint", "timestamp", "usage", "function_responses"):
+            data.pop(key, None)
+        for key in ("status", "finish_reason", "error", "incomplete_details", "citations", "hosted_tool_results"):
             data.pop(key, None)
         return Conversation._fingerprint(data)
 
@@ -141,6 +155,11 @@ class Message:
         if self._replay_fingerprint != self._content_fingerprint():
             return {}
         return deepcopy(self.provider_data)
+
+    @property
+    def can_execute_tools(self):
+        """Only a response requesting client action may execute local tools."""
+        return self.status == "requires_action"
 
     @property
     def text(self):
@@ -262,6 +281,12 @@ class Conversation:
     @classmethod
     def _serialize_message(cls, message: Message) -> Dict:
         return {
+            "status": message.status,
+            "finish_reason": message.finish_reason,
+            "error": deepcopy(message.error),
+            "incomplete_details": deepcopy(message.incomplete_details),
+            "citations": deepcopy(message.citations),
+            "hosted_tool_results": deepcopy(message.hosted_tool_results),
             "id": message.id,
             "provider": message.provider,
             "model": message.model,
@@ -333,6 +358,12 @@ class Conversation:
     def _deserialize_message(cls, message_data: Dict) -> Message:
         message_data = deepcopy(message_data)
         message = Message(
+            status=message_data.get("status", "unknown"),
+            finish_reason=message_data.get("finish_reason"),
+            error=message_data.get("error"),
+            incomplete_details=message_data.get("incomplete_details"),
+            citations=message_data.get("citations"),
+            hosted_tool_results=message_data.get("hosted_tool_results"),
             id=message_data.get("id"),
             provider=message_data.get("provider"),
             model=message_data.get("model"),

@@ -1,3 +1,4 @@
+from .response_metadata import chat_metadata, block_metadata
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
 import os
 from typing import Any, Callable, Dict, List
@@ -166,8 +167,10 @@ class MistralAdapter(AdapterBase):
                     thoughts.append(ThinkingResponse(content=thinking))
             content = "".join(text)
         return Message(
+            **chat_metadata(response),
             role="assistant", content=content, id=getattr(response, "id", None),
             provider="mistral", model=model, provider_data={"message": native},
+            **block_metadata("mistral", native.get("content") if isinstance(native.get("content"), list) else []),
             thinking_responses=thoughts,
             function_calls=[function_call_from_openai_chat(call)
                             for call in (getattr(assistant, "tool_calls", None) or [])],
@@ -232,7 +235,7 @@ class MistralAdapter(AdapterBase):
         tool_calls = getattr(assistant_message, 'tool_calls', None)
 
         # No tool calls -> final answer; record it and finish.
-        if not tool_calls:
+        if not tool_calls or chat_metadata(chat_response)["status"] != "requires_action":
             message = self._message_from_response(model, chat_response)
             the_conversation.messages.append(message)
             return message

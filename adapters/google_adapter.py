@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Tuple
 from loguru import logger
 from pydantic import TypeAdapter
 
+from .response_metadata import google_metadata, result_status
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
 from .serializers import provider_dump, missing_continuation
 from llm_platform.services.conversation import (Conversation, FunctionCall,
@@ -30,15 +31,11 @@ class GoogleAdapter(AdapterBase):
 
     REASONING_EFFORT_MAP = {'high': 24_576, 'medium': 8_000, 'low': 4_000, 'dynamic': -1}
     DEEP_RESEARCH_POLL_INTERVAL_SECONDS = 10
-    DEEP_RESEARCH_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "incomplete"}
 
     # Background agent polling (e.g. the Antigravity agent). Polling stops both on
     # terminal statuses and on ``requires_action`` (the agent is waiting for a
     # custom-function result before it can continue).
     AGENT_POLL_INTERVAL_SECONDS = 5
-    AGENT_POLL_STOP_STATUSES = {
-        "completed", "failed", "cancelled", "incomplete", "requires_action",
-    }
 
     # Keys consumed directly when building Interactions params; everything else
     # in additional_parameters is forwarded into generation_config verbatim.
@@ -405,46 +402,6 @@ class GoogleAdapter(AdapterBase):
         extension = mime_type.split("/", 1)[1]
         return "jpg" if extension == "jpeg" else extension
 
-    def _extract_interaction_steps(
-        self,
-        steps: List,
-    ) -> Tuple[str, List[MediaFile], List[str]]:
-        """Walks ``model_output`` steps and pulls text, images, and annotations
-        out of their ``content`` arrays (May 2026 steps schema)."""
-        text_parts: List[str] = []
-        files: List[MediaFile] = []
-        additional_responses: List[str] = []
-        for step in steps or []:
-            if getattr(step, "type", "") != "model_output":
-                continue
-
-            for item in getattr(step, "content", []) or []:
-                item_type = getattr(item, "type", "")
-
-                if item_type == "image" and getattr(item, "data", None):
-                    extension = self._extension_from_mime_type(
-                        getattr(item, "mime_type", None),
-                        "png",
-                    )
-                    files.append(ImageFile.from_base64(
-                        base64_str=item.data,
-                        file_name=f"image_{len(files)}.{extension}",
-                    ))
-                    continue
-
-                if item_type != "text":
-                    continue
-
-                if text := getattr(item, "text", None):
-                    text_parts.append(text)
-
-                for annotation in getattr(item, "annotations", []) or []:
-                    formatted_annotation = self._format_interaction_annotation(annotation)
-                    if formatted_annotation:
-                        additional_responses.append(formatted_annotation)
-
-        return "\n\n".join(text_parts).strip(), files, additional_responses
-
     def _parse_interaction_response(self, interaction, model_name: str) -> Message:
         """Parses a chat ``Interaction`` (text + tools + thinking + code exec)
         into a platform ``Message``."""
@@ -524,14 +481,11 @@ class GoogleAdapter(AdapterBase):
             output_text = (getattr(interaction, "output_text", "") or "").strip()
             if output_text:
                 text_content = output_text
-            else:
-                status = getattr(interaction, "status", None)
-                error = getattr(interaction, "error", None)
-                text_content = f"ERROR. No content in response. status={status} error={error}"
 
         return Message(
             id=getattr(interaction, "id", None),
             provider="google", model=model_name,
+            **google_metadata(interaction),
             provider_data={"steps": provider_dump(getattr(interaction, "steps", []) or []),
                            "environment_id": getattr(interaction, "environment_id", None)},
             role="assistant",
@@ -639,49 +593,27 @@ class GoogleAdapter(AdapterBase):
                 "content": [{"type": "text", "text": f"System instructions:\n{conversation.system_prompt}"}],
             })
 
-    def _poll_deep_research_interaction(self, interaction):
-        while getattr(interaction, "status", None) not in self.DEEP_RESEARCH_TERMINAL_STATUSES:
-            time.sleep(self.DEEP_RESEARCH_POLL_INTERVAL_SECONDS)
+    def _poll_deep_research_interaction(self, interaction, deadline=None):
+        if deadline is None:
+            deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
+        while getattr(interaction, "status", None) in {"queued", "in_progress"}:
+            time.sleep(min(self.DEEP_RESEARCH_POLL_INTERVAL_SECONDS, self._check_deadline(deadline, interaction)))
+            self._check_deadline(deadline, interaction)
             interaction = self.client.interactions.get(interaction.id)
         return interaction
 
-    async def _poll_deep_research_interaction_async(self, interaction):
+    async def _poll_deep_research_interaction_async(self, interaction, deadline=None):
         """Async counterpart of `_poll_deep_research_interaction`."""
-        while getattr(interaction, "status", None) not in self.DEEP_RESEARCH_TERMINAL_STATUSES:
-            await asyncio.sleep(self.DEEP_RESEARCH_POLL_INTERVAL_SECONDS)
+        if deadline is None:
+            deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
+        while getattr(interaction, "status", None) in {"queued", "in_progress"}:
+            await asyncio.sleep(min(self.DEEP_RESEARCH_POLL_INTERVAL_SECONDS, self._check_deadline(deadline, interaction)))
+            self._check_deadline(deadline, interaction)
             interaction = await self.async_client.interactions.get(interaction.id)
         return interaction
 
     def _parse_deep_research_interaction(self, interaction, model_name: str) -> Message:
-        if getattr(interaction, "status", None) != "completed":
-            error = getattr(interaction, "error", None)
-            raise RuntimeError(
-                f"Gemini Deep Research interaction {interaction.id} ended with "
-                f"status '{interaction.status}'. {error or ''}".strip()
-            )
-
-        text_content, files, additional_responses = self._extract_interaction_steps(
-            getattr(interaction, "steps", []) or []
-        )
-
-        usage_metadata = getattr(interaction, "usage", None)
-        usage = {
-            "model": model_name,
-            "prompt_tokens": getattr(usage_metadata, "total_input_tokens", None),
-            "completion_tokens": getattr(usage_metadata, "total_output_tokens", None),
-            "total_tokens": getattr(usage_metadata, "total_tokens", None),
-        }
-
-        return Message(
-            id=interaction.id,
-            provider="google", model=model_name,
-            provider_data={"steps": provider_dump(getattr(interaction, "steps", []) or [])},
-            role="assistant",
-            content=text_content,
-            usage=usage,
-            files=files,
-            additional_responses=additional_responses,
-        )
+        return self._parse_interaction_response(interaction, model_name)
 
     def _request_deep_research(
         self,
@@ -693,11 +625,12 @@ class GoogleAdapter(AdapterBase):
         if functions:
             logger.warning("Gemini Deep Research agents do not support custom function tools.")
 
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
         interaction = self._create_interaction(
             the_conversation, model,
             **self._deep_research_interaction_params(model, the_conversation, additional_parameters)
         )
-        interaction = self._poll_deep_research_interaction(interaction)
+        interaction = self._poll_deep_research_interaction(interaction, deadline)
         assistant_message = self._parse_deep_research_interaction(
             interaction=interaction,
             model_name=model,
@@ -716,11 +649,12 @@ class GoogleAdapter(AdapterBase):
         if functions:
             logger.warning("Gemini Deep Research agents do not support custom function tools.")
 
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
         interaction = await self._create_interaction_async(
             the_conversation, model,
             **self._deep_research_interaction_params(model, the_conversation, additional_parameters)
         )
-        interaction = await self._poll_deep_research_interaction_async(interaction)
+        interaction = await self._poll_deep_research_interaction_async(interaction, deadline)
         assistant_message = self._parse_deep_research_interaction(
             interaction=interaction,
             model_name=model,
@@ -759,18 +693,24 @@ class GoogleAdapter(AdapterBase):
             kwargs["tools"] = tools
         return kwargs
 
-    def _poll_agent_interaction(self, interaction):
+    def _poll_agent_interaction(self, interaction, deadline=None):
         """Polls a background interaction until it reaches a terminal status or
         ``requires_action`` (waiting on a client-side function result)."""
-        while getattr(interaction, "status", None) not in self.AGENT_POLL_STOP_STATUSES:
-            time.sleep(self.AGENT_POLL_INTERVAL_SECONDS)
+        if deadline is None:
+            deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
+        while getattr(interaction, "status", None) in {"queued", "in_progress"}:
+            time.sleep(min(self.AGENT_POLL_INTERVAL_SECONDS, self._check_deadline(deadline, interaction)))
+            self._check_deadline(deadline, interaction)
             interaction = self.client.interactions.get(interaction.id)
         return interaction
 
-    async def _poll_agent_interaction_async(self, interaction):
+    async def _poll_agent_interaction_async(self, interaction, deadline=None):
         """Async counterpart of `_poll_agent_interaction`."""
-        while getattr(interaction, "status", None) not in self.AGENT_POLL_STOP_STATUSES:
-            await asyncio.sleep(self.AGENT_POLL_INTERVAL_SECONDS)
+        if deadline is None:
+            deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
+        while getattr(interaction, "status", None) in {"queued", "in_progress"}:
+            await asyncio.sleep(min(self.AGENT_POLL_INTERVAL_SECONDS, self._check_deadline(deadline, interaction)))
+            self._check_deadline(deadline, interaction)
             interaction = await self.async_client.interactions.get(interaction.id)
         return interaction
 
@@ -809,6 +749,7 @@ class GoogleAdapter(AdapterBase):
 
         custom_function_names = {self._tool_name(f) for f in functions}
 
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
         interaction = self._create_interaction(
             the_conversation, model,
             **self._continuation_input(the_conversation, model, antigravity=True),
@@ -816,8 +757,9 @@ class GoogleAdapter(AdapterBase):
         )
 
         for _tool_round in range(MAX_TOOL_ROUNDS):
+            self._check_deadline(deadline, interaction)
             if background:
-                interaction = self._poll_agent_interaction(interaction)
+                interaction = self._poll_agent_interaction(interaction, deadline)
 
             assistant_message = self._parse_interaction_response(interaction, model)
 
@@ -827,17 +769,24 @@ class GoogleAdapter(AdapterBase):
                 if fc.name in custom_function_names
             ]
             assistant_message.function_calls = custom_calls
+            assistant_message.status = result_status(
+                assistant_message.finish_reason, error=assistant_message.error, has_calls=bool(custom_calls),
+            )
             assistant_message._replay_fingerprint = assistant_message._content_fingerprint()
             self._append_interaction(the_conversation, assistant_message, interaction, model)
 
-            if not custom_calls:
+            if not custom_calls or not assistant_message.can_execute_tools:
                 return assistant_message
 
+            self._check_deadline(deadline, interaction)
             function_responses = self._execute_function_calls(
                 custom_calls, functions, tool_output_callback
             )
             the_conversation.messages.append(Message(role="function", content="", function_responses=function_responses))
 
+            if _tool_round + 1 >= MAX_TOOL_ROUNDS:
+                break
+            self._check_deadline(deadline, interaction)
             interaction = self._create_interaction(
                 the_conversation, model,
                 input=[self._function_result_entry(fr) for fr in function_responses],
@@ -870,6 +819,7 @@ class GoogleAdapter(AdapterBase):
 
         custom_function_names = {self._tool_name(f) for f in functions}
 
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
         interaction = await self._create_interaction_async(
             the_conversation, model,
             **self._continuation_input(the_conversation, model, antigravity=True),
@@ -877,8 +827,9 @@ class GoogleAdapter(AdapterBase):
         )
 
         for _tool_round in range(MAX_TOOL_ROUNDS):
+            self._check_deadline(deadline, interaction)
             if background:
-                interaction = await self._poll_agent_interaction_async(interaction)
+                interaction = await self._poll_agent_interaction_async(interaction, deadline)
 
             assistant_message = self._parse_interaction_response(interaction, model)
 
@@ -888,17 +839,24 @@ class GoogleAdapter(AdapterBase):
                 if fc.name in custom_function_names
             ]
             assistant_message.function_calls = custom_calls
+            assistant_message.status = result_status(
+                assistant_message.finish_reason, error=assistant_message.error, has_calls=bool(custom_calls),
+            )
             assistant_message._replay_fingerprint = assistant_message._content_fingerprint()
             self._append_interaction(the_conversation, assistant_message, interaction, model)
 
-            if not custom_calls:
+            if not custom_calls or not assistant_message.can_execute_tools:
                 return assistant_message
 
+            self._check_deadline(deadline, interaction)
             function_responses = await self._execute_function_calls_async(
                 custom_calls, functions, tool_output_callback
             )
             the_conversation.messages.append(Message(role="function", content="", function_responses=function_responses))
 
+            if _tool_round + 1 >= MAX_TOOL_ROUNDS:
+                break
+            self._check_deadline(deadline, interaction)
             interaction = await self._create_interaction_async(
                 the_conversation, model,
                 input=[self._function_result_entry(fr) for fr in function_responses],
@@ -969,6 +927,7 @@ class GoogleAdapter(AdapterBase):
         )
 
         # A valid provider/model checkpoint identifies the complete unsent suffix.
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
         interaction = self._create_interaction(
             the_conversation, model,
             **self._continuation_input(the_conversation, model),
@@ -976,19 +935,24 @@ class GoogleAdapter(AdapterBase):
         )
 
         for _tool_round in range(MAX_TOOL_ROUNDS):
+            self._check_deadline(deadline, interaction)
             assistant_message = self._parse_interaction_response(interaction, model)
             self._append_interaction(the_conversation, assistant_message, interaction, model)
 
-            if not assistant_message.function_calls:
+            if not assistant_message.function_calls or not assistant_message.can_execute_tools:
                 return assistant_message
 
             # --- Execute tools and continue with previous_interaction_id ---
+            self._check_deadline(deadline, interaction)
             function_responses = self._execute_function_calls(
                 assistant_message.function_calls, functions, tool_output_callback
             )
             the_conversation.messages.append(Message(role="function", content="", function_responses=function_responses))
 
             result_inputs = [self._function_result_entry(fr) for fr in function_responses]
+            if _tool_round + 1 >= MAX_TOOL_ROUNDS:
+                break
+            self._check_deadline(deadline, interaction)
             interaction = self._create_interaction(
                 the_conversation, model,
                 input=result_inputs,
@@ -1048,6 +1012,7 @@ class GoogleAdapter(AdapterBase):
             additional_parameters=additional_parameters,
         )
 
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
         interaction = await self._create_interaction_async(
             the_conversation, model,
             **self._continuation_input(the_conversation, model),
@@ -1055,19 +1020,24 @@ class GoogleAdapter(AdapterBase):
         )
 
         for _tool_round in range(MAX_TOOL_ROUNDS):
+            self._check_deadline(deadline, interaction)
             assistant_message = self._parse_interaction_response(interaction, model)
             self._append_interaction(the_conversation, assistant_message, interaction, model)
 
-            if not assistant_message.function_calls:
+            if not assistant_message.function_calls or not assistant_message.can_execute_tools:
                 return assistant_message
 
             # --- Execute tools and continue with previous_interaction_id ---
+            self._check_deadline(deadline, interaction)
             function_responses = await self._execute_function_calls_async(
                 assistant_message.function_calls, functions, tool_output_callback
             )
             the_conversation.messages.append(Message(role="function", content="", function_responses=function_responses))
 
             result_inputs = [self._function_result_entry(fr) for fr in function_responses]
+            if _tool_round + 1 >= MAX_TOOL_ROUNDS:
+                break
+            self._check_deadline(deadline, interaction)
             interaction = await self._create_interaction_async(
                 the_conversation, model,
                 input=result_inputs,

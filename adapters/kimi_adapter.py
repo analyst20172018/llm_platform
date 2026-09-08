@@ -30,6 +30,7 @@ from .serializers import (
     function_response_to_openai_chat,
 )
 from .adapter_base import MAX_TOOL_ROUNDS
+from .response_metadata import chat_metadata
 from .openai_compatible_adapter import OpenAICompatibleAdapter
 
 
@@ -309,15 +310,17 @@ class KimiAdapter(OpenAICompatibleAdapter):
         thinking_responses = self._thinking_from_response(response, assistant_message)
         usage = self._build_usage(getattr(response, "usage", None), model)
 
-        if not function_calls:
+        if not function_calls or chat_metadata(response)["status"] != "requires_action":
             message = Message(
                 role="assistant",
                 id=getattr(response, "id", None),
                 provider="kimi", model=model,
+                **chat_metadata(response),
                 provider_data={"message": chat_replay_data(assistant_message)},
                 content=assistant_message.content or "",
                 thinking_responses=thinking_responses,
                 usage=usage,
+                function_calls=function_calls,
             )
             the_conversation.messages.append(message)
             return message
@@ -330,6 +333,7 @@ class KimiAdapter(OpenAICompatibleAdapter):
                 role="assistant",
                 id=getattr(response, "id", None),
                 provider="kimi", model=model,
+                **chat_metadata(response),
                 provider_data={"message": chat_replay_data(assistant_message)},
                 content=assistant_message.content or "",
                 thinking_responses=thinking_responses,
@@ -353,15 +357,17 @@ class KimiAdapter(OpenAICompatibleAdapter):
         thinking_responses = self._thinking_from_response(response, assistant_message)
         usage = self._build_usage(getattr(response, "usage", None), model)
 
-        if not function_calls:
+        if not function_calls or chat_metadata(response)["status"] != "requires_action":
             message = Message(
                 role="assistant",
                 id=getattr(response, "id", None),
                 provider="kimi", model=model,
+                **chat_metadata(response),
                 provider_data={"message": chat_replay_data(assistant_message)},
                 content=assistant_message.content or "",
                 thinking_responses=thinking_responses,
                 usage=usage,
+                function_calls=function_calls,
             )
             the_conversation.messages.append(message)
             return message
@@ -374,6 +380,7 @@ class KimiAdapter(OpenAICompatibleAdapter):
                 role="assistant",
                 id=getattr(response, "id", None),
                 provider="kimi", model=model,
+                **chat_metadata(response),
                 provider_data={"message": chat_replay_data(assistant_message)},
                 content=assistant_message.content or "",
                 thinking_responses=thinking_responses,
@@ -425,6 +432,8 @@ class KimiAdapter(OpenAICompatibleAdapter):
             )
             if message is not None:
                 return message
+            if request_params.get("tool_choice") == "required" or isinstance(request_params.get("tool_choice"), dict):
+                request_params["tool_choice"] = "auto"
 
         raise RuntimeError(
             f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
@@ -471,6 +480,8 @@ class KimiAdapter(OpenAICompatibleAdapter):
             )
             if message is not None:
                 return message
+            if request_params.get("tool_choice") == "required" or isinstance(request_params.get("tool_choice"), dict):
+                request_params["tool_choice"] = "auto"
 
         raise RuntimeError(
             f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"

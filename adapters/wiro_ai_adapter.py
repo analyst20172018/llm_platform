@@ -194,6 +194,7 @@ class WiroAIAdapter(AdapterBase):
             "costs": cost,
         }
         return Message(
+            status="completed", finish_reason=task.get("status"),
             provider="wiroai", model=model,
             role="assistant",
             content=content,

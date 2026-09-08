@@ -20,6 +20,7 @@ from llm_platform.adapters.serializers import (
 )
 from llm_platform.types import AdditionalParameters
 
+from .response_metadata import chat_metadata, block_metadata
 from .adapter_base import AdapterBase
 
 # Platform-level keys consumed by the facade / handled explicitly here, so they
@@ -173,9 +174,11 @@ class OpenAICompatibleAdapter(AdapterBase):
             else []
         )
         return Message(
+            **chat_metadata(response),
             id=getattr(response, "id", None),
             provider=self.provider, model=model,
             provider_data={"message": chat_replay_data(assistant_message)},
+            **block_metadata(self.provider, [chat_replay_data(assistant_message)]),
             role="assistant",
             content=assistant_message.content or "",
             function_calls=[function_call_from_openai_chat(call)

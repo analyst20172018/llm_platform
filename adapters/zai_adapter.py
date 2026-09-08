@@ -7,6 +7,7 @@ from llm_platform.tools.base import BaseTool
 from llm_platform.adapters.serializers import function_call_from_openai_chat
 from llm_platform.types import AdditionalParameters
 
+from .response_metadata import chat_metadata
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
 from .openai_compatible_adapter import OpenAICompatibleAdapter
 
@@ -280,7 +281,8 @@ class ZaiAdapter(OpenAICompatibleAdapter):
         assistant_message = response.choices[0].message
 
         # No tool calls -> final answer; record it and finish.
-        if not getattr(assistant_message, "tool_calls", None):
+        if (not getattr(assistant_message, "tool_calls", None)
+                or chat_metadata(response)["status"] != "requires_action"):
             message = self._message_from_response(model, response)
             the_conversation.messages.append(message)
             return message

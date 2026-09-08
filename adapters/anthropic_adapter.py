@@ -2,6 +2,7 @@ import inspect
 import json
 from loguru import logger
 import os
+import time
 from typing import Any, Callable, Dict, List, Tuple
 
 import anthropic
@@ -29,6 +30,7 @@ from llm_platform.adapters.serializers import (
 
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
 from llm_platform.types import AdditionalParameters
+from .response_metadata import anthropic_metadata
 
 # --- Constants ---
 
@@ -73,6 +75,7 @@ class ClaudeStreamProcessor:
             "cache_read_tokens": 0,
             "cache_creation_tokens": 0,
         }
+        self.error = None
         self.stop_reason: str | None = None
         self.id = None
         self.container = None
@@ -100,6 +103,8 @@ class ClaudeStreamProcessor:
     def process_event(self, event: Any):
         """Process a single event from the Claude stream."""
         event_type = getattr(event, 'type', None)
+        if event_type == 'error':
+            self.error = provider_dump(event.error)
         if handler := self._event_handlers.get(event_type):
             handler(event)
 
@@ -194,7 +199,7 @@ class ClaudeStreamProcessor:
 
     def _handle_message_delta(self, event: Any):
         self.usage["completion_tokens"] = getattr(event.usage, 'output_tokens', 0)
-        self.stop_reason = getattr(event.delta, 'stop_reason', None)
+        self.stop_reason = getattr(event.delta, 'stop_reason', None) or self.stop_reason
         if getattr(event.delta, "container", None) is not None:
             self.container = provider_dump(event.delta.container)
 
@@ -218,130 +223,120 @@ class AnthropicAdapter(AdapterBase):
 
     # --- Main Public Methods ---
 
-    def request_llm(
-        self,
-        model: str,
-        the_conversation: Conversation,
-        functions: List[BaseTool] = None,
-        tool_output_callback: Callable = None,
-        additional_parameters: AdditionalParameters | None = None,
-        **kwargs,
-    ) -> Message:
-        """
-        Sends a request to the LLM, handling simple responses and tool use.
+    def _build_tools(self, functions, parameters):
+        tools = [self._convert_function_to_tool(func) for func in functions or []]
+        if parameters.get("web_search"):
+            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
+        if parameters.get("code_execution"):
+            tools.append({"type": "code_execution_20250825", "name": "code_execution"})
+        return tools
 
-        Uses streaming for requests with max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD
-        to avoid HTTP timeouts. All features, including structured output, work on
-        both paths.
-        """
-        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
-
-        max_tokens = additional_parameters.get("max_tokens") or 0
-        use_streaming = max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD
-
-        if use_streaming:
-            if functions:
-                processor = self._request_llm_with_tools_streaming(
-                    model=model,
-                    conversation=the_conversation,
-                    functions=functions,
-                    tool_output_callback=tool_output_callback,
-                    additional_parameters=additional_parameters,
-                    **kwargs,
-                )
-            else:
-                processor = self._request_llm_simple_streaming(
-                    model=model,
-                    conversation=the_conversation,
-                    additional_parameters=additional_parameters,
-                    **kwargs,
-                )
-        else:
-            if functions:
-                processor = self._request_llm_with_tools(
-                    model=model,
-                    conversation=the_conversation,
-                    functions=functions,
-                    tool_output_callback=tool_output_callback,
-                    additional_parameters=additional_parameters,
-                    **kwargs,
-                )
-            else:
-                processor = self._request_llm_simple(
-                    model=model,
-                    conversation=the_conversation,
-                    additional_parameters=additional_parameters,
-                    **kwargs,
-                )
-
-        response_message = Message(
-            role="assistant",
-            content=processor.response_text,
+    def _message_from_processor(self, processor, **kwargs):
+        kwargs.setdefault("function_calls", [
+            FunctionCall(id=call["id"], name=call["name"], arguments=call["parameters"])
+            for call in processor.tool_uses
+        ])
+        return Message(
+            role="assistant", content=processor.response_text,
             id=processor.id, provider="anthropic", model=processor.model or processor.usage["model"],
             provider_data={"content": processor.content_blocks, "container": processor.container},
-            thinking_responses=processor.thinking_responses,
-            usage=processor.usage,
+            thinking_responses=processor.thinking_responses, usage=processor.usage,
+            **anthropic_metadata(processor), **kwargs,
         )
-        the_conversation.messages.append(response_message)
-        return response_message
+
+    def _round_kwargs(self, model, conversation, parameters, tools, **kwargs):
+        request = self._prepare_request_kwargs(model, parameters, **kwargs)
+        if container_id := self._continuation_container(conversation, model):
+            request.setdefault("container", container_id)
+        return {
+            "model": model, "system": conversation.system_prompt,
+            "messages": self.convert_conversation_history_to_adapter_format(conversation, parameters, model),
+            "tools": tools, **request,
+        }
+
+    def request_llm(
+        self, model: str, the_conversation: Conversation,
+        functions: List[BaseTool | Callable] | None = None,
+        tool_output_callback: Callable | None = None,
+        additional_parameters: AdditionalParameters | None = None, **kwargs,
+    ) -> Message:
+        """Run local tools and resume hosted pauses within one bounded turn."""
+        parameters = self._merge_additional_parameters(additional_parameters, kwargs)
+        tools = self._build_tools(functions, parameters)
+        stream = (parameters.get("max_tokens") or 0) >= MAX_TOKENS_STREAMING_THRESHOLD
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
+        for _ in range(MAX_TOOL_ROUNDS):
+            self._check_deadline(deadline)
+            request = self._round_kwargs(model, the_conversation, parameters, tools, **kwargs)
+            if "max_tokens" in request:
+                request["max_tokens"] = self.correct_max_tokens(model, request["messages"], request["max_tokens"], tools)
+            if stream:
+                events = self.client.beta.messages.create(**request, stream=True)
+                processor = ClaudeStreamProcessor(model)
+                try:
+                    for event in events:
+                        processor.process_event(event)
+                        self._check_deadline(deadline, processor)
+                finally:
+                    events.close()
+            else:
+                response = self.client.beta.messages.create(**request)
+                processor = self._parse_non_streaming_response(response, model)
+            message = self._message_from_processor(processor)
+            if message.status == "requires_action" and processor.tool_uses:
+                self._check_deadline(deadline, processor)
+                self._handle_tool_calls(processor, the_conversation, functions or [], tool_output_callback)
+            else:
+                the_conversation.messages.append(message)
+                if message.status != "paused":
+                    return message
+            self._check_deadline(deadline, processor)
+        raise RuntimeError(f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}")
 
     async def request_llm_async(
-        self,
-        model: str,
-        the_conversation: Conversation,
-        functions: List[BaseTool] = None,
-        tool_output_callback: Callable = None,
-        additional_parameters: AdditionalParameters | None = None,
-        **kwargs,
+        self, model: str, the_conversation: Conversation,
+        functions: List[BaseTool | Callable] | None = None,
+        tool_output_callback: Callable | None = None,
+        additional_parameters: AdditionalParameters | None = None, **kwargs,
     ) -> Message:
-        """
-        Async counterpart of `request_llm`, backed by the native `AsyncAnthropic` client.
-
-        Follows the same dispatch rules: streaming is used for requests with
-        max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD, and tool use runs the
-        recursive tool-calling loop.
-        """
-        additional_parameters = self._merge_additional_parameters(additional_parameters, kwargs)
-
-        max_tokens = additional_parameters.get("max_tokens") or 0
-        use_streaming = max_tokens >= MAX_TOKENS_STREAMING_THRESHOLD
-
-        if functions:
-            processor = await self._request_llm_with_tools_async(
-                model=model,
-                conversation=the_conversation,
-                functions=functions,
-                tool_output_callback=tool_output_callback,
-                additional_parameters=additional_parameters,
-                stream=use_streaming,
-                **kwargs,
-            )
-        else:
-            processor = await self._request_llm_simple_async(
-                model=model,
-                conversation=the_conversation,
-                additional_parameters=additional_parameters,
-                stream=use_streaming,
-                **kwargs,
-            )
-
-        response_message = Message(
-            role="assistant",
-            content=processor.response_text,
-            id=processor.id, provider="anthropic", model=processor.model or processor.usage["model"],
-            provider_data={"content": processor.content_blocks, "container": processor.container},
-            thinking_responses=processor.thinking_responses,
-            usage=processor.usage,
-        )
-        the_conversation.messages.append(response_message)
-        return response_message
-
-    # --- Private Helper Methods for LLM Requests ---
+        """Native async equivalent, including streamed pauses and coroutine tools."""
+        parameters = self._merge_additional_parameters(additional_parameters, kwargs)
+        tools = self._build_tools(functions, parameters)
+        stream = (parameters.get("max_tokens") or 0) >= MAX_TOKENS_STREAMING_THRESHOLD
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
+        for _ in range(MAX_TOOL_ROUNDS):
+            self._check_deadline(deadline)
+            request = self._round_kwargs(model, the_conversation, parameters, tools, **kwargs)
+            if "max_tokens" in request:
+                request["max_tokens"] = await self.correct_max_tokens_async(model, request["messages"], request["max_tokens"], tools)
+            if stream:
+                events = await self.async_client.beta.messages.create(**request, stream=True)
+                processor = ClaudeStreamProcessor(model)
+                try:
+                    async for event in events:
+                        processor.process_event(event)
+                        self._check_deadline(deadline, processor)
+                finally:
+                    await events.close()
+            else:
+                response = await self.async_client.beta.messages.create(**request)
+                processor = self._parse_non_streaming_response(response, model)
+            message = self._message_from_processor(processor)
+            if message.status == "requires_action" and processor.tool_uses:
+                self._check_deadline(deadline, processor)
+                await self._handle_tool_calls_async(processor, the_conversation, functions or [], tool_output_callback)
+            else:
+                the_conversation.messages.append(message)
+                if message.status != "paused":
+                    return message
+            self._check_deadline(deadline, processor)
+        raise RuntimeError(f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}")
 
     def _parse_non_streaming_response(self, response, model=None) -> ClaudeStreamProcessor:
         """Converts a non-streaming API response into a ClaudeStreamProcessor for uniform handling."""
         processor = ClaudeStreamProcessor(model)
         processor.id = getattr(response, "id", None)
+        processor.error = provider_dump(getattr(response, "error", None))
         processor.container = provider_dump(getattr(response, "container", None))
         processor.content_blocks = provider_dump(response.content)
         cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
@@ -368,273 +363,6 @@ class AnthropicAdapter(AdapterBase):
                     'id': block.id,
                     'parameters': block.input,
                 })
-
-        return processor
-
-    def _request_llm_simple(
-        self,
-        model: str,
-        conversation: Conversation,
-        additional_parameters: AdditionalParameters,
-        **kwargs,
-    ) -> ClaudeStreamProcessor:
-        """Handles a non-tool-use, non-streaming request."""
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
-        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
-        if container_id := self._continuation_container(conversation, model):
-            request_kwargs.setdefault("container", container_id)
-
-        if 'max_tokens' in request_kwargs:
-            request_kwargs['max_tokens'] = self.correct_max_tokens(model, history, request_kwargs['max_tokens'])
-
-        tools = []
-        if additional_parameters.get("web_search", False):
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
-        if additional_parameters.get("code_execution", False):
-            tools.append({"type": "code_execution_20250825", "name": "code_execution"})
-
-        response = self.client.beta.messages.create(
-            model=model,
-            system=conversation.system_prompt,
-            messages=history,
-            tools=tools,
-            **request_kwargs,
-        )
-
-        return self._parse_non_streaming_response(response, model)
-
-    def _request_llm_with_tools(
-        self,
-        model: str,
-        conversation: Conversation,
-        functions: List[BaseTool],
-        tool_output_callback: Callable,
-        additional_parameters: AdditionalParameters,
-        _tool_round: int = 0,
-        **kwargs,
-    ) -> ClaudeStreamProcessor:
-        """Handles the recursive, non-streaming tool-use loop."""
-        if _tool_round >= MAX_TOOL_ROUNDS:
-            raise RuntimeError(
-                f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
-            )
-
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
-        tools = [self._convert_function_to_tool(func) for func in functions]
-        if additional_parameters.get("web_search", False):
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
-
-        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
-        if container_id := self._continuation_container(conversation, model):
-            request_kwargs.setdefault("container", container_id)
-
-        response = self.client.beta.messages.create(
-            model=model,
-            system=conversation.system_prompt,
-            messages=history,
-            tools=tools,
-            **request_kwargs,
-        )
-
-        processor = self._parse_non_streaming_response(response, model)
-
-        if processor.stop_reason == "tool_use":
-            self._handle_tool_calls(processor, conversation, functions, tool_output_callback)
-            return self._request_llm_with_tools(
-                model, conversation, functions, tool_output_callback, additional_parameters,
-                _tool_round=_tool_round + 1, **kwargs
-            )
-
-        return processor
-
-    def _request_llm_simple_streaming(
-        self,
-        model: str,
-        conversation: Conversation,
-        additional_parameters: AdditionalParameters,
-        **kwargs,
-    ) -> ClaudeStreamProcessor:
-        """Handles a non-tool-use streaming request."""
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
-        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
-        if container_id := self._continuation_container(conversation, model):
-            request_kwargs.setdefault("container", container_id)
-
-        if 'max_tokens' in request_kwargs:
-            request_kwargs['max_tokens'] = self.correct_max_tokens(model, history, request_kwargs['max_tokens'])
-
-        tools = []
-        if additional_parameters.get("web_search", False):
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
-        if additional_parameters.get("code_execution", False):
-            tools.append({"type": "code_execution_20250825", "name": "code_execution"})
-
-        stream = self.client.beta.messages.create(
-            model=model,
-            system=conversation.system_prompt,
-            messages=history,
-            stream=True,
-            tools=tools,
-            **request_kwargs,
-        )
-
-        processor = ClaudeStreamProcessor(model)
-        for event in stream:
-            processor.process_event(event)
-        return processor
-
-    def _request_llm_with_tools_streaming(
-        self,
-        model: str,
-        conversation: Conversation,
-        functions: List[BaseTool],
-        tool_output_callback: Callable,
-        additional_parameters: AdditionalParameters,
-        _tool_round: int = 0,
-        **kwargs,
-    ) -> ClaudeStreamProcessor:
-        """Handles the recursive, streaming tool-use loop."""
-        if _tool_round >= MAX_TOOL_ROUNDS:
-            raise RuntimeError(
-                f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
-            )
-
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
-        tools = [self._convert_function_to_tool(func) for func in functions]
-        if additional_parameters.get("web_search", False):
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
-
-        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
-        if container_id := self._continuation_container(conversation, model):
-            request_kwargs.setdefault("container", container_id)
-
-        stream = self.client.beta.messages.create(
-            model=model,
-            system=conversation.system_prompt,
-            messages=history,
-            tools=tools,
-            stream=True,
-            **request_kwargs,
-        )
-
-        processor = ClaudeStreamProcessor(model)
-        for event in stream:
-            processor.process_event(event)
-
-        # If the model wants to use a tool, handle the tool call cycle.
-        if processor.stop_reason == "tool_use":
-            self._handle_tool_calls(processor, conversation, functions, tool_output_callback)
-            # Recursively call to get the final response after tool execution.
-            return self._request_llm_with_tools_streaming(
-                model, conversation, functions, tool_output_callback, additional_parameters,
-                _tool_round=_tool_round + 1, **kwargs
-            )
-
-        # If no tool use, return the final processor state.
-        return processor
-
-    async def _request_llm_simple_async(
-        self,
-        model: str,
-        conversation: Conversation,
-        additional_parameters: AdditionalParameters,
-        stream: bool,
-        **kwargs,
-    ) -> ClaudeStreamProcessor:
-        """Async counterpart of the simple request paths (non-streaming and streaming)."""
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
-        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
-        if container_id := self._continuation_container(conversation, model):
-            request_kwargs.setdefault("container", container_id)
-
-        if 'max_tokens' in request_kwargs:
-            request_kwargs['max_tokens'] = await self.correct_max_tokens_async(
-                model, history, request_kwargs['max_tokens']
-            )
-
-        tools = []
-        if additional_parameters.get("web_search", False):
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
-        if additional_parameters.get("code_execution", False):
-            tools.append({"type": "code_execution_20250825", "name": "code_execution"})
-
-        if stream:
-            events = await self.async_client.beta.messages.create(
-                model=model,
-                system=conversation.system_prompt,
-                messages=history,
-                tools=tools,
-                stream=True,
-                **request_kwargs,
-            )
-            processor = ClaudeStreamProcessor(model)
-            async for event in events:
-                processor.process_event(event)
-            return processor
-
-        response = await self.async_client.beta.messages.create(
-            model=model,
-            system=conversation.system_prompt,
-            messages=history,
-            tools=tools,
-            **request_kwargs,
-        )
-        return self._parse_non_streaming_response(response, model)
-
-    async def _request_llm_with_tools_async(
-        self,
-        model: str,
-        conversation: Conversation,
-        functions: List[BaseTool],
-        tool_output_callback: Callable,
-        additional_parameters: AdditionalParameters,
-        stream: bool,
-        _tool_round: int = 0,
-        **kwargs,
-    ) -> ClaudeStreamProcessor:
-        """Async counterpart of the recursive tool-use loops (non-streaming and streaming)."""
-        if _tool_round >= MAX_TOOL_ROUNDS:
-            raise RuntimeError(
-                f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
-            )
-
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
-        tools = [self._convert_function_to_tool(func) for func in functions]
-        if additional_parameters.get("web_search", False):
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
-
-        request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
-        if container_id := self._continuation_container(conversation, model):
-            request_kwargs.setdefault("container", container_id)
-
-        if stream:
-            events = await self.async_client.beta.messages.create(
-                model=model,
-                system=conversation.system_prompt,
-                messages=history,
-                tools=tools,
-                stream=True,
-                **request_kwargs,
-            )
-            processor = ClaudeStreamProcessor(model)
-            async for event in events:
-                processor.process_event(event)
-        else:
-            response = await self.async_client.beta.messages.create(
-                model=model,
-                system=conversation.system_prompt,
-                messages=history,
-                tools=tools,
-                **request_kwargs,
-            )
-            processor = self._parse_non_streaming_response(response, model)
-
-        if processor.stop_reason == "tool_use":
-            await self._handle_tool_calls_async(processor, conversation, functions, tool_output_callback)
-            return await self._request_llm_with_tools_async(
-                model, conversation, functions, tool_output_callback, additional_parameters,
-                stream, _tool_round=_tool_round + 1, **kwargs
-            )
 
         return processor
 
@@ -714,15 +442,8 @@ class AnthropicAdapter(AdapterBase):
             function_calls.append(FunctionCall(id=tool_call['id'], name=tool_call['name'], arguments=parameters))
             function_responses.append(FunctionResponse(id=tool_call['id'], name=tool_call['name'], response=response))
 
-        assistant_message = Message(
-            role="assistant",
-            content=processor.response_text,
-            id=processor.id, provider="anthropic", model=processor.model or processor.usage["model"],
-            provider_data={"content": processor.content_blocks, "container": processor.container},
-            thinking_responses=processor.thinking_responses,
-            function_calls=function_calls,
-            function_responses=function_responses,
-            usage=processor.usage,
+        assistant_message = self._message_from_processor(
+            processor, function_calls=function_calls, function_responses=function_responses,
         )
         conversation.messages.append(assistant_message)
 

@@ -27,6 +27,7 @@ from llm_platform.adapters.serializers import function_call_from_grok
 from llm_platform.types import AdditionalParameters
 
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
+from .response_metadata import grok_metadata, grok_client_calls
 
 
 class GrokAdapter(AdapterBase):
@@ -230,12 +231,14 @@ class GrokAdapter(AdapterBase):
         elif getattr(response, "encrypted_content", None):
             native["encrypted_content"] = response.encrypted_content
         return Message(
+            **grok_metadata(response, native.get("messages")),
             provider="grok", model=model, provider_data=native,
             role="assistant",
             id=getattr(response, "id", None),
             content=getattr(response, "content", "") or "",
             thinking_responses=self._build_thinking_responses(response),
-            function_calls=function_calls or [],
+            function_calls=(function_calls if function_calls is not None else
+                            [function_call_from_grok(call) for call in grok_client_calls(response)]),
             function_responses=function_responses or [],
             usage=self._build_usage(getattr(response, "usage", None), model),
         )
@@ -345,11 +348,12 @@ class GrokAdapter(AdapterBase):
         )
         response = chat.sample()
 
-        if not getattr(response, "tool_calls", None):
+        calls = grok_client_calls(response)
+        if not calls or grok_metadata(response)["status"] != "requires_action":
             return response
 
         function_call_records = [
-            function_call_from_grok(each_tool_call) for each_tool_call in response.tool_calls
+            function_call_from_grok(each_tool_call) for each_tool_call in calls
         ]
         function_response_records = self._execute_tool_calls(
             function_call_records=function_call_records,

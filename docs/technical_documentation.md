@@ -27,6 +27,7 @@ Primary modules:
 - `core/llm_handler.py`: orchestration facade and entrypoint
 - `core/parameter_normalizer.py`: `ParameterNormalizer` — normalizes `additional_parameters` against a model's YAML schema (extracted from the facade)
 - `adapters/adapter_base.py`: `AdapterBase` contract plus provider-agnostic helpers shared by the adapters (parameter merge, usage extraction, callable→JSON-schema, tool-name resolution `_tool_name`, content-block formatting, PDF/tool-round constants). `load_dotenv()` runs once at module import (not per adapter construction)
+- `adapters/response_metadata.py`: provider status/finish normalization and citation/hosted-result extraction; provider-specific interpretation remains outside the domain model
 - `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter, OrcaRouter, Z.AI)
 - `adapters/wiro_ai_adapter.py`: `WiroAIAdapter` for WiroAI's asynchronous Run/Task HTTP API
 - `adapters/*.py`: provider-specific translation and API calls
@@ -108,7 +109,7 @@ The domain model is provider-agnostic: it carries no vendor knowledge. Provider 
 Provider wire conversion stays in the adapters; the domain model only stores provider names, opaque JSON, and fingerprints:
 - OpenAI retains every output item in order, including encrypted reasoning, hosted tools, citations, exact function arguments, and multi-agent attribution. The adapter never synthesizes reasoning items from display summaries. SDK-only `parsed` and `parsed_arguments` conveniences are retained in persistence but removed from wire replay. Function outputs preserve the original `call_id` and optional `caller`.
 - Google retains complete Interactions steps, including thought signatures and hosted-tool signatures. As required by Interactions, native steps can be replayed across Gemini models; continuation IDs remain scoped by model. The adapter never forwards these steps to another provider.
-- Anthropic retains the complete ordered content blocks on streaming and non-streaming paths, including redacted thinking, thinking signatures, citations, and hosted tools. Container identity is retained and reused for the same model. Display thinking is never turned into a fabricated signed block. Handling `pause_turn` termination remains a separate lifecycle issue from preserving its content.
+- Anthropic retains the complete ordered content blocks on streaming and non-streaming paths, including redacted thinking, thinking signatures, citations, and hosted tools. Container identity is retained and reused for the same model. Display thinking is never turned into a fabricated signed block. A bounded request loop resumes `pause_turn` with those exact blocks and the same container; every paused round remains in conversation history.
 - OpenRouter and the shared Chat Completions adapters retain exact assistant content/tool calls plus native reasoning fields. OpenRouter's visible `reasoning` is exposed as thinking while opaque `reasoning_details` remain intact. Kimi and Z.AI replay reasoning only for its recorded provider/model.
 - Mistral separates chunked answer text and thinking for display and keeps the original chunks for subsequent requests.
 - Grok uses the installed SDK's response-to-history conversion to retain encrypted reasoning, tool calls/results, and citation metadata.
@@ -116,6 +117,22 @@ Provider wire conversion stays in the adapters; the domain model only stores pro
 Regression coverage is in `tests/test_continuation_persistence.py`, with mocked sync/async requests, real JSON round trips, SDK-backed Mistral/Grok replay checks, history mutation, provider switching, missing-state fallback, and Antigravity environment reuse/reset. These are offline checks, not live provider acceptance tests.
 
 Contracts checked through the MCP servers in `.mcp.json`: [OpenAI continuation and replay](https://developers.openai.com/api/docs/guides/tools-programmatic-tool-calling#continue-after-client-owned-function-calls), [Gemini thought signatures](https://ai.google.dev/gemini-api/docs/thinking#thought-signatures), and [Antigravity environments](https://ai.google.dev/gemini-api/docs/antigravity-agent#environments).
+
+### Result status, citations, and hosted results
+
+`Message` adds these optional fields, preserved by version-2 JSON persistence:
+- `status`: normalized `completed`, `incomplete`, `refused`, `failed`, `cancelled`, `requires_action`, `paused`, `queued`, `in_progress`, or `unknown`. Missing/legacy or unfamiliar finish metadata defaults to `unknown`; it never implies success.
+- `finish_reason`: the original provider finish/stop reason, or Responses/Interactions status. `error` and `incomplete_details` retain detached native details when supplied.
+- `citations`: dictionaries with `provider`, `url`, `title`, `start_index`, `end_index`, `source`, and `location`. `source` keeps the entire native annotation/reference, including file IDs, document/page ranges, encrypted source references, and any additional provider fields. `location` identifies the original block/content index where available. Span offsets retain the provider's units and refer to the original block, not concatenated `Message.content`; unavailable fields are `None`.
+- `hosted_tool_results`: detached native hosted call/result records, including IDs, code/search output, errors, and generated-file references. They are not local `FunctionResponse` records. OpenAI code-interpreter source is exposed here instead of appended to answer text. Existing container-file downloads and generated image attachments remain available in `files`.
+
+Adapters normalize status before deciding whether to execute local calls. Explicit failed/truncated/refused/cancelled/pending/unknown states cannot execute tools. Legacy provider responses without a finish field can still request action through explicit function calls. `Message.can_execute_tools` is true only for `requires_action`. Terminal provider failures return a message with partial text/files and native metadata, including Gemini Deep Research (which previously raised for non-completed status). HTTP/SDK exceptions and Wiro Run task failures continue to propagate.
+
+Metadata describes each individual response. Intermediate tool/paused rounds retain their own citations, results, and usage in `Conversation.messages`; the returned message describes the final round. New display metadata is excluded from native replay fingerprints. Existing saved messages lacking these fields load with safe defaults; older checkpoint fingerprints may invalidate safely and cause full-history replay.
+
+OpenAI and Google polling and tool continuations, and Claude local-tool/pause continuation, use a monotonic deadline controlled by `adapter.RESPONSE_TIMEOUT_SECONDS` (default 1800 seconds). A deadline is shared across rounds, and polling sleeps are clamped to remaining time. `ResponseTimeoutError` (a `TimeoutError` subclass in `adapters/adapter_base.py`) exposes `response_id` and the last native `response` (a `ClaudeStreamProcessor` on Claude paths) where available; completed rounds already recorded in the conversation remain available. These are orchestration deadlines checked between SDK operations/stream events, not preemptive cancellation of a blocking SDK call or user callable; SDK transport timeouts still apply. No remote cancellation request is sent on timeout. The 40-round guard remains independent.
+
+Offline regressions in `tests/test_tool_lifecycle.py` cover forced-tool termination, Claude hosted/local combinations and pause replay on sync/async streaming/non-streaming paths, round/deadline exhaustion, terminal tool guards, citations/results across JSON restore, and bounded background polling. Contracts were checked through the `.mcp.json` documentation servers for [OpenAI background polling](https://developers.openai.com/api/docs/guides/background) and [Gemini Interactions](https://ai.google.dev/gemini-api/docs/interactions), plus official [Claude pause/container handling](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool#pause_turn-stop-reason) and [Kimi tool calling](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart). No live provider generation was used for validation.
 
 ## 5. File abstraction model
 File: `services/files.py`
@@ -180,7 +197,7 @@ These per-model capability flags follow the `adaptive_thinking` precedent: enabl
 ## 7. Adapter capability matrix
 
 ### 7.1 Text and tool orchestration adapters
-All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/async, Grok, Mistral, Z.AI) are bounded by the shared `MAX_TOOL_ROUNDS` constant (40, in `adapter_base.py`); exceeding it raises `RuntimeError` instead of recursing unboundedly.
+All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/async, Kimi sync/async, Grok, Mistral, Z.AI) are bounded by the shared `MAX_TOOL_ROUNDS` constant (40, in `adapter_base.py`); exceeding it raises `RuntimeError` instead of recursing unboundedly.
 
 - `OpenAIAdapter`
   - Responses API based chat flow
@@ -196,7 +213,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Sync + native async request methods (`request_llm_async` backed by a lazily constructed `anthropic.AsyncAnthropic` client; the async side mirrors the sync dispatch in two helpers — `_request_llm_simple_async` / `_request_llm_with_tools_async` — each taking a `stream` flag instead of separate streaming methods)
   - Non-streaming and streaming execution paths
   - Streaming auto-enabled for large `max_tokens` (>= 21000)
-  - Recursive tool-use loop; the async loop (`_handle_tool_calls_async`) additionally awaits coroutine tools, while sync callables run as-is
+  - Local `tool_use` executes through `_handle_tool_calls` / `_handle_tool_calls_async`; the async helper awaits coroutine tools. Hosted `pause_turn` appends the complete assistant response and resumes without executing hosted calls locally. Both consume the same 40-round and elapsed-time budget. Search and code execution remain enabled alongside local functions on every round.
   - Token counting/max-token correction have async counterparts (`count_tokens_async` / `correct_max_tokens_async` on the async client) sharing the clamp logic (`_clamp_max_tokens`), so the async path never blocks the event loop
   - Supports web search, code execution, reasoning controls, structured output (on both the streaming and non-streaming paths)
   - Tool lookup supports both `BaseTool` instances and plain callables (via `AdapterBase._tool_name`); a tool call whose name is not found is answered with an error `tool_result` instead of being dropped (dropping it made the model retry forever)
@@ -217,7 +234,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Deep Research uses the same checkpoint and delta selection as standard chat, preserving all unsent text/image/PDF/audio/video inputs. System instructions remain inline in the input; agent configuration is exposed through `agent_config`.
   - Routes models marked `agent_type: antigravity` to the Antigravity managed-agent path (`_request_antigravity`): `interactions.create(agent=<model>, environment="remote", ...)` provisions a remote Linux sandbox and runs the agent's tool-use loop (code execution, web search, URL fetch, filesystem) server-side. The agent rejects `generation_config`/structured output, so neither is sent — `system_instruction`, `agent_config` (including `max_total_tokens`), built-in tools (per the `web_search`/`code_execution`/`url_context` flags), and custom functions. Built-in and filesystem calls are executed by the sandbox; only *custom* functions need a client-side round-trip, fed back via `previous_interaction_id` (stateful-only function calling) reusing the same `environment`. Both the interaction ID and environment ID survive JSON persistence and are reused on subsequent user turns. Set `additional_parameters={"new_environment": True}` to reset the checkpoint and provision a fresh sandbox; `Conversation.reset_continuation("google", model)` is the equivalent explicit state operation. Replay retries retain the selected environment; an unavailable environment raises the provider error rather than silently creating a replacement. When the model is flagged `background_mode: true` (the default for `antigravity-preview-05-2026`) every `interactions.create` runs with `background=True` + `store=True` and is polled by `_poll_agent_interaction` until a terminal status or `requires_action` (the agent waiting on a custom-function result) — the recommended mode for these long-running agent tasks. Responses are parsed with the shared `_parse_interaction_response` (which falls back to `interaction.output_text` when no `model_output` step text is present)
 - `GrokAdapter`
-  - Sync chat with optional tool execution loop
+  - Sync chat with optional tool execution loop. SDK `ToolCall.type` distinguishes client functions from hosted calls, so server search/code calls are retained without being executed locally. Native finish reasons, URL/inline citations, and hosted call/result records are exposed on the returned message.
   - Supports web search and code execution tools in xAI SDK
   - Supports structured output through xAI SDK `response_format` for both standard requests and tool-enabled requests on models flagged `structured_output_with_tools` (the Grok 4 family)
 - `MistralAdapter`
@@ -255,6 +272,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Uses Moonshot AI's OpenAI-compatible Chat Completions endpoint at `https://api.moonshot.ai/v1` through the existing `openai` dependency and `MOONSHOT_API_KEY`
   - Registers `kimi-k3` with its 1,048,576-token context window, text/image/video input, cached/uncached input pricing, and output pricing
   - Maps the platform's `max_tokens` setting to Kimi's `max_completion_tokens`; K3's fixed sampling parameters (`temperature`, `top_p`, `n`, `presence_penalty`, and `frequency_penalty`) are deliberately omitted
+  - `tool_choice="required"` and named forced choices apply to the first request only; after a local tool exchange the adapter switches to `auto` so the model can produce a final answer. Caller parameter dictionaries are not changed.
   - Captures K3's `reasoning_content` as `ThinkingResponse` and reconstructs it with the complete assistant message on later turns, as required for multi-turn reasoning and tool calls
   - Supports local base64 image/video parts, text extraction for document files, strict JSON Schema structured output, and `reasoning_effort="max"`
   - Supports bounded sync and native async custom-function loops with `tool_choice` (`auto`, `none`, or `required`); tool-call assistant messages, reasoning, and matching tool results are preserved in history
@@ -362,10 +380,10 @@ From `requirements.txt`:
 ### 14.2 Tool-calling flow
 1. Adapter sends tool definitions + conversation.
 2. Provider returns tool call(s).
-3. Adapter resolves and executes local tool callable(s).
+3. Adapter checks the response status before executing local tools. Failed, incomplete, refused, cancelled, pending, and unrecognized results return control with their partial output and metadata. Grok hosted calls are excluded from local execution.
 4. Tool outputs are captured as `FunctionResponse` records.
 5. Conversation is updated with tool call/response records.
-6. Adapter recursively calls provider until final non-tool assistant output is produced, bounded by `MAX_TOOL_ROUNDS` (40); exceeding the bound raises `RuntimeError`.
+6. Adapter calls the provider again until a final result or a status requiring caller attention is returned, bounded by `MAX_TOOL_ROUNDS` (40); exceeding the bound raises `RuntimeError`. Claude also continues hosted pauses in this loop. Kimi relaxes the initial forced tool choice to `auto`.
 
 ### 14.3 Gemini Deep Research flow
 1. Client calls a model such as `deep-research-preview-04-2026` or `deep-research-max-preview-04-2026`.
@@ -373,8 +391,8 @@ From `requirements.txt`:
 3. The full history (first call) or all messages after a valid provider/model checkpoint is converted into Interactions steps. The conversation system prompt is included as an inline instruction step rather than `system_instruction`.
 4. Images, PDFs, audio, and video are sent as inline base64 content while Office/text documents are converted to text content.
 5. The adapter starts the interaction with `agent=<model>`, `background=True`, and `store=True`; it does not send `generation_config` because Gemini agents require agent-specific configuration through `agent_config`.
-6. The adapter polls until the interaction reaches a terminal status (`completed`, `failed`, `cancelled`, or `incomplete`).
-7. The completed interaction is checkpointed for later turns and its complete native steps are retained for replay. For display, the adapter uses the May 2026 steps schema: the adapter walks `interaction.steps`, picks `model_output` steps, and pulls text / image / annotation items out of each step's `content[]` array. Text content joins into the assistant message body, image content becomes `ImageFile` attachments, citation annotations become `additional_responses`, and `interaction.usage` (`total_input_tokens`, `total_output_tokens`, `total_tokens`) is mapped to the usual usage keys.
+6. The adapter polls while the interaction is `queued` or `in_progress`, within the shared turn deadline. A terminal or action-required status returns control; unfamiliar statuses are exposed as `unknown` rather than polled indefinitely.
+7. The returned interaction is checkpointed for later turns and its complete native steps are retained for replay. For display, the adapter uses the May 2026 steps schema: the adapter walks `interaction.steps`, picks `model_output` steps, and pulls text / image / annotation items out of each step's `content[]` array. Text content joins into the assistant message body, image content becomes `ImageFile` attachments, citation annotations become structured `citations` (legacy formatted `additional_responses` remain available), hosted steps become `hosted_tool_results`, and `interaction.usage` (`total_input_tokens`, `total_output_tokens`, `total_tokens`) is mapped to the usual usage keys.
 
 ## 15. Extending the platform
 
