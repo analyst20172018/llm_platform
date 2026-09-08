@@ -2,10 +2,10 @@ from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
 import os
 from typing import Any, Callable, Dict, List
 from llm_platform.tools.base import BaseTool
-from llm_platform.adapters.serializers import (function_call_from_openai_chat,
+from llm_platform.adapters.serializers import (chat_replay_data, function_call_from_openai_chat,
                                                   function_call_to_openai_chat,
                                                   function_response_to_openai_chat)
-from llm_platform.services.conversation import Conversation, Message, FunctionResponse
+from llm_platform.services.conversation import Conversation, Message, FunctionResponse, ThinkingResponse
 from llm_platform.services.files import (AudioFile, TextDocumentFile, PDFDocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile,
                                          ImageFile)
@@ -44,6 +44,9 @@ class MistralAdapter(AdapterBase):
 
         # Add history of messages
         for message in the_conversation.messages:
+            if message.role == "function":
+                history.extend(function_response_to_openai_chat(fr) for fr in message.function_responses)
+                continue
 
             history_message = {
                 "role": message.role,
@@ -89,7 +92,7 @@ class MistralAdapter(AdapterBase):
                     else:
                         raise ValueError(f"Unsupported file type: {type(each_file).__name__} in file {each_file.name}")
 
-            history.append(history_message)
+            history.append(message.replay_data("mistral", model).get("message", history_message))
 
             # Tool results are sent as standalone `role: "tool"` messages.
             if message.function_responses:
@@ -141,12 +144,36 @@ class MistralAdapter(AdapterBase):
                         **request_params,
                         )
 
-        usage = self._build_usage(getattr(response, "usage", None), model)
-
-        message = Message(role="assistant", content=response.choices[0].message.content, usage=usage)
+        message = self._message_from_response(model, response)
         the_conversation.messages.append(message)
 
         return message
+
+    def _message_from_response(self, model, response, function_responses=None):
+        assistant = response.choices[0].message
+        native = chat_replay_data(assistant)
+        content = native.get("content") or ""
+        thoughts = []
+        if isinstance(content, list):
+            text = []
+            for chunk in content:
+                if chunk.get("type") == "text":
+                    text.append(chunk.get("text", ""))
+                elif chunk.get("type") == "thinking":
+                    thinking = chunk.get("thinking", [])
+                    if isinstance(thinking, list):
+                        thinking = "".join(part.get("text", "") for part in thinking)
+                    thoughts.append(ThinkingResponse(content=thinking))
+            content = "".join(text)
+        return Message(
+            role="assistant", content=content, id=getattr(response, "id", None),
+            provider="mistral", model=model, provider_data={"message": native},
+            thinking_responses=thoughts,
+            function_calls=[function_call_from_openai_chat(call)
+                            for call in (getattr(assistant, "tool_calls", None) or [])],
+            function_responses=function_responses,
+            usage=self._build_usage(getattr(response, "usage", None), model),
+        )
 
     def _convert_func_to_tool(self, func: Callable) -> Dict:
         schema = self._callable_to_json_schema(func)
@@ -201,14 +228,12 @@ class MistralAdapter(AdapterBase):
             **request_params,
         )
 
-        usage = self._build_usage(getattr(chat_response, "usage", None), model)
-
         assistant_message = chat_response.choices[0].message
         tool_calls = getattr(assistant_message, 'tool_calls', None)
 
         # No tool calls -> final answer; record it and finish.
         if not tool_calls:
-            message = Message(role="assistant", content=assistant_message.content, usage=usage)
+            message = self._message_from_response(model, chat_response)
             the_conversation.messages.append(message)
             return message
 
@@ -241,12 +266,7 @@ class MistralAdapter(AdapterBase):
                                      function_response
                                     )
 
-        message = Message(role="assistant",
-                            content=assistant_message.content or "",
-                            function_calls=function_call_records,
-                            function_responses=function_response_records,
-                            usage=usage
-                            )
+        message = self._message_from_response(model, chat_response, function_response_records)
         the_conversation.messages.append(message)
 
         return self.request_llm_with_functions(model,

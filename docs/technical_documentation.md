@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-08-26
+Version: 2026-09-08
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -93,9 +93,29 @@ Message roles: `user`, `assistant`, `function`
 
 The domain model is provider-agnostic: it carries no vendor knowledge. Provider wire (de)serialization for `FunctionCall` / `FunctionResponse` / `ThinkingResponse` lives in `adapters/serializers.py` as standalone functions (e.g. `function_call_to_openai`, `function_call_to_anthropic`, `function_call_from_openai`, `function_call_from_grok`), keeping `services/` free of provider formats.
 
-### Serialization
-- Platform-internal persistence only: `Conversation.save_to_json()` serializes messages and file payloads, and `Conversation.read_from_json(data)` reconstructs conversation and supported file objects.
-- Vendor wire (de)serialization is not part of the domain model; it lives in `adapters/serializers.py` (see §16).
+### Serialization and continuation
+- `Conversation.save_to_json()` returns a detached, JSON-compatible dictionary with `version: 2`. `read_from_json()` accepts this format and legacy unversioned files; unknown versions raise `ValueError`.
+- Persistence preserves message IDs, timestamps, provider/model identity, native `provider_data`, thinking, usage, `additional_responses` (including citation metadata), every tool call/result's distinct `id` and `call_id`, and namespaced tool metadata such as OpenAI's `caller`.
+- Text documents retain text. All supported binary documents/media retain original bytes and concrete file classes, including Word, PowerPoint, and Video. Saving does not extract Office/PDF text. Restoring audio does not transcode bytes a second time, even if its original name has a non-MP3 extension. Tool-result construction and persistence do not mutate the source result dictionaries.
+- `Conversation.checkpoint(provider, model, response_id, **state)` records the length and SHA-256 fingerprint of the local prefix represented by remote state, including the system prompt and attachments. `continuation(provider, model)` returns state only when that prefix still matches. OpenAI and Google send every message after the checkpoint, including unsent user messages, intervening exchanges from other providers, and tool results. Model/provider changes cannot reuse foreign IDs. `last_assistant_id` remains a legacy display helper only.
+- Editing, deleting, inserting, reordering, or changing files within a saved prefix invalidates its checkpoint. `clear()` clears messages and checkpoints. `reset_continuation(provider, model)` explicitly discards the chosen remote reference; for Antigravity this also starts a new environment on the next call.
+- Adapters append assistant tool-call messages and checkpoint them before appending newly executed results. Google records results in separate `function` messages, so an unsent result never becomes part of the remote checkpoint. All provider converters support these standalone tool-result records.
+- OpenAI and Google retry an explicitly missing/deleted/expired continuation once with full compatible history. The retry is limited to state-related 400/404/410 responses, identified by the continuation field or referenced ID; model, authentication, rate-limit, and unrelated failures are not retried by this layer. Antigravity retries keep the selected environment, whose availability still depends on the provider. Failed retries preserve local state. OpenAI `store=False` requests replay full history and do not create a new remote checkpoint.
+
+### Native response replay
+`Message.provider_data` holds detached provider JSON alongside the normalized display content. `Message.replay_data(provider, model)` returns a copy only for a compatible origin and unchanged normalized content. Editing an assistant message falls back to its edited normalized representation rather than replaying stale native content. Tool results are independent of the assistant's native output and are serialized after it.
+
+Provider wire conversion stays in the adapters; the domain model only stores provider names, opaque JSON, and fingerprints:
+- OpenAI retains every output item in order, including encrypted reasoning, hosted tools, citations, exact function arguments, and multi-agent attribution. The adapter never synthesizes reasoning items from display summaries. SDK-only `parsed` and `parsed_arguments` conveniences are retained in persistence but removed from wire replay. Function outputs preserve the original `call_id` and optional `caller`.
+- Google retains complete Interactions steps, including thought signatures and hosted-tool signatures. As required by Interactions, native steps can be replayed across Gemini models; continuation IDs remain scoped by model. The adapter never forwards these steps to another provider.
+- Anthropic retains the complete ordered content blocks on streaming and non-streaming paths, including redacted thinking, thinking signatures, citations, and hosted tools. Container identity is retained and reused for the same model. Display thinking is never turned into a fabricated signed block. Handling `pause_turn` termination remains a separate lifecycle issue from preserving its content.
+- OpenRouter and the shared Chat Completions adapters retain exact assistant content/tool calls plus native reasoning fields. OpenRouter's visible `reasoning` is exposed as thinking while opaque `reasoning_details` remain intact. Kimi and Z.AI replay reasoning only for its recorded provider/model.
+- Mistral separates chunked answer text and thinking for display and keeps the original chunks for subsequent requests.
+- Grok uses the installed SDK's response-to-history conversion to retain encrypted reasoning, tool calls/results, and citation metadata.
+
+Regression coverage is in `tests/test_continuation_persistence.py`, with mocked sync/async requests, real JSON round trips, SDK-backed Mistral/Grok replay checks, history mutation, provider switching, missing-state fallback, and Antigravity environment reuse/reset. These are offline checks, not live provider acceptance tests.
+
+Contracts checked through the MCP servers in `.mcp.json`: [OpenAI continuation and replay](https://developers.openai.com/api/docs/guides/tools-programmatic-tool-calling#continue-after-client-owned-function-calls), [Gemini thought signatures](https://ai.google.dev/gemini-api/docs/thinking#thought-signatures), and [Antigravity environments](https://ai.google.dev/gemini-api/docs/antigravity-agent#environments).
 
 ## 5. File abstraction model
 File: `services/files.py`
@@ -129,8 +149,8 @@ The byte-backed subclasses differ only in their `text` extraction property; the 
 File: `helpers/model_config.py`, config in `models_config.yaml`
 
 ### 6.1 Current catalog summary
-- Total models: 20
-- Visible models: 17
+- Total models: 23
+- Visible models: 16
 - Adapter families: 10
 
 Models are grouped by `adapter`, with metadata:
@@ -188,14 +208,14 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Sync + native async request methods: `request_llm_async` runs on the SDK's native async surface (`client.aio`, exposed via the adapter's `async_client` property) and mirrors the sync dispatch — standard chat/tool loop (`_execute_function_calls_async`, which additionally awaits coroutine tools), Deep Research (`_request_deep_research_async` + `_poll_deep_research_interaction_async`), and Antigravity (`_request_antigravity_async` + `_poll_agent_interaction_async` with `asyncio.sleep` polling). Request building and response parsing are shared with the sync path (pure helpers, no I/O)
   - Conversation history is converted into the Interactions `step_list` input array: every entry is a typed Step — `user_input` / `model_output` (each carrying a `content` array) for plain exchanges, plus `function_call` / `function_result` for prior tool round-trips. Legacy role-keyed Turn objects (`{"role": ..., "content": [...]}`) are rejected by the steps-based API.
   - System prompt is sent as the top-level `system_instruction` parameter; tools, system instructions, and `generation_config` are re-supplied on every call (interaction-scoped per the API contract)
-  - Server-side conversation state is reused across turns via `previous_interaction_id`. The first turn sends the full converted history; the returned `interaction.id` is stored on the assistant `Message`. On every subsequent turn the adapter resolves the prior id through `Conversation.previous_interaction_id_for_google` and sends only the new `user_input` (mirroring the `previous_response_id_for_openai` pattern used by `OpenAIAdapter`).
+  - Server-side state is reused through provider/model checkpoints in `Conversation.continuations`. A valid checkpoint supplies `previous_interaction_id` and every local message after its recorded prefix. Missing or changed checkpoints send the full compatible history. OpenAI uses the same checkpoint mechanism with `previous_response_id`. Explicit missing/expired-state errors trigger one full-history replay attempt; unrelated errors propagate.
   - Function-calling round-trips inside a single user turn use the same `previous_interaction_id` chaining; only the new `function_result` entries are sent on follow-up calls
   - Tools are emitted as plain dicts: `{"type": "function", ...}` for `BaseTool` declarations plus `{"type": "google_search"}`, `{"type": "url_context"}`, `{"type": "code_execution"}` for built-ins
   - Generation parameters (`temperature`, `max_output_tokens`, `thinking_level` for models flagged `uses_thinking_level` / `thinking_budget` otherwise, `thinking_summaries: "auto"`) go inside `generation_config`. Structured output is sent through the top-level `response_format` field (the Interactions API polymorphic shape) via `extra_body` to bypass stale SDK serialization: `{type: "text", mime_type: "application/json", schema}`.
   - Responses are parsed off `interaction.steps`: `model_output` → text/images/citations, `thought` → `ThinkingResponse`, `function_call` → `FunctionCall`, `code_execution_call` / `code_execution_result` → `additional_responses`
   - Routes Gemini models marked with both `background_mode: true` and `agent_type: deep_research` to a separate Deep Research path (`agent=<model>`, `background=True`, `store=True`), polled until terminal status and parsed into a standard cited `Message`
-  - Supports Deep Research text/image/PDF/audio/video inputs from the latest user message
-  - Routes models marked `agent_type: antigravity` to the Antigravity managed-agent path (`_request_antigravity`): `interactions.create(agent=<model>, environment="remote", ...)` provisions a remote Linux sandbox and runs the agent's tool-use loop (code execution, web search, URL fetch, filesystem) server-side. The agent rejects `generation_config`/structured output, so neither is sent — only `system_instruction`, built-in tools (per the `web_search`/`code_execution`/`url_context` flags), and custom functions. Built-in and filesystem calls are executed by the sandbox; only *custom* functions need a client-side round-trip, fed back via `previous_interaction_id` (stateful-only function calling) reusing the same `environment`. When the model is flagged `background_mode: true` (the default for `antigravity-preview-05-2026`) every `interactions.create` runs with `background=True` + `store=True` and is polled by `_poll_agent_interaction` until a terminal status or `requires_action` (the agent waiting on a custom-function result) — the recommended mode for these long-running agent tasks. Responses are parsed with the shared `_parse_interaction_response` (which falls back to `interaction.output_text` when no `model_output` step text is present)
+  - Deep Research uses the same checkpoint and delta selection as standard chat, preserving all unsent text/image/PDF/audio/video inputs. System instructions remain inline in the input; agent configuration is exposed through `agent_config`.
+  - Routes models marked `agent_type: antigravity` to the Antigravity managed-agent path (`_request_antigravity`): `interactions.create(agent=<model>, environment="remote", ...)` provisions a remote Linux sandbox and runs the agent's tool-use loop (code execution, web search, URL fetch, filesystem) server-side. The agent rejects `generation_config`/structured output, so neither is sent — `system_instruction`, `agent_config` (including `max_total_tokens`), built-in tools (per the `web_search`/`code_execution`/`url_context` flags), and custom functions. Built-in and filesystem calls are executed by the sandbox; only *custom* functions need a client-side round-trip, fed back via `previous_interaction_id` (stateful-only function calling) reusing the same `environment`. Both the interaction ID and environment ID survive JSON persistence and are reused on subsequent user turns. Set `additional_parameters={"new_environment": True}` to reset the checkpoint and provision a fresh sandbox; `Conversation.reset_continuation("google", model)` is the equivalent explicit state operation. Replay retries retain the selected environment; an unavailable environment raises the provider error rather than silently creating a replacement. When the model is flagged `background_mode: true` (the default for `antigravity-preview-05-2026`) every `interactions.create` runs with `background=True` + `store=True` and is polled by `_poll_agent_interaction` until a terminal status or `requires_action` (the agent waiting on a custom-function result) — the recommended mode for these long-running agent tasks. Responses are parsed with the shared `_parse_interaction_response` (which falls back to `interaction.output_text` when no `model_output` step text is present)
 - `GrokAdapter`
   - Sync chat with optional tool execution loop
   - Supports web search and code execution tools in xAI SDK
@@ -216,7 +236,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - `DeepSeekAdapter` / `OpenRouterAdapter` / `OrcarouterAdapter` do not implement tool calling: they inherit the uniform `AdapterBase.request_llm_with_functions` that raises `NotImplementedError`. Note for a future DeepSeek tool loop: with `tools` present, `reasoning_content` must be replayed on every subsequent request or the API returns 400
   - `OpenRouterAdapter` sends the unified OpenRouter `reasoning` object through the OpenAI SDK's `extra_body`. The registered `meta/muse-spark-1.3` model (1M context, text/image) has mandatory reasoning, so its YAML schema exposes only the effort level (`minimal`/`low`/`medium`/`high`/`xhigh`, default `medium`) mapped to `reasoning.effort`.
   - `OpenAICompatibleAdapter` provides a native async path: `request_llm_async` mirrors the sync chat flow on a lazily constructed `AsyncOpenAI` client (`_build_async_client` / `async_client`), inherited as-is by `DeepSeekAdapter`, `OpenRouterAdapter`, and `OrcarouterAdapter`. `ZaiAdapter` explicitly pins `request_llm_async` back to the thread-offloaded `AdapterBase` default: the base's async path is backed by `AsyncOpenAI` (not the official `ZaiClient`) and has no tool calling, so inheriting it would regress Z.AI's async function-calling support
-  - `OrcarouterAdapter` targets `https://api.orcarouter.ai/v1` with `ORCAROUTER_API_KEY`. The registered `obsidian/Qwen3.8-27B` model exposes text/image chat through the shared platform adapter; OrcaRouter's catalog also advertises upstream video and tool capabilities that this thin adapter does not yet implement
+  - `OrcarouterAdapter` targets `https://api.orcarouter.ai/v1` with `ORCAROUTER_API_KEY`. No model currently routes to this adapter in the registry; its existing catalog-registration test is out of sync with the YAML
   - `ZaiAdapter` adds preserved thinking, tool calling, structured output, and web search on top of the shared base:
     - `glm-5.3-flash` exposes its forced-thinking contract through YAML: `thinking_mode` is fixed to `enabled` and mapped to `thinking.type`, `clear_thinking` defaults to `false` as recommended for coding/agent tasks, and `reasoning_effort` offers `low`/`high`/`max` with the provider default `max`. The adapter captures `reasoning_content` on every response and replays it verbatim in assistant history, including intermediate tool rounds, so preserved/interleaved thinking remains coherent.
     - **Function calling**: `request_llm` routes to a recursive `request_llm_with_functions` loop (request → execute local `BaseTool`/callable tools → append `FunctionCall`/`FunctionResponse` plus the assistant thinking block → re-ask) until the model stops emitting `tool_calls`. Function tools are emitted as `{"type": "function", "function": {...}}` via `_convert_function_to_tool` (reusing `BaseTool.to_params(provider="openai")` or `_callable_to_json_schema`)
@@ -317,7 +337,7 @@ From `requirements.txt`:
 
 ## 13. Known implementation gaps and inconsistencies
 1. Tool-calling support is partial across adapters (fully implemented in OpenAI/Anthropic/Google/Grok/Mistral/Z.AI/Kimi, not in DeepSeek/OpenRouter/OrcaRouter/WiroAI).
-2. Mutable default arguments still exist in the `Message` initializer (`[]` defaults); the adapter and `APIHandler` method signatures that previously shared this pattern have been migrated to `None` defaults.
+2. Older, unversioned conversation files cannot recover IDs or native response data that were never saved. They load with safe defaults and rebuild history without guessing provider ownership from IDs.
 3. The `README.md` environment-variable list now matches the adapter code (`GOOGLE_GEMINI_API_KEY`, `XAI_API_KEY`).
 
 ## 14. Request lifecycle details
@@ -342,11 +362,11 @@ From `requirements.txt`:
 ### 14.3 Gemini Deep Research flow
 1. Client calls a model such as `deep-research-preview-04-2026` or `deep-research-max-preview-04-2026`.
 2. `models_config.yaml` marks the model with `background_mode: true` and `agent_type: deep_research`, so `GoogleAdapter` uses the Gemini Interactions API instead of `models.generate_content`.
-3. The latest user message is converted into Interactions input; the conversation system prompt is prepended to the text input because Deep Research agents do not support `system_instruction`.
+3. The full history (first call) or all messages after a valid provider/model checkpoint is converted into Interactions steps. The conversation system prompt is included as an inline instruction step rather than `system_instruction`.
 4. Images, PDFs, audio, and video are sent as inline base64 content while Office/text documents are converted to text content.
 5. The adapter starts the interaction with `agent=<model>`, `background=True`, and `store=True`; it does not send `generation_config` because Gemini agents require agent-specific configuration through `agent_config`.
 6. The adapter polls until the interaction reaches a terminal status (`completed`, `failed`, `cancelled`, or `incomplete`).
-7. The completed interaction is parsed using the May 2026 steps schema: the adapter walks `interaction.steps`, picks `model_output` steps, and pulls text / image / annotation items out of each step's `content[]` array. Text content joins into the assistant message body, image content becomes `ImageFile` attachments, citation annotations become `additional_responses`, and `interaction.usage` (`total_input_tokens`, `total_output_tokens`, `total_tokens`) is mapped to the usual usage keys.
+7. The completed interaction is checkpointed for later turns and its complete native steps are retained for replay. For display, the adapter uses the May 2026 steps schema: the adapter walks `interaction.steps`, picks `model_output` steps, and pulls text / image / annotation items out of each step's `content[]` array. Text content joins into the assistant message body, image content becomes `ImageFile` attachments, citation annotations become `additional_responses`, and `interaction.usage` (`total_input_tokens`, `total_output_tokens`, `total_tokens`) is mapped to the usual usage keys.
 
 ## 15. Extending the platform
 

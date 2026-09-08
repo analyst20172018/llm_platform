@@ -122,6 +122,7 @@ def test_conversation_preserves_reasoning_and_multimodal_parts():
                 role="assistant",
                 content="Done.",
                 thinking_responses=[ThinkingResponse(content="visual reasoning")],
+                provider="kimi", model=MODEL,
             ),
         ],
         system_prompt="Be helpful.",

@@ -194,6 +194,7 @@ class WiroAIAdapter(AdapterBase):
             "costs": cost,
         }
         return Message(
+            provider="wiroai", model=model,
             role="assistant",
             content=content,
             thinking_responses=[

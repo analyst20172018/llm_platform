@@ -123,7 +123,12 @@ class ZaiAdapter(OpenAICompatibleAdapter):
 
         history_index = 1  # The shared serializer puts the system message first.
         for message in the_conversation.messages:
-            if message.role == "assistant" and message.thinking_responses:
+            if message.role == "function":
+                history_index += len(message.function_responses)
+                continue
+            if (message.role == "assistant" and message.provider == self.provider
+                    and message.model == model and message.thinking_responses
+                    and not message.replay_data(self.provider, model)):
                 history[history_index]["reasoning_content"] = "".join(
                     response.content for response in message.thinking_responses
                 )

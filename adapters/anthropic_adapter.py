@@ -24,7 +24,7 @@ from llm_platform.tools.base import BaseTool
 from llm_platform.adapters.serializers import (
     function_call_to_anthropic,
     function_response_to_anthropic,
-    thinking_response_to_anthropic,
+    provider_dump,
 )
 
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
@@ -60,7 +60,8 @@ class ClaudeStreamProcessor:
     including thinking steps, final response text, tool usage, and token counts.
     """
 
-    def __init__(self):
+    def __init__(self, model=None):
+        self.model = model
         # Final outputs
         self.thinking_responses: List[ThinkingResponse] = []
         self.response_text: str = ""
@@ -73,6 +74,11 @@ class ClaudeStreamProcessor:
             "cache_creation_tokens": 0,
         }
         self.stop_reason: str | None = None
+        self.id = None
+        self.container = None
+        self.content_blocks = []
+        self._native_blocks = {}
+        self._native_tool_json = {}
 
         # Internal state for processing the stream
         self._current_thinking_text: str = ""
@@ -97,10 +103,33 @@ class ClaudeStreamProcessor:
         if handler := self._event_handlers.get(event_type):
             handler(event)
 
+        # Retain every block, including redacted thinking and hosted tools.
+        index = getattr(event, "index", None)
+        if event_type == "content_block_start":
+            self._native_blocks[index] = provider_dump(event.content_block)
+        elif event_type == "content_block_delta":
+            block = self._native_blocks[index]
+            delta = provider_dump(event.delta)
+            kind = delta.pop("type")
+            if kind == "input_json_delta":
+                self._native_tool_json[index] = self._native_tool_json.get(index, "") + delta["partial_json"]
+            elif kind == "citations_delta":
+                block["citations"] = (block.get("citations") or []) + [delta["citation"]]
+            else:
+                for key, value in delta.items():
+                    block[key] = block.get(key, "") + value if isinstance(value, str) else value
+        elif event_type == "content_block_stop":
+            block = self._native_blocks.pop(index)
+            if index in self._native_tool_json:
+                block["input"] = json.loads(self._native_tool_json.pop(index))
+            self.content_blocks.append(block)
+
     def _handle_message_start(self, event: Any):
         message = getattr(event, 'message', None)
         if not message:
             return
+        self.id = getattr(message, "id", None)
+        self.container = provider_dump(getattr(message, "container", None))
         usage = message.usage
         cache_read = getattr(usage, 'cache_read_input_tokens', 0) or 0
         cache_creation = getattr(usage, 'cache_creation_input_tokens', 0) or 0
@@ -166,6 +195,8 @@ class ClaudeStreamProcessor:
     def _handle_message_delta(self, event: Any):
         self.usage["completion_tokens"] = getattr(event.usage, 'output_tokens', 0)
         self.stop_reason = getattr(event.delta, 'stop_reason', None)
+        if getattr(event.delta, "container", None) is not None:
+            self.container = provider_dump(event.delta.container)
 
 
 class AnthropicAdapter(AdapterBase):
@@ -246,6 +277,8 @@ class AnthropicAdapter(AdapterBase):
         response_message = Message(
             role="assistant",
             content=processor.response_text,
+            id=processor.id, provider="anthropic", model=processor.model or processor.usage["model"],
+            provider_data={"content": processor.content_blocks, "container": processor.container},
             thinking_responses=processor.thinking_responses,
             usage=processor.usage,
         )
@@ -295,6 +328,8 @@ class AnthropicAdapter(AdapterBase):
         response_message = Message(
             role="assistant",
             content=processor.response_text,
+            id=processor.id, provider="anthropic", model=processor.model or processor.usage["model"],
+            provider_data={"content": processor.content_blocks, "container": processor.container},
             thinking_responses=processor.thinking_responses,
             usage=processor.usage,
         )
@@ -303,9 +338,12 @@ class AnthropicAdapter(AdapterBase):
 
     # --- Private Helper Methods for LLM Requests ---
 
-    def _parse_non_streaming_response(self, response) -> ClaudeStreamProcessor:
+    def _parse_non_streaming_response(self, response, model=None) -> ClaudeStreamProcessor:
         """Converts a non-streaming API response into a ClaudeStreamProcessor for uniform handling."""
-        processor = ClaudeStreamProcessor()
+        processor = ClaudeStreamProcessor(model)
+        processor.id = getattr(response, "id", None)
+        processor.container = provider_dump(getattr(response, "container", None))
+        processor.content_blocks = provider_dump(response.content)
         cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
         cache_creation = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
         processor.usage["model"] = response.model
@@ -341,8 +379,10 @@ class AnthropicAdapter(AdapterBase):
         **kwargs,
     ) -> ClaudeStreamProcessor:
         """Handles a non-tool-use, non-streaming request."""
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
+        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
         request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
+        if container_id := self._continuation_container(conversation, model):
+            request_kwargs.setdefault("container", container_id)
 
         if 'max_tokens' in request_kwargs:
             request_kwargs['max_tokens'] = self.correct_max_tokens(model, history, request_kwargs['max_tokens'])
@@ -361,7 +401,7 @@ class AnthropicAdapter(AdapterBase):
             **request_kwargs,
         )
 
-        return self._parse_non_streaming_response(response)
+        return self._parse_non_streaming_response(response, model)
 
     def _request_llm_with_tools(
         self,
@@ -379,12 +419,14 @@ class AnthropicAdapter(AdapterBase):
                 f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
             )
 
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
+        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
         tools = [self._convert_function_to_tool(func) for func in functions]
         if additional_parameters.get("web_search", False):
             tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
 
         request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
+        if container_id := self._continuation_container(conversation, model):
+            request_kwargs.setdefault("container", container_id)
 
         response = self.client.beta.messages.create(
             model=model,
@@ -394,7 +436,7 @@ class AnthropicAdapter(AdapterBase):
             **request_kwargs,
         )
 
-        processor = self._parse_non_streaming_response(response)
+        processor = self._parse_non_streaming_response(response, model)
 
         if processor.stop_reason == "tool_use":
             self._handle_tool_calls(processor, conversation, functions, tool_output_callback)
@@ -413,8 +455,10 @@ class AnthropicAdapter(AdapterBase):
         **kwargs,
     ) -> ClaudeStreamProcessor:
         """Handles a non-tool-use streaming request."""
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
+        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
         request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
+        if container_id := self._continuation_container(conversation, model):
+            request_kwargs.setdefault("container", container_id)
 
         if 'max_tokens' in request_kwargs:
             request_kwargs['max_tokens'] = self.correct_max_tokens(model, history, request_kwargs['max_tokens'])
@@ -434,7 +478,7 @@ class AnthropicAdapter(AdapterBase):
             **request_kwargs,
         )
 
-        processor = ClaudeStreamProcessor()
+        processor = ClaudeStreamProcessor(model)
         for event in stream:
             processor.process_event(event)
         return processor
@@ -455,12 +499,14 @@ class AnthropicAdapter(AdapterBase):
                 f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
             )
 
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
+        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
         tools = [self._convert_function_to_tool(func) for func in functions]
         if additional_parameters.get("web_search", False):
             tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
 
         request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
+        if container_id := self._continuation_container(conversation, model):
+            request_kwargs.setdefault("container", container_id)
 
         stream = self.client.beta.messages.create(
             model=model,
@@ -471,7 +517,7 @@ class AnthropicAdapter(AdapterBase):
             **request_kwargs,
         )
 
-        processor = ClaudeStreamProcessor()
+        processor = ClaudeStreamProcessor(model)
         for event in stream:
             processor.process_event(event)
 
@@ -496,8 +542,10 @@ class AnthropicAdapter(AdapterBase):
         **kwargs,
     ) -> ClaudeStreamProcessor:
         """Async counterpart of the simple request paths (non-streaming and streaming)."""
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
+        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
         request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
+        if container_id := self._continuation_container(conversation, model):
+            request_kwargs.setdefault("container", container_id)
 
         if 'max_tokens' in request_kwargs:
             request_kwargs['max_tokens'] = await self.correct_max_tokens_async(
@@ -519,7 +567,7 @@ class AnthropicAdapter(AdapterBase):
                 stream=True,
                 **request_kwargs,
             )
-            processor = ClaudeStreamProcessor()
+            processor = ClaudeStreamProcessor(model)
             async for event in events:
                 processor.process_event(event)
             return processor
@@ -531,7 +579,7 @@ class AnthropicAdapter(AdapterBase):
             tools=tools,
             **request_kwargs,
         )
-        return self._parse_non_streaming_response(response)
+        return self._parse_non_streaming_response(response, model)
 
     async def _request_llm_with_tools_async(
         self,
@@ -550,12 +598,14 @@ class AnthropicAdapter(AdapterBase):
                 f"Exceeded maximum tool-calling rounds ({MAX_TOOL_ROUNDS}) for model {model}"
             )
 
-        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters)
+        history = self.convert_conversation_history_to_adapter_format(conversation, additional_parameters, model)
         tools = [self._convert_function_to_tool(func) for func in functions]
         if additional_parameters.get("web_search", False):
             tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 10})
 
         request_kwargs = self._prepare_request_kwargs(model, additional_parameters, **kwargs)
+        if container_id := self._continuation_container(conversation, model):
+            request_kwargs.setdefault("container", container_id)
 
         if stream:
             events = await self.async_client.beta.messages.create(
@@ -566,7 +616,7 @@ class AnthropicAdapter(AdapterBase):
                 stream=True,
                 **request_kwargs,
             )
-            processor = ClaudeStreamProcessor()
+            processor = ClaudeStreamProcessor(model)
             async for event in events:
                 processor.process_event(event)
         else:
@@ -577,7 +627,7 @@ class AnthropicAdapter(AdapterBase):
                 tools=tools,
                 **request_kwargs,
             )
-            processor = self._parse_non_streaming_response(response)
+            processor = self._parse_non_streaming_response(response, model)
 
         if processor.stop_reason == "tool_use":
             await self._handle_tool_calls_async(processor, conversation, functions, tool_output_callback)
@@ -667,12 +717,22 @@ class AnthropicAdapter(AdapterBase):
         assistant_message = Message(
             role="assistant",
             content=processor.response_text,
+            id=processor.id, provider="anthropic", model=processor.model or processor.usage["model"],
+            provider_data={"content": processor.content_blocks, "container": processor.container},
             thinking_responses=processor.thinking_responses,
             function_calls=function_calls,
             function_responses=function_responses,
             usage=processor.usage,
         )
         conversation.messages.append(assistant_message)
+
+    @staticmethod
+    def _continuation_container(conversation, model):
+        for message in reversed(conversation.messages):
+            container = message.replay_data("anthropic", model).get("container")
+            if container:
+                return container.get("id") if isinstance(container, dict) else container
+        return None
 
     def _prepare_request_kwargs(
         self,
@@ -739,7 +799,8 @@ class AnthropicAdapter(AdapterBase):
     # --- Conversation and Tool Formatting ---
 
     def convert_conversation_history_to_adapter_format(
-        self, conversation: Conversation, additional_parameters: AdditionalParameters | None = None
+        self, conversation: Conversation, additional_parameters: AdditionalParameters | None = None,
+        model: str | None = None,
     ) -> List[Dict]:
         """Converts a Conversation object into the format required by the Anthropic API."""
         if additional_parameters is None:
@@ -752,7 +813,15 @@ class AnthropicAdapter(AdapterBase):
         )
 
         for message in conversation.messages:
-            content = self._prepare_message_content(message, citations_enabled)
+            if message.role == "function":
+                history.append({"role": "user", "content": [
+                    function_response_to_anthropic(fr) for fr in message.function_responses
+                ]})
+                continue
+            native = message.replay_data("anthropic", model)
+            content = native.get("content")
+            if content is None:
+                content = self._prepare_message_content(message, citations_enabled)
             history.append({"role": message.role, "content": content})
 
             # Per Anthropic's API, tool results must be in a separate, subsequent user message.
@@ -781,10 +850,6 @@ class AnthropicAdapter(AdapterBase):
 
         # For assistant messages, add thinking and tool call requests.
         if message.role == "assistant":
-            if message.thinking_responses:
-                thinking_content = [thinking_response_to_anthropic(tr) for tr in message.thinking_responses]
-                content_list = thinking_content + content_list  # Prepend thinking blocks
-
             if message.function_calls:
                 tool_call_content = [function_call_to_anthropic(fc) for fc in message.function_calls]
                 content_list.extend(tool_call_content)

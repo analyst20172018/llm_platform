@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Tuple
 from loguru import logger
 
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS
+from .serializers import provider_dump, missing_continuation
 from llm_platform.services.conversation import (Conversation, FunctionCall,
                                                 FunctionResponse, Message,
                                                 ThinkingResponse)
@@ -157,21 +158,7 @@ class GoogleAdapter(AdapterBase):
         ``_build_input_from_conversation``."""
         return self._build_input_from_conversation(the_conversation)
 
-    def _build_input_from_latest_user_message(self, conversation: Conversation) -> List[Dict]:
-        """Builds an Interactions ``step_list`` containing only the latest
-        ``user`` message. Used for follow-up calls that chain to a prior
-        interaction via ``previous_interaction_id`` — the server already holds
-        the earlier turns, so re-sending them would duplicate context."""
-        latest_user = next(
-            (m for m in reversed(conversation.messages) if m.role == "user"),
-            None,
-        )
-        if latest_user is None:
-            return []
-        content = self._content_items_for_message(latest_user)
-        return [{"type": "user_input", "content": content}] if content else []
-
-    def _build_input_from_conversation(self, conversation: Conversation) -> List[Dict]:
+    def _build_input_from_conversation(self, conversation: Conversation, model: str | None = None) -> List[Dict]:
         """
         Builds the ``step_list`` input array consumed by
         ``client.interactions.create``. Every entry is a typed Step:
@@ -186,9 +173,16 @@ class GoogleAdapter(AdapterBase):
                 content = self._content_items_for_message(message)
                 if content:
                     input_items.append({"type": "user_input", "content": content})
+                input_items.extend(self._function_result_entry(fr) for fr in message.function_responses)
                 continue
 
             if message.role == "assistant":
+                # Interactions explicitly supports thought replay across Gemini models.
+                native = message.replay_data("google")
+                if "steps" in native:
+                    input_items.extend(native["steps"])
+                    input_items.extend(self._function_result_entry(fr) for fr in message.function_responses)
+                    continue
                 content = self._content_items_for_message(message)
                 if content:
                     input_items.append({"type": "model_output", "content": content})
@@ -198,8 +192,8 @@ class GoogleAdapter(AdapterBase):
                         "name": fc.name,
                         "arguments": self._normalize_function_arguments(fc.arguments),
                     }
-                    if fc.id:
-                        entry["id"] = fc.id
+                    if fc.call_id:
+                        entry["id"] = fc.call_id
                     input_items.append(entry)
                 for fr in (message.function_responses or []):
                     input_items.append(self._function_result_entry(fr))
@@ -220,9 +214,55 @@ class GoogleAdapter(AdapterBase):
             "name": fr.name,
             "result": [{"type": "text", "text": json.dumps(fr.response)}],
         }
-        if fr.id:
-            entry["call_id"] = fr.id
+        if fr.call_id:
+            entry["call_id"] = fr.call_id
         return entry
+
+    def _continuation_input(self, conversation, model, *, antigravity=False):
+        state = conversation.continuation("google", model)
+        messages = conversation.messages[state["length"]:] if state else conversation.messages
+        params = {"input": self._build_input_from_conversation(Conversation(messages), model)}
+        if state:
+            params["previous_interaction_id"] = state["response_id"]
+        if antigravity:
+            if state and not state.get("environment_id"):
+                raise ValueError("Antigravity continuation is missing its environment ID; reset continuation to start a new environment.")
+            params["environment"] = state["environment_id"] if state else "remote"
+        return params
+
+    def _replay_interaction_kwargs(self, conversation, model, kwargs):
+        params = {key: value for key, value in kwargs.items() if key != "previous_interaction_id"}
+        params["input"] = self._build_input_from_conversation(conversation, model)
+        model_object = self.model_config[model]
+        if model_object and model_object["agent_type"] == "deep_research":
+            self._prepend_research_instructions(params["input"], conversation)
+        return params
+
+    def _create_interaction(self, conversation, model_name, **kwargs):
+        try:
+            return self.client.interactions.create(**kwargs)
+        except Exception as error:
+            if "previous_interaction_id" not in kwargs or not missing_continuation(
+                error, "previous_interaction_id", kwargs["previous_interaction_id"]
+            ):
+                raise
+            return self.client.interactions.create(**self._replay_interaction_kwargs(conversation, model_name, kwargs))
+
+    async def _create_interaction_async(self, conversation, model_name, **kwargs):
+        try:
+            return await self.async_client.interactions.create(**kwargs)
+        except Exception as error:
+            if "previous_interaction_id" not in kwargs or not missing_continuation(
+                error, "previous_interaction_id", kwargs["previous_interaction_id"]
+            ):
+                raise
+            return await self.async_client.interactions.create(**self._replay_interaction_kwargs(conversation, model_name, kwargs))
+
+    def _append_interaction(self, conversation, message, interaction, model):
+        state = conversation.continuation("google", model) or {}
+        environment_id = getattr(interaction, "environment_id", None) or state.get("environment_id")
+        conversation.messages.append(message)
+        conversation.checkpoint("google", model, message.id, environment_id=environment_id)
 
     # ------------------------------------------------------------------
     # Tools / generation_config / response_format
@@ -455,7 +495,7 @@ class GoogleAdapter(AdapterBase):
 
             elif step_type == "function_call":
                 arguments = getattr(step, "arguments", {}) or {}
-                arguments_json = arguments if isinstance(arguments, str) else json.dumps(dict(arguments))
+                arguments_json = arguments if isinstance(arguments, str) else json.dumps(provider_dump(arguments))
                 function_calls.append(FunctionCall(
                     id=getattr(step, "id", None),
                     name=getattr(step, "name", ""),
@@ -497,6 +537,9 @@ class GoogleAdapter(AdapterBase):
 
         return Message(
             id=getattr(interaction, "id", None),
+            provider="google", model=model_name,
+            provider_data={"steps": provider_dump(getattr(interaction, "steps", []) or []),
+                           "environment_id": getattr(interaction, "environment_id", None)},
             role="assistant",
             content=text_content,
             thinking_responses=thoughts,
@@ -573,31 +616,6 @@ class GoogleAdapter(AdapterBase):
     # Deep Research path
     # ------------------------------------------------------------------
 
-    def _convert_conversation_to_interaction_input(self, conversation: Conversation) -> str | List[Dict]:
-        user_messages = [message for message in conversation.messages if message.role == "user"]
-        if not user_messages:
-            return ""
-
-        latest_message = user_messages[-1]
-        text_input = latest_message.content
-        if conversation.system_prompt:
-            text_input = (
-                f"System instructions:\n{conversation.system_prompt}\n\n"
-                f"User request:\n{text_input}"
-            )
-
-        if not latest_message.files:
-            return text_input
-
-        interaction_input: List[Dict] = []
-        if text_input:
-            interaction_input.append({"type": "text", "text": text_input})
-
-        for file in latest_message.files:
-            interaction_input.append(self._convert_file_to_interaction_content(file))
-
-        return interaction_input
-
     def _deep_research_interaction_params(
         self,
         model: str,
@@ -605,11 +623,12 @@ class GoogleAdapter(AdapterBase):
         additional_parameters: AdditionalParameters,
     ) -> Dict:
         interaction_params = {
-            "input": self._convert_conversation_to_interaction_input(the_conversation),
+            **self._continuation_input(the_conversation, model),
             "agent": model,
             "background": True,
             "store": True,
         }
+        self._prepend_research_instructions(interaction_params["input"], the_conversation)
 
         agent_config = dict(additional_parameters.get("agent_config") or {})
         if agent_config:
@@ -617,6 +636,14 @@ class GoogleAdapter(AdapterBase):
             interaction_params["agent_config"] = agent_config
 
         return interaction_params
+
+    @staticmethod
+    def _prepend_research_instructions(input_items, conversation):
+        if conversation.system_prompt:
+            input_items.insert(0, {
+                "type": "user_input",
+                "content": [{"type": "text", "text": f"System instructions:\n{conversation.system_prompt}"}],
+            })
 
     def _poll_deep_research_interaction(self, interaction):
         while getattr(interaction, "status", None) not in self.DEEP_RESEARCH_TERMINAL_STATUSES:
@@ -653,6 +680,8 @@ class GoogleAdapter(AdapterBase):
 
         return Message(
             id=interaction.id,
+            provider="google", model=model_name,
+            provider_data={"steps": provider_dump(getattr(interaction, "steps", []) or [])},
             role="assistant",
             content=text_content,
             usage=usage,
@@ -670,7 +699,8 @@ class GoogleAdapter(AdapterBase):
         if functions:
             logger.warning("Gemini Deep Research agents do not support custom function tools.")
 
-        interaction = self.client.interactions.create(
+        interaction = self._create_interaction(
+            the_conversation, model,
             **self._deep_research_interaction_params(model, the_conversation, additional_parameters)
         )
         interaction = self._poll_deep_research_interaction(interaction)
@@ -678,7 +708,7 @@ class GoogleAdapter(AdapterBase):
             interaction=interaction,
             model_name=model,
         )
-        the_conversation.messages.append(assistant_message)
+        self._append_interaction(the_conversation, assistant_message, interaction, model)
         return assistant_message
 
     async def _request_deep_research_async(
@@ -692,7 +722,8 @@ class GoogleAdapter(AdapterBase):
         if functions:
             logger.warning("Gemini Deep Research agents do not support custom function tools.")
 
-        interaction = await self.async_client.interactions.create(
+        interaction = await self._create_interaction_async(
+            the_conversation, model,
             **self._deep_research_interaction_params(model, the_conversation, additional_parameters)
         )
         interaction = await self._poll_deep_research_interaction_async(interaction)
@@ -700,7 +731,7 @@ class GoogleAdapter(AdapterBase):
             interaction=interaction,
             model_name=model,
         )
-        the_conversation.messages.append(assistant_message)
+        self._append_interaction(the_conversation, assistant_message, interaction, model)
         return assistant_message
 
     # ------------------------------------------------------------------
@@ -724,6 +755,10 @@ class GoogleAdapter(AdapterBase):
         functions are forwarded; the sandbox filesystem is enabled implicitly by
         the ``environment`` argument supplied at call time."""
         kwargs: Dict[str, Any] = {"agent": model}
+        if additional_parameters.get("new_environment"):
+            the_conversation.reset_continuation("google", model)
+        if agent_config := additional_parameters.get("agent_config"):
+            kwargs["agent_config"] = {"type": "antigravity", **agent_config}
         if the_conversation.system_prompt:
             kwargs["system_instruction"] = the_conversation.system_prompt
         if tools := self._build_tools(functions, additional_parameters):
@@ -780,9 +815,9 @@ class GoogleAdapter(AdapterBase):
 
         custom_function_names = {f.__name__ for f in functions}
 
-        interaction = self.client.interactions.create(
-            input=self._build_input_from_conversation(the_conversation),
-            environment="remote",
+        interaction = self._create_interaction(
+            the_conversation, model,
+            **self._continuation_input(the_conversation, model, antigravity=True),
             **base_kwargs,
         )
 
@@ -798,7 +833,8 @@ class GoogleAdapter(AdapterBase):
                 if fc.name in custom_function_names
             ]
             assistant_message.function_calls = custom_calls
-            the_conversation.messages.append(assistant_message)
+            assistant_message._replay_fingerprint = assistant_message._content_fingerprint()
+            self._append_interaction(the_conversation, assistant_message, interaction, model)
 
             if not custom_calls:
                 return assistant_message
@@ -806,12 +842,13 @@ class GoogleAdapter(AdapterBase):
             function_responses = self._execute_function_calls(
                 custom_calls, functions, tool_output_callback
             )
-            assistant_message.function_responses = function_responses
+            the_conversation.messages.append(Message(role="function", content="", function_responses=function_responses))
 
-            interaction = self.client.interactions.create(
+            interaction = self._create_interaction(
+                the_conversation, model,
                 input=[self._function_result_entry(fr) for fr in function_responses],
                 previous_interaction_id=interaction.id,
-                environment=getattr(interaction, "environment_id", None) or "remote",
+                environment=self._continuation_input(the_conversation, model, antigravity=True)["environment"],
                 **base_kwargs,
             )
 
@@ -839,9 +876,9 @@ class GoogleAdapter(AdapterBase):
 
         custom_function_names = {f.__name__ for f in functions}
 
-        interaction = await self.async_client.interactions.create(
-            input=self._build_input_from_conversation(the_conversation),
-            environment="remote",
+        interaction = await self._create_interaction_async(
+            the_conversation, model,
+            **self._continuation_input(the_conversation, model, antigravity=True),
             **base_kwargs,
         )
 
@@ -857,7 +894,8 @@ class GoogleAdapter(AdapterBase):
                 if fc.name in custom_function_names
             ]
             assistant_message.function_calls = custom_calls
-            the_conversation.messages.append(assistant_message)
+            assistant_message._replay_fingerprint = assistant_message._content_fingerprint()
+            self._append_interaction(the_conversation, assistant_message, interaction, model)
 
             if not custom_calls:
                 return assistant_message
@@ -865,12 +903,13 @@ class GoogleAdapter(AdapterBase):
             function_responses = await self._execute_function_calls_async(
                 custom_calls, functions, tool_output_callback
             )
-            assistant_message.function_responses = function_responses
+            the_conversation.messages.append(Message(role="function", content="", function_responses=function_responses))
 
-            interaction = await self.async_client.interactions.create(
+            interaction = await self._create_interaction_async(
+                the_conversation, model,
                 input=[self._function_result_entry(fr) for fr in function_responses],
                 previous_interaction_id=interaction.id,
-                environment=getattr(interaction, "environment_id", None) or "remote",
+                environment=self._continuation_input(the_conversation, model, antigravity=True)["environment"],
                 **base_kwargs,
             )
 
@@ -935,28 +974,16 @@ class GoogleAdapter(AdapterBase):
             additional_parameters=additional_parameters,
         )
 
-        # Server-side conversation state: if a prior assistant message in this
-        # conversation has an interaction id, chain to it via
-        # ``previous_interaction_id`` and send only the new user_input.
-        # Otherwise (first turn), send the full history.
-        prev_interaction_id = the_conversation.last_assistant_id
-        if prev_interaction_id:
-            input_items = self._build_input_from_latest_user_message(the_conversation)
-            interaction = self.client.interactions.create(
-                input=input_items,
-                previous_interaction_id=prev_interaction_id,
-                **base_kwargs,
-            )
-        else:
-            input_items = self._build_input_from_conversation(the_conversation)
-            interaction = self.client.interactions.create(
-                input=input_items,
-                **base_kwargs,
-            )
+        # A valid provider/model checkpoint identifies the complete unsent suffix.
+        interaction = self._create_interaction(
+            the_conversation, model,
+            **self._continuation_input(the_conversation, model),
+            **base_kwargs,
+        )
 
         for _tool_round in range(MAX_TOOL_ROUNDS):
             assistant_message = self._parse_interaction_response(interaction, model)
-            the_conversation.messages.append(assistant_message)
+            self._append_interaction(the_conversation, assistant_message, interaction, model)
 
             if not assistant_message.function_calls:
                 return assistant_message
@@ -965,10 +992,11 @@ class GoogleAdapter(AdapterBase):
             function_responses = self._execute_function_calls(
                 assistant_message.function_calls, functions, tool_output_callback
             )
-            assistant_message.function_responses = function_responses
+            the_conversation.messages.append(Message(role="function", content="", function_responses=function_responses))
 
             result_inputs = [self._function_result_entry(fr) for fr in function_responses]
-            interaction = self.client.interactions.create(
+            interaction = self._create_interaction(
+                the_conversation, model,
                 input=result_inputs,
                 previous_interaction_id=interaction.id,
                 **base_kwargs,
@@ -1026,24 +1054,15 @@ class GoogleAdapter(AdapterBase):
             additional_parameters=additional_parameters,
         )
 
-        prev_interaction_id = the_conversation.last_assistant_id
-        if prev_interaction_id:
-            input_items = self._build_input_from_latest_user_message(the_conversation)
-            interaction = await self.async_client.interactions.create(
-                input=input_items,
-                previous_interaction_id=prev_interaction_id,
-                **base_kwargs,
-            )
-        else:
-            input_items = self._build_input_from_conversation(the_conversation)
-            interaction = await self.async_client.interactions.create(
-                input=input_items,
-                **base_kwargs,
-            )
+        interaction = await self._create_interaction_async(
+            the_conversation, model,
+            **self._continuation_input(the_conversation, model),
+            **base_kwargs,
+        )
 
         for _tool_round in range(MAX_TOOL_ROUNDS):
             assistant_message = self._parse_interaction_response(interaction, model)
-            the_conversation.messages.append(assistant_message)
+            self._append_interaction(the_conversation, assistant_message, interaction, model)
 
             if not assistant_message.function_calls:
                 return assistant_message
@@ -1052,10 +1071,11 @@ class GoogleAdapter(AdapterBase):
             function_responses = await self._execute_function_calls_async(
                 assistant_message.function_calls, functions, tool_output_callback
             )
-            assistant_message.function_responses = function_responses
+            the_conversation.messages.append(Message(role="function", content="", function_responses=function_responses))
 
             result_inputs = [self._function_result_entry(fr) for fr in function_responses]
-            interaction = await self.async_client.interactions.create(
+            interaction = await self._create_interaction_async(
+                the_conversation, model,
                 input=result_inputs,
                 previous_interaction_id=interaction.id,
                 **base_kwargs,

@@ -15,6 +15,8 @@ from llm_platform.tools.base import BaseTool
 from llm_platform.adapters.serializers import (
     function_call_to_openai_chat,
     function_response_to_openai_chat,
+    function_call_from_openai_chat,
+    chat_replay_data,
 )
 from llm_platform.types import AdditionalParameters
 
@@ -48,6 +50,10 @@ class OpenAICompatibleAdapter(AdapterBase):
 
     BASE_URL: str = None
     ENV_VAR: str = None
+
+    @property
+    def provider(self):
+        return type(self).__name__.removesuffix("Adapter").lower()
 
     def __init__(self):
         super().__init__()
@@ -85,6 +91,9 @@ class OpenAICompatibleAdapter(AdapterBase):
         history = [{"role": "system", "content": the_conversation.system_prompt}]
 
         for message in the_conversation.messages:
+            if message.role == "function":
+                history.extend(function_response_to_openai_chat(fr) for fr in message.function_responses)
+                continue
             history_message = {"role": message.role, "content": message.content}
 
             if message.function_calls:
@@ -126,7 +135,8 @@ class OpenAICompatibleAdapter(AdapterBase):
                             f"Unsupported file type in file {each_file.name}. The type is {type(each_file)}."
                         )
 
-            history.append(history_message)
+            native = message.replay_data(self.provider, model)
+            history.append(native.get("message", history_message))
 
             if message.function_responses:
                 for each_response in message.function_responses:
@@ -155,15 +165,21 @@ class OpenAICompatibleAdapter(AdapterBase):
         chain of thought in ``reasoning_content``, alongside ``content``.
         """
         assistant_message = response.choices[0].message
-        reasoning_content = getattr(assistant_message, "reasoning_content", None)
+        reasoning_content = (getattr(assistant_message, "reasoning_content", None)
+                             or getattr(assistant_message, "reasoning", None))
         thinking_responses = (
             [ThinkingResponse(content=reasoning_content, id=getattr(response, "id", None))]
             if reasoning_content
             else []
         )
         return Message(
+            id=getattr(response, "id", None),
+            provider=self.provider, model=model,
+            provider_data={"message": chat_replay_data(assistant_message)},
             role="assistant",
-            content=assistant_message.content,
+            content=assistant_message.content or "",
+            function_calls=[function_call_from_openai_chat(call)
+                            for call in (getattr(assistant_message, "tool_calls", None) or [])],
             thinking_responses=thinking_responses,
             usage=self._build_usage(getattr(response, "usage", None), model),
         )

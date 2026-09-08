@@ -81,6 +81,10 @@ class GrokAdapter(AdapterBase):
             chat.append(system(the_conversation.system_prompt))
 
         for message in the_conversation.messages:
+            if message.role == "function":
+                for result in message.function_responses:
+                    chat.append(tool_result(result=json.dumps(result.response), tool_call_id=result.call_id))
+                continue
             role = self.ROLE_MAPPING.get(message.role)
             if role is None:
                 raise ValueError(f"Unsupported Grok message role: {message.role}")
@@ -99,7 +103,8 @@ class GrokAdapter(AdapterBase):
                         id=function_call.call_id,
                         function=chat_pb2.FunctionCall(
                             name=function_call.name,
-                            arguments=function_call.arguments,
+                            arguments=(function_call.arguments if isinstance(function_call.arguments, str)
+                                       else json.dumps(function_call.arguments)),
                         ),
                     )
                     for function_call in message.function_calls
@@ -130,7 +135,15 @@ class GrokAdapter(AdapterBase):
                             f"Unsupported file type for Grok: {type(each_file).__name__}"
                         )
 
-            chat.append(chat_pb2.Message(**message_parameters))
+            native = message.replay_data("grok", model)
+            if "messages" in native:
+                from google.protobuf.json_format import ParseDict
+                for item in native["messages"]:
+                    chat.append(ParseDict(item, chat_pb2.Message()))
+            else:
+                if native.get("encrypted_content"):
+                    message_parameters["encrypted_content"] = native["encrypted_content"]
+                chat.append(chat_pb2.Message(**message_parameters))
 
             if message.function_responses:
                 for function_response in message.function_responses:
@@ -203,7 +216,21 @@ class GrokAdapter(AdapterBase):
         function_calls: List[FunctionCall] | None = None,
         function_responses: List[FunctionResponse] | None = None,
     ) -> Message:
+        from xai_sdk.chat import BaseChat, Response
+        from .serializers import provider_dump
+
+        native = {}
+        if isinstance(response, Response):
+            # Use the SDK's own replay conversion, including hosted tool outputs.
+            replay = BaseChat(stub=None, conversation_id=None, batch_request_id=None)
+            replay.append(response)
+            native["messages"] = [provider_dump(item) for item in replay.messages]
+            native["citations"] = list(response.citations)
+            native["inline_citations"] = [provider_dump(item) for item in response.inline_citations]
+        elif getattr(response, "encrypted_content", None):
+            native["encrypted_content"] = response.encrypted_content
         return Message(
+            provider="grok", model=model, provider_data=native,
             role="assistant",
             id=getattr(response, "id", None),
             content=getattr(response, "content", "") or "",

@@ -26,7 +26,9 @@ from llm_platform.adapters.serializers import (
     function_call_from_openai,
     function_call_to_openai,
     function_response_to_openai,
-    thinking_response_to_openai,
+    provider_dump,
+    missing_continuation,
+    openai_output_to_input,
 )
 from llm_platform.types import AdditionalParameters
 
@@ -114,7 +116,7 @@ class OpenAIAdapter(AdapterBase):
         return None
 
     def convert_conversation_history_to_adapter_format(
-        self, conversation_messages: List[Message]
+        self, conversation_messages: List[Message], model: str | None = None
     ) -> List[Dict]:
         """
         Converts the platform's Conversation object into the list format
@@ -131,10 +133,11 @@ class OpenAIAdapter(AdapterBase):
         """
         history = []
         for message in conversation_messages:
-
-            # Add any reasoning responses
-            if message.thinking_responses:
-                history.extend(thinking_response_to_openai(tr) for tr in message.thinking_responses)
+            native = message.replay_data("openai", model)
+            if "output" in native:
+                history.extend(openai_output_to_input(native["output"]))
+                history.extend(function_response_to_openai(fr) for fr in message.function_responses)
+                continue
 
             # Add any function calls
             if message.function_calls:
@@ -210,7 +213,7 @@ class OpenAIAdapter(AdapterBase):
                 "container": {"type": "auto"}
             })
 
-        messages = self.convert_conversation_history_to_adapter_format(the_conversation.messages)
+        messages = self.convert_conversation_history_to_adapter_format(the_conversation.messages, model)
 
         parameters = {
             "model": model,
@@ -245,16 +248,12 @@ class OpenAIAdapter(AdapterBase):
             }
             parameters["betas"] = ["responses_multi_agent=v1"]
 
-        # Use previous_response_id for more efficient, stateful conversations
-        if use_previous_response_id and (prev_id := the_conversation.last_assistant_id):
-            parameters["previous_response_id"] = prev_id
-            # When using a previous ID, only the latest user message is needed
-            last_user_message = next(
-                (msg for msg in reversed(the_conversation.messages) if msg.role == "user"), None
+        state = the_conversation.continuation("openai", model)
+        if use_previous_response_id and parameters.get("store") is not False and state:
+            parameters["previous_response_id"] = state["response_id"]
+            parameters["input"] = self.convert_conversation_history_to_adapter_format(
+                the_conversation.messages[state["length"]:], model
             )
-            if last_user_message:
-                messages = self.convert_conversation_history_to_adapter_format([last_user_message])
-                parameters["input"] = messages
 
         # Use background mode for long-running tasks if supported
         if model_object and model_object["background_mode"]:
@@ -265,6 +264,33 @@ class OpenAIAdapter(AdapterBase):
             parameters["text_format"] = structured_output_class
 
         return parameters
+
+    def _replay_parameters(self, parameters, conversation):
+        replay = {key: value for key, value in parameters.items() if key != "previous_response_id"}
+        replay["input"] = self.convert_conversation_history_to_adapter_format(
+            conversation.messages, parameters["model"]
+        )
+        return replay
+
+    def _send_response(self, parameters, conversation):
+        try:
+            return self._create_response(parameters)
+        except Exception as error:
+            if "previous_response_id" not in parameters or not missing_continuation(
+                error, "previous_response_id", parameters["previous_response_id"]
+            ):
+                raise
+            return self._create_response(self._replay_parameters(parameters, conversation))
+
+    async def _send_response_async(self, parameters, conversation):
+        try:
+            return await self._create_response_async(parameters)
+        except Exception as error:
+            if "previous_response_id" not in parameters or not missing_continuation(
+                error, "previous_response_id", parameters["previous_response_id"]
+            ):
+                raise
+            return await self._create_response_async(self._replay_parameters(parameters, conversation))
 
     def _create_response(self, parameters: Dict):
         """Send a synchronous Responses request through the correct SDK surface."""
@@ -495,6 +521,9 @@ class OpenAIAdapter(AdapterBase):
         function_responses: List[FunctionResponse],
         thinking_responses: List[ThinkingResponse],
         files_from_response: List[MediaFile],
+        response=None,
+        model: str | None = None,
+        store: bool = True,
     ):
         """Appends the assistant's function call and the user's function response messages to the conversation."""
         # 1. Assistant's message with the function call request
@@ -506,8 +535,12 @@ class OpenAIAdapter(AdapterBase):
             function_calls=function_calls,
             thinking_responses=thinking_responses,
             files=files_from_response,
+            provider="openai", model=model,
+            provider_data={"output": provider_dump(response.output)} if response is not None else {},
         )
         the_conversation.messages.append(assistant_message)
+        if store:
+            the_conversation.checkpoint("openai", model, response_id)
 
         # 2. User's message containing the function execution results
         user_response_message = Message(
@@ -539,7 +572,8 @@ class OpenAIAdapter(AdapterBase):
 
             response_records.append(
                 FunctionResponse(
-                    name=function_name, call_id=tool_call.call_id, response=response_content
+                    name=function_name, call_id=tool_call.call_id, response=response_content,
+                    provider_data=tool_call.provider_data,
                 )
             )
 
@@ -579,7 +613,8 @@ class OpenAIAdapter(AdapterBase):
                 tool_output_callback(function_name, arguments, response_content)
 
             return FunctionResponse(
-                name=function_name, call_id=tool_call.call_id, response=response_content
+                name=function_name, call_id=tool_call.call_id, response=response_content,
+                provider_data=tool_call.provider_data,
             )
 
         # Execute all tool calls concurrently
@@ -629,7 +664,7 @@ class OpenAIAdapter(AdapterBase):
                 model, the_conversation, additional_parameters, use_previous_response_id=True
             )
 
-            response = self._create_response(parameters)
+            response = self._send_response(parameters, the_conversation)
 
             if parameters.get("background"):
                 logger.info(f"Background task initiated")
@@ -646,8 +681,12 @@ class OpenAIAdapter(AdapterBase):
             content=answer_text,
             thinking_responses=thinking_responses,
             files=files_from_response,
+            provider="openai", model=model,
+            provider_data={"output": provider_dump(response.output)},
         )
         the_conversation.messages.append(message)
+        if additional_parameters.get("store") is not False:
+            the_conversation.checkpoint("openai", model, message.id)
         return message
 
     async def request_llm_async(
@@ -690,7 +729,7 @@ class OpenAIAdapter(AdapterBase):
                 model, the_conversation, additional_parameters, use_previous_response_id=True
             )
 
-            response = await self._create_response_async(parameters)
+            response = await self._send_response_async(parameters, the_conversation)
 
             if parameters.get("background"):
                 logger.info(f"Background task initiated")
@@ -707,8 +746,12 @@ class OpenAIAdapter(AdapterBase):
             content=answer_text,
             thinking_responses=thinking_responses,
             files=files_from_response,
+            provider="openai", model=model,
+            provider_data={"output": provider_dump(response.output)},
         )
         the_conversation.messages.append(message)
+        if additional_parameters.get("store") is not False:
+            the_conversation.checkpoint("openai", model, message.id)
         return message
 
     def request_llm_with_functions(
@@ -735,7 +778,7 @@ class OpenAIAdapter(AdapterBase):
         parameters["tools"].extend(tools)
 
         # 1. Get response from the model
-        response = self._create_response(parameters)
+        response = self._send_response(parameters, the_conversation)
 
         if parameters.get("background"):
             logger.info(f"Background task initiated. Response ID: {response.id}")
@@ -756,7 +799,8 @@ class OpenAIAdapter(AdapterBase):
 
         # 4. Append the assistant's call and the tool results to the history
         self._append_tool_messages_to_conversation(
-            the_conversation, response.id, usage, text, function_calls, function_responses, thinking, files
+            the_conversation, response.id, usage, text, function_calls, function_responses, thinking, files,
+            response=response, model=model, store=additional_parameters.get("store") is not False,
         )
 
         # 5. Call the model again with the updated history to get the final answer
@@ -789,7 +833,7 @@ class OpenAIAdapter(AdapterBase):
         parameters["tools"].extend(tools)
 
         # 1. Get response from the model
-        response = await self._create_response_async(parameters)
+        response = await self._send_response_async(parameters, the_conversation)
 
         if parameters.get("background"):
             logger.info(f"Background task initiated. Response ID: {response.id}")
@@ -810,7 +854,8 @@ class OpenAIAdapter(AdapterBase):
 
         # 4. Append the assistant's call and the tool results to the history
         self._append_tool_messages_to_conversation(
-            the_conversation, response.id, usage, text, function_calls, function_responses, thinking, files
+            the_conversation, response.id, usage, text, function_calls, function_responses, thinking, files,
+            response=response, model=model, store=additional_parameters.get("store") is not False,
         )
 
         # 5. Call the model again with the updated history to get the final answer

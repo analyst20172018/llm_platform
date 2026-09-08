@@ -39,4 +39,6 @@ class AdditionalParameters(TypedDict, total=False):
     reasoning: ReasoningParameters  # reasoning/effort tuning
     text: TextParameters  # text verbosity tuning
     thinking: ThinkingParameters  # DeepSeek thinking mode (mapped from thinking_mode)
+    agent_config: dict[str, Any]  # Google managed-agent configuration
+    new_environment: bool  # Antigravity: reset remote state before this turn
     agent_count: int # number of parallel agents (Grok Heavy; OpenAI Multi-agent subagents, 0 = off)

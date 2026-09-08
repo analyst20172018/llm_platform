@@ -432,6 +432,10 @@ models:
     outputs:
       - text
       - image
+    additional_parameters:
+      agent_config:
+        type: object
+        label: Agent configuration
     agent_type: deep_research
     background_mode: true
     visible: true
@@ -452,6 +456,10 @@ models:
     outputs:
       - text
       - image
+    additional_parameters:
+      agent_config:
+        type: object
+        label: Agent configuration
     agent_type: deep_research
     background_mode: true
     visible: false
@@ -470,6 +478,14 @@ models:
       - text
       - image
     additional_parameters:
+      agent_config:
+        type: object
+        label: Agent configuration
+      new_environment:
+        type: boolean
+        default: false
+        send_default: false
+        label: Start a new environment
       function_calling: *param_function_calling
       web_search:
         <<: *param_web_search

@@ -24,6 +24,11 @@ from llm_platform.services.files import (
 from llm_platform.tools.base import BaseTool
 from llm_platform.types import AdditionalParameters
 
+from .serializers import (
+    chat_replay_data,
+    function_call_to_openai_chat,
+    function_response_to_openai_chat,
+)
 from .adapter_base import MAX_TOOL_ROUNDS
 from .openai_compatible_adapter import OpenAICompatibleAdapter
 
@@ -71,27 +76,23 @@ class KimiAdapter(OpenAICompatibleAdapter):
         history = [{"role": "system", "content": the_conversation.system_prompt}]
 
         for message in the_conversation.messages:
+            if message.role == "function":
+                history.extend(function_response_to_openai_chat(fr) for fr in message.function_responses)
+                continue
             history_message: Dict[str, Any] = {
                 "role": message.role,
                 "content": message.content,
             }
 
-            if message.thinking_responses and message.role == "assistant":
+            if (message.provider == "kimi" and message.model == model
+                    and message.thinking_responses and message.role == "assistant"):
                 history_message["reasoning_content"] = "\n".join(
                     response.content for response in message.thinking_responses
                 )
 
             if message.function_calls:
                 history_message["tool_calls"] = [
-                    {
-                        "id": function_call.call_id,
-                        "type": "function",
-                        "function": {
-                            "name": function_call.name,
-                            "arguments": function_call.arguments,
-                        },
-                    }
-                    for function_call in message.function_calls
+                    function_call_to_openai_chat(call) for call in message.function_calls
                 ]
 
             for each_file in message.files:
@@ -139,7 +140,7 @@ class KimiAdapter(OpenAICompatibleAdapter):
                         f"The type is {type(each_file)}."
                     )
 
-            history.append(history_message)
+            history.append(message.replay_data("kimi", model).get("message", history_message))
             history.extend(
                 {
                     "role": "tool",
@@ -311,6 +312,9 @@ class KimiAdapter(OpenAICompatibleAdapter):
         if not function_calls:
             message = Message(
                 role="assistant",
+                id=getattr(response, "id", None),
+                provider="kimi", model=model,
+                provider_data={"message": chat_replay_data(assistant_message)},
                 content=assistant_message.content or "",
                 thinking_responses=thinking_responses,
                 usage=usage,
@@ -324,6 +328,9 @@ class KimiAdapter(OpenAICompatibleAdapter):
         the_conversation.messages.append(
             Message(
                 role="assistant",
+                id=getattr(response, "id", None),
+                provider="kimi", model=model,
+                provider_data={"message": chat_replay_data(assistant_message)},
                 content=assistant_message.content or "",
                 thinking_responses=thinking_responses,
                 function_calls=function_calls,
@@ -349,6 +356,9 @@ class KimiAdapter(OpenAICompatibleAdapter):
         if not function_calls:
             message = Message(
                 role="assistant",
+                id=getattr(response, "id", None),
+                provider="kimi", model=model,
+                provider_data={"message": chat_replay_data(assistant_message)},
                 content=assistant_message.content or "",
                 thinking_responses=thinking_responses,
                 usage=usage,
@@ -362,6 +372,9 @@ class KimiAdapter(OpenAICompatibleAdapter):
         the_conversation.messages.append(
             Message(
                 role="assistant",
+                id=getattr(response, "id", None),
+                provider="kimi", model=model,
+                provider_data={"message": chat_replay_data(assistant_message)},
                 content=assistant_message.content or "",
                 thinking_responses=thinking_responses,
                 function_calls=function_calls,
