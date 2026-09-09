@@ -8,6 +8,9 @@ from typing import Any, Dict, List
 from llm_platform.services.files import (
     AudioFile,
     BaseFile,
+    BinaryFile,
+    FailedFile,
+    file_from_bytes,
     ByteDocumentFile,
     ExcelDocumentFile,
     ImageFile,
@@ -56,30 +59,37 @@ class FunctionResponse:
         self._parse_response()
 
     def _parse_response(self):
-        response_files = self.response.pop("files", None)
+        response_files = self.response.get("files")
         if response_files is None:
             return
-
-        assert isinstance(response_files, list), "`files` must be a list"
-
+        if not isinstance(response_files, list):
+            raise ValueError("Tool result 'files' must be a list")
+        parsed = []
         for file in response_files:
-            assert "type" in file, "File must have a 'type' key"
-            if file["type"] != "image":
+            if isinstance(file, BaseFile):
+                parsed.append(file)
                 continue
-
-            assert "source" in file, "File must have a 'source' key"
+            if not isinstance(file, dict) or not isinstance(file.get("source"), dict):
+                raise ValueError("Tool attachments must be files or dictionaries with a source")
             source = file["source"]
-            assert "type" in source, "File source must have a 'type' key"
-            assert "format" in source, "File source must have a 'format' key"
+            if source.get("type") != "base64":
+                raise ValueError("Only base64 tool attachment sources are supported")
+            name = file.get("name") or file.get("filename")
+            if not name:
+                if not source.get("format"):
+                    raise ValueError("Tool attachment needs a filename or source format")
+                name = f"{file.get('type', 'file')}.{source['format']}"
+            try:
+                data = base64.b64decode(source["data"], validate=True)
+            except (KeyError, ValueError, TypeError) as error:
+                raise ValueError(f"Invalid base64 tool attachment: {name}") from error
+            parsed.append(file_from_bytes(data, name))
+        self.files = parsed
+        self.response.pop("files")
 
-            if source["type"] == "base64":
-                assert "data" in source, "File source must have a 'type' data"
-                self.files.append(
-                    ImageFile.from_base64(
-                        base64_str=source["data"],
-                        file_name=f"image.{source['format']}",
-                    )
-                )
+    def require_no_files(self, provider: str):
+        if self.files:
+            raise ValueError(f"{provider} does not support these tool-result attachments")
 
     def __str__(self):
         return (
@@ -339,13 +349,16 @@ class Conversation:
             "type": type(file).__name__,
         }
 
-        if isinstance(file, TextDocumentFile):
+        if isinstance(file, FailedFile):
+            file_data.update(reference=deepcopy(file.reference), error=file.error)
+        elif isinstance(file, TextDocumentFile):
             file_data["text"] = file.text
         elif isinstance(file, ByteDocumentFile):
             file_data["base64"] = file.base64
         elif isinstance(file, MediaFile):
             file_data["base64"] = file.base64
             file_data["extension"] = file.extension
+            file_data["mime_type"] = file.mime_type
 
         return file_data
 
@@ -441,6 +454,10 @@ class Conversation:
         file_type = file_data["type"]
         file_name = file_data["name"]
 
+        if file_type == "FailedFile":
+            return FailedFile(file_name, file_data["reference"], file_data["error"])
+        if file_type == "BinaryFile" and "base64" in file_data:
+            return BinaryFile(cls._decode_base64_file(file_data), file_name)
         if file_type == "TextDocumentFile" and "text" in file_data:
             return TextDocumentFile(text=file_data["text"], name=file_name)
         if file_type == "ImageFile" and "base64" in file_data:
@@ -448,10 +465,9 @@ class Conversation:
         if file_type == "PDFDocumentFile" and "base64" in file_data:
             return PDFDocumentFile.from_bytes(cls._decode_base64_file(file_data), file_name)
         if file_type == "AudioFile" and "base64" in file_data:
-            # Persisted audio already contains converted bytes, even when the
-            # original name has another extension. Do not transcode it again.
-            audio = AudioFile.__new__(AudioFile)
-            MediaFile.__init__(audio, cls._decode_base64_file(file_data), file_name)
+            # Legacy saves predate lossless audio storage and always contain MP3.
+            audio = AudioFile(cls._decode_base64_file(file_data), file_name)
+            audio._mime_type = file_data.get("mime_type", "audio/mpeg")
             return audio
         if file_type == "ExcelDocumentFile" and "base64" in file_data:
             return ExcelDocumentFile.from_bytes(cls._decode_base64_file(file_data), file_name)

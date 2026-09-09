@@ -77,7 +77,7 @@ class MistralAdapter(AdapterBase):
                     # Audio
                     elif isinstance(each_file, AudioFile):
                         audio_content = {"type": "input_audio",
-                                         "input_audio": each_file.base64
+                                         "input_audio": each_file.as_mp3().base64
                         }
                         history_message["content"].append(audio_content)
 

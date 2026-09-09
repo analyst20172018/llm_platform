@@ -76,20 +76,7 @@ class GoogleAdapter(AdapterBase):
 
     @staticmethod
     def _file_mime_type(file: BaseFile) -> str:
-        extension = file.extension
-        if isinstance(file, ImageFile):
-            return f"image/{extension}"
-        if isinstance(file, AudioFile):
-            return "audio/mp3"
-        if isinstance(file, VideoFile):
-            if extension == "3gp":
-                return "video/3gpp"
-            if extension == "mpg":
-                return "video/mpeg"
-            return f"video/{extension}"
-        if isinstance(file, PDFDocumentFile):
-            return "application/pdf"
-        return "text/plain"
+        return file.mime_type
 
     def _convert_file_to_interaction_content(self, file: BaseFile) -> Dict:
         if isinstance(file, ImageFile):
@@ -134,10 +121,7 @@ class GoogleAdapter(AdapterBase):
         if message.content:
             items.append({"type": "text", "text": message.content})
         for file in (message.files or []):
-            try:
-                items.append(self._convert_file_to_interaction_content(file))
-            except TypeError as e:
-                logger.warning(e)
+            items.append(self._convert_file_to_interaction_content(file))
         return items
 
     @staticmethod
@@ -214,13 +198,16 @@ class GoogleAdapter(AdapterBase):
             raise ValueError(f"Invalid message role for Gemini: '{message.role}'")
         return input_items
 
-    @staticmethod
-    def _function_result_entry(fr: FunctionResponse) -> Dict:
-        entry = {
-            "type": "function_result",
-            "name": fr.name,
-            "result": [{"type": "text", "text": json.dumps(fr.response)}],
-        }
+    def _function_result_entry(self, fr: FunctionResponse) -> Dict:
+        result = [{"type": "text", "text": json.dumps(fr.response)}]
+        for file in fr.files:
+            if isinstance(file, ImageFile):
+                result.append(self._convert_file_to_interaction_content(file))
+            elif isinstance(file, DocumentFile):
+                result.append({"type": "text", "text": f"{file.name}\n{file.text}"})
+            else:
+                raise ValueError(f"Unsupported Gemini tool attachment: {type(file).__name__}")
+        entry = {"type": "function_result", "name": fr.name, "result": result}
         if fr.call_id:
             entry["call_id"] = fr.call_id
         return entry

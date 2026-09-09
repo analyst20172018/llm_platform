@@ -1,11 +1,14 @@
 import base64
 import io
+import mimetypes
 import os
+import warnings
 import xml.etree.ElementTree as ET
 import zipfile
 from abc import ABC
 from pathlib import Path
 from typing import BinaryIO, Literal
+from urllib.parse import unquote, urlsplit
 
 import pandas as pd
 import requests
@@ -85,6 +88,22 @@ def define_file_type(file_name: str) -> FileType:
     return "unknown"
 
 
+class DocumentExtractionError(ValueError):
+    """Document text could not be recovered reliably."""
+
+
+class DocumentExtractionWarning(UserWarning):
+    """A binary document is being reduced to text, losing layout and visuals."""
+
+
+def _warn_text_extraction(file):
+    warnings.warn(
+        f"Extracting text from '{file.name}'; layout, images and other non-text content are omitted.",
+        DocumentExtractionWarning,
+        stacklevel=3,
+    )
+
+
 class BaseFile(ABC):
     def __init__(self, name: str = ""):
         super().__init__()
@@ -93,6 +112,10 @@ class BaseFile(ABC):
     @property
     def extension(self) -> str:
         return _normalize_extension(self.name)
+
+    @property
+    def mime_type(self) -> str:
+        return getattr(self, "_mime_type", None) or mimetypes.guess_type(self.name)[0] or "application/octet-stream"
 
     @property
     def bytes_io(self) -> BinaryIO:
@@ -126,9 +149,14 @@ class TextDocumentFile(DocumentFile):
         super().__init__(name=name)
         self.text = text
 
+    @property
+    def data(self) -> bytes:
+        return self.text.encode("utf-8")
+
     @classmethod
     def from_file(cls, file_path: Path) -> "TextDocumentFile":
-        with open(file_path, "r") as file:
+        file_path = Path(file_path)
+        with open(file_path, "r", encoding="utf-8") as file:
             return cls(file.read(), name=file_path.name)
 
     @classmethod
@@ -155,27 +183,38 @@ class ByteDocumentFile(DocumentFile):
 
 class PDFDocumentFile(ByteDocumentFile):
     @property
+    def mime_type(self) -> str:
+        return "application/pdf"
+
+    @property
     def text(self) -> str:
         try:
             reader = PdfReader(io.BytesIO(self.data))
-            return "".join(f"{page.extract_text()}\n" for page in reader.pages)
-        except Exception:
-            logger.exception("Failed to extract text from PDF document.")
-            return ""
+            pages = [page.extract_text() or "" for page in reader.pages]
+            if any(not text.strip() for text in pages):
+                raise DocumentExtractionError(
+                    f"PDF '{self.name}' contains pages without extractable text; use native PDF input or OCR."
+                )
+            _warn_text_extraction(self)
+            return "\n".join(pages)
+        except DocumentExtractionError:
+            raise
+        except Exception as error:
+            raise DocumentExtractionError(f"Failed to extract PDF text: {self.name}") from error
 
     @property
     def number_of_pages(self) -> int:
         try:
             reader = PdfReader(io.BytesIO(self.data))
             return len(reader.pages)
-        except Exception:
-            logger.exception("Failed to read PDF page count.")
-            return 0
+        except Exception as error:
+            raise DocumentExtractionError(f"Failed to read PDF page count: {self.name}") from error
 
 
 class ExcelDocumentFile(ByteDocumentFile):
     @property
     def text(self) -> str:
+        _warn_text_extraction(self)
         excel = pd.ExcelFile(io.BytesIO(self.data))
         text_parts = []
         for sheet_name in excel.sheet_names:
@@ -195,10 +234,10 @@ class WordDocumentFile(ByteDocumentFile):
                 texts = [node.text for node in paragraph.iter(f"{namespace}t") if node.text]
                 if texts:
                     paragraphs.append("".join(texts))
+            _warn_text_extraction(self)
             return "\n".join(paragraphs)
-        except Exception:
-            logger.exception("Failed to extract text from Word document.")
-            return ""
+        except Exception as error:
+            raise DocumentExtractionError(f"Failed to extract Word text: {self.name}") from error
 
 
 class PowerPointDocumentFile(ByteDocumentFile):
@@ -206,6 +245,7 @@ class PowerPointDocumentFile(ByteDocumentFile):
     def text(self) -> str:
         try:
             with zipfile.ZipFile(io.BytesIO(self.data)) as presentation:
+                presentation.getinfo("ppt/presentation.xml")
                 slide_entries = []
                 for name in presentation.namelist():
                     if name.startswith("ppt/slides/slide") and name.endswith(".xml"):
@@ -225,10 +265,10 @@ class PowerPointDocumentFile(ByteDocumentFile):
                     if texts:
                         slides_text.append(" ".join(texts))
 
+                _warn_text_extraction(self)
                 return "\n\n".join(slides_text)
-        except Exception:
-            logger.exception("Failed to extract text from PowerPoint document.")
-            return ""
+        except Exception as error:
+            raise DocumentExtractionError(f"Failed to extract PowerPoint text: {self.name}") from error
 
 
 class MediaFile(BaseFile):
@@ -248,18 +288,8 @@ class MediaFile(BaseFile):
         if response.status_code != 200:
             raise ValueError(f"Failed to fetch file from URL: {url}")
 
-        file_name = os.path.basename(url)
-
-        try:
-            image_buffer = io.BytesIO(response.content)
-            pil_image = Image.open(image_buffer)
-            png_buffer = io.BytesIO()
-            pil_image.save(png_buffer, format="PNG")
-            png_buffer.seek(0)
-            file_name = os.path.splitext(file_name)[0] + ".png"
-            return cls(png_buffer.getvalue(), file_name)
-        except Exception as error:
-            raise ValueError("Failed to convert file to PNG.") from error
+        file_name = unquote(Path(urlsplit(url).path).name) or "download"
+        return cls(response.content, file_name)
 
     @classmethod
     def from_bytes(cls, data: bytes, file_name: str) -> "MediaFile":
@@ -285,9 +315,28 @@ class ImageFile(MediaFile):
         file_name: str = "image.png",
     ) -> "ImageFile":
         buffer = io.BytesIO()
-        pil_image.save(buffer, format="PNG")
+        extension = _normalize_extension(file_name) or "png"
+        formats = {
+            "png": "PNG", "jpeg": "JPEG", "webp": "WEBP", "gif": "GIF",
+            "bmp": "BMP", "tiff": "TIFF", "tif": "TIFF",
+        }
+        if extension not in formats:
+            raise ValueError(f"Unsupported image output extension: {extension}")
+        if not Path(file_name).suffix:
+            file_name = (file_name or "image") + ".png"
+        if extension == "jpeg":
+            pil_image = pil_image.convert("RGB")
+        pil_image.save(buffer, format=formats[extension])
         buffer.seek(0)
         return cls(data=buffer.getvalue(), name=file_name)
+
+    @property
+    def mime_type(self) -> str:
+        try:
+            with Image.open(self.bytes_io) as image:
+                return Image.MIME.get(image.format) or super().mime_type
+        except (OSError, ValueError):
+            return super().mime_type
 
     @property
     def pil_image(self):
@@ -302,8 +351,11 @@ class AudioFile(MediaFile):
     def __init__(self, data: bytes, name: str):
         super().__init__(data, name)
 
-        if self.extension.lower() != "mp3":
-            self.data = self.convert_to_mp3()
+    def as_mp3(self) -> "AudioFile":
+        """Return MP3 input for providers that require it, without changing this file."""
+        if self.mime_type in ("audio/mpeg", "audio/mp3"):
+            return self
+        return AudioFile(self.convert_to_mp3(), str(Path(self.name).with_suffix(".mp3")))
 
     def convert_to_mp3(self) -> bytes:
         audio_stream = io.BytesIO(self.data)
@@ -322,3 +374,35 @@ class AudioFile(MediaFile):
 class VideoFile(MediaFile):
     def __init__(self, data: bytes, name: str):
         super().__init__(data, name=name)
+
+
+class BinaryFile(MediaFile):
+    """An arbitrary artifact whose original bytes must be preserved."""
+
+
+class FailedFile(BaseFile):
+    """A remote artifact that could not be downloaded; reference supports retry."""
+
+    def __init__(self, name: str, reference: dict, error: str):
+        super().__init__(name)
+        self.reference = dict(reference)
+        self.error = error
+
+
+def file_from_bytes(data: bytes, filename: str) -> BaseFile:
+    """Classify an artifact without extracting text or transforming its bytes."""
+    if not isinstance(data, bytes):
+        raise TypeError("File content must be bytes")
+    classes = {
+        "image": ImageFile, "audio": AudioFile, "video": VideoFile,
+        "pdf": PDFDocumentFile, "excel": ExcelDocumentFile,
+        "word": WordDocumentFile, "powerpoint": PowerPointDocumentFile,
+    }
+    kind = define_file_type(filename)
+    if kind == "text":
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return BinaryFile(data, filename)
+        return TextDocumentFile(text, filename)
+    return classes.get(kind, BinaryFile)(data, filename)

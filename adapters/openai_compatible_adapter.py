@@ -130,8 +130,8 @@ class OpenAICompatibleAdapter(AdapterBase):
                             raise ValueError(f"Model {model} does not support audio input.")
                         if not isinstance(history_message["content"], list):
                             history_message["content"] = [{"type": "text", "text": history_message["content"]}]
-                        # AudioFile converts its payload to mp3 on construction, so the
-                        # declared format is always mp3 regardless of the original extension.
+                        # Convert only the request payload; retain the original attachment.
+                        each_file = each_file.as_mp3()
                         history_message["content"].append(
                             {"type": "input_audio", "input_audio": {"data": each_file.base64, "format": "mp3"}}
                         )

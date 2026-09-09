@@ -86,6 +86,8 @@ class WiroAIAdapter(AdapterBase):
 
     @staticmethod
     def _message_text(message: Message) -> str:
+        for result in message.function_responses:
+            result.require_no_files("WiroAI")
         parts = [message.content] if message.content else []
         for file in message.files:
             if not isinstance(file, DocumentFile):

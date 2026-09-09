@@ -84,6 +84,7 @@ class GrokAdapter(AdapterBase):
         for message in the_conversation.messages:
             if message.role == "function":
                 for result in message.function_responses:
+                    result.require_no_files("Grok")
                     chat.append(tool_result(result=json.dumps(result.response), tool_call_id=result.call_id))
                 continue
             role = self.ROLE_MAPPING.get(message.role)
@@ -148,6 +149,7 @@ class GrokAdapter(AdapterBase):
 
             if message.function_responses:
                 for function_response in message.function_responses:
+                    function_response.require_no_files("Grok")
                     chat.append(
                         tool_result(
                             result=json.dumps(function_response.response, default=str),

@@ -21,7 +21,7 @@ from llm_platform.services.conversation import (Conversation, FunctionCall,
 from llm_platform.services.files import (AudioFile, BaseFile, DocumentFile,
                                          TextDocumentFile, PDFDocumentFile,
                                          ExcelDocumentFile, WordDocumentFile, PowerPointDocumentFile, 
-                                         MediaFile, ImageFile, VideoFile, define_file_type)
+                                         MediaFile, ImageFile, VideoFile, FailedFile, file_from_bytes)
 from llm_platform.tools.base import BaseTool
 from llm_platform.adapters.serializers import (
     function_call_from_openai,
@@ -74,7 +74,7 @@ class OpenAIAdapter(AdapterBase):
             self._async_client = AsyncOpenAI()
         return self._async_client
 
-    def _convert_file_to_content(self, file: BaseFile) -> Dict | None:
+    def _convert_file_to_content(self, file: BaseFile) -> Dict:
         """
         Converts a BaseFile object into an OpenAI-compatible content dictionary.
 
@@ -82,8 +82,10 @@ class OpenAIAdapter(AdapterBase):
             file: The file object to convert.
 
         Returns:
-            A dictionary representing the file content for the API, or None if
-            the file type is unsupported.
+            A dictionary representing the file content for the API.
+
+        Raises:
+            TypeError: If this adapter cannot send the attachment.
         """
         if isinstance(file, ImageFile):
             return {
@@ -91,6 +93,7 @@ class OpenAIAdapter(AdapterBase):
                 "image_url": self._image_data_url(file),
             }
         if isinstance(file, AudioFile):
+            file = file.as_mp3()
             return {
                 "type": AUDIO_INPUT_TYPE,
                 "input_audio": {"data": file.base64, "format": "mp3"},
@@ -114,8 +117,7 @@ class OpenAIAdapter(AdapterBase):
                 "text": self._document_xml(file),
             }
 
-        logger.warning(f"Unsupported file type for conversion: {type(file)}. Skipping file.")
-        return None
+        raise TypeError(f"Unsupported OpenAI attachment: {type(file).__name__}")
 
     def convert_conversation_history_to_adapter_format(
         self, conversation_messages: List[Message], model: str | None = None
@@ -379,7 +381,7 @@ class OpenAIAdapter(AdapterBase):
         phase = getattr(output, "phase", None)
         return phase is not None and phase != "final_answer"
 
-    def _parse_response(self, response) -> Tuple[str, List[ThinkingResponse], List[MediaFile], List[Dict], Dict]:
+    def _parse_response(self, response) -> Tuple[str, List[ThinkingResponse], List[BaseFile], List[Dict], Dict]:
         """
         Parses the raw OpenAI response into structured data.
 
@@ -475,7 +477,7 @@ class OpenAIAdapter(AdapterBase):
                     files_from_response.append(
                         ImageFile.from_base64(
                             base64_str=image_b64,
-                            file_name=f"image_{len(files_from_response)}.png",
+                            file_name=f"image_{len(files_from_response)}.{getattr(output, 'output_format', None) or 'png'}",
                         )
                     )
 
@@ -493,57 +495,62 @@ class OpenAIAdapter(AdapterBase):
         return answer_text, thinking_responses, files_from_response, container_file_citations, usage
 
     @staticmethod
-    def _build_file_from_container_data(data, filename) -> MediaFile | None:
-        """Build a file object from raw container-file bytes and its filename."""
-        file_type = define_file_type(filename)
-        if file_type == "image":
-            return ImageFile.from_bytes(data, file_name=filename)
-        elif file_type == "video":
-            return VideoFile.from_bytes(data, file_name=filename)
-        elif file_type == "audio":
-            return AudioFile.from_bytes(data, file_name=filename)
-        elif file_type == "text":
-            return TextDocumentFile.from_string(data.decode("utf-8", errors="replace"), name=filename)
-        elif file_type == "pdf":
-            return PDFDocumentFile.from_bytes(data, file_name=filename)
-        elif file_type == "excel":
-            return ExcelDocumentFile.from_bytes(data, file_name=filename)
-        elif file_type == "word":
-            return WordDocumentFile.from_bytes(data, file_name=filename)
-        elif file_type == "powerpoint":
-            return PowerPointDocumentFile.from_bytes(data, file_name=filename)
-        return None
+    def _build_file_from_container_data(data, filename) -> BaseFile:
+        return file_from_bytes(data, filename)
 
-    def _retrieve_container_files(self, citations: List[Dict]) -> List[MediaFile]:
-        """Fetch container-file citations (sync). Kept out of `_parse_response`
-        so parsing is pure and testable."""
-        files = []
+    @staticmethod
+    def _unique_file_citations(citations):
+        seen = set()
         for citation in citations:
-            response = self.client.containers.files.content.retrieve(
-                container_id=citation["container_id"],
-                file_id=citation["file_id"],
-            )
-            retrieved_file = self._build_file_from_container_data(
-                getattr(response, "content", None), citation["filename"]
-            )
-            if retrieved_file:
-                files.append(retrieved_file)
+            key = (citation["container_id"], citation["file_id"])
+            if key not in seen:
+                seen.add(key)
+                yield citation
+
+    def _retrieve_container_files(self, citations: List[Dict]) -> List[BaseFile]:
+        files = []
+        for citation in self._unique_file_citations(citations):
+            try:
+                response = self.client.containers.files.content.retrieve(
+                    container_id=citation["container_id"], file_id=citation["file_id"],
+                )
+                file = self._build_file_from_container_data(response.content, citation["filename"])
+            except Exception as error:
+                file = FailedFile(citation["filename"], citation, f"{type(error).__name__}: {error}")
+            files.append(file)
         return files
 
-    async def _retrieve_container_files_async(self, citations: List[Dict]) -> List[MediaFile]:
-        """Async counterpart of `_retrieve_container_files` (uses the async client)."""
+    async def _retrieve_container_files_async(self, citations: List[Dict]) -> List[BaseFile]:
         files = []
-        for citation in citations:
-            response = await self.async_client.containers.files.content.retrieve(
-                container_id=citation["container_id"],
-                file_id=citation["file_id"],
-            )
-            retrieved_file = self._build_file_from_container_data(
-                getattr(response, "content", None), citation["filename"]
-            )
-            if retrieved_file:
-                files.append(retrieved_file)
+        for citation in self._unique_file_citations(citations):
+            try:
+                response = await self.async_client.containers.files.content.retrieve(
+                    container_id=citation["container_id"], file_id=citation["file_id"],
+                )
+                file = self._build_file_from_container_data(response.content, citation["filename"])
+            except Exception as error:
+                file = FailedFile(citation["filename"], citation, f"{type(error).__name__}: {error}")
+            files.append(file)
         return files
+
+    def retry_failed_files(self, message: Message) -> None:
+        """Retry failed container downloads in place; successful attachments are kept."""
+        for index, file in enumerate(message.files):
+            if isinstance(file, FailedFile):
+                replacement = self._retrieve_container_files([file.reference])[0]
+                preserve_replay = message._replay_fingerprint == message._content_fingerprint()
+                message.files[index] = replacement
+                if preserve_replay:
+                    message._replay_fingerprint = message._content_fingerprint()
+
+    async def retry_failed_files_async(self, message: Message) -> None:
+        for index, file in enumerate(message.files):
+            if isinstance(file, FailedFile):
+                replacement = (await self._retrieve_container_files_async([file.reference]))[0]
+                preserve_replay = message._replay_fingerprint == message._content_fingerprint()
+                message.files[index] = replacement
+                if preserve_replay:
+                    message._replay_fingerprint = message._content_fingerprint()
 
     def _poll_background_response(self, response, deadline=None):
         """Poll a background-mode response until it leaves the queued/in-progress states."""
@@ -582,7 +589,7 @@ class OpenAIAdapter(AdapterBase):
         function_calls: List[FunctionCall],
         function_responses: List[FunctionResponse],
         thinking_responses: List[ThinkingResponse],
-        files_from_response: List[MediaFile],
+        files_from_response: List[BaseFile],
         response=None,
         model: str | None = None,
         store: bool = True,
@@ -735,9 +742,6 @@ class OpenAIAdapter(AdapterBase):
                 response = self._poll_background_response(response)
 
         answer_text, thinking_responses, files_from_response, citations, usage = self._parse_response(response)
-        # Container files come before parsed (generated) files to preserve the pre-refactor order.
-        files_from_response = self._retrieve_container_files(citations) + files_from_response
-
         message = Message(
             role="assistant",
             id=response.id,
@@ -750,7 +754,12 @@ class OpenAIAdapter(AdapterBase):
             **openai_metadata(response, self._is_internal_agent_item),
             provider_data={"output": provider_dump(response.output)},
         )
-        the_conversation.messages.append(message)
+        the_conversation.messages.append(message)  # Preserve the answer before downloads.
+        downloaded_files = self._retrieve_container_files(citations)
+        preserve_replay = message._replay_fingerprint == message._content_fingerprint()
+        message.files[:0] = downloaded_files
+        if preserve_replay:
+            message._replay_fingerprint = message._content_fingerprint()
         if additional_parameters.get("store") is not False:
             the_conversation.checkpoint(
                 "openai", model, message.id,
@@ -805,9 +814,6 @@ class OpenAIAdapter(AdapterBase):
                 response = await self._poll_background_response_async(response)
 
         answer_text, thinking_responses, files_from_response, citations, usage = self._parse_response(response)
-        # Container files come before parsed (generated) files to preserve the pre-refactor order.
-        files_from_response = await self._retrieve_container_files_async(citations) + files_from_response
-
         message = Message(
             role="assistant",
             id=response.id,
@@ -820,7 +826,12 @@ class OpenAIAdapter(AdapterBase):
             **openai_metadata(response, self._is_internal_agent_item),
             provider_data={"output": provider_dump(response.output)},
         )
-        the_conversation.messages.append(message)
+        the_conversation.messages.append(message)  # Preserve the answer before downloads.
+        downloaded_files = await self._retrieve_container_files_async(citations)
+        preserve_replay = message._replay_fingerprint == message._content_fingerprint()
+        message.files[:0] = downloaded_files
+        if preserve_replay:
+            message._replay_fingerprint = message._content_fingerprint()
         if additional_parameters.get("store") is not False:
             the_conversation.checkpoint(
                 "openai", model, message.id,

@@ -608,7 +608,7 @@ class AnthropicAdapter(AdapterBase):
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": f"image/{file.extension}",
+                "media_type": file.mime_type,
                 "data": file.base64,
             },
         }

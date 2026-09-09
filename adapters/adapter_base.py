@@ -221,7 +221,7 @@ class AdapterBase(ABC):
 
     def _image_data_url(self, file) -> str:
         """Return a base64 ``data:`` URL for an image file."""
-        return f"data:image/{file.extension};base64,{file.base64}"
+        return f"data:{file.mime_type};base64,{file.base64}"
 
     def _document_xml(self, file) -> str:
         """Wrap a document's extracted text in a named ``<document>`` tag."""

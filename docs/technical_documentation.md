@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-09-08
+Version: 2026-09-09
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -100,7 +100,7 @@ The domain model is provider-agnostic: it carries no vendor knowledge. Provider 
 ### Serialization and continuation
 - `Conversation.save_to_json()` returns a detached, JSON-compatible dictionary with `version: 2`. `read_from_json()` accepts this format and legacy unversioned files; unknown versions raise `ValueError`.
 - Persistence preserves message IDs, timestamps, provider/model identity, native `provider_data`, thinking, usage, `additional_responses` (including citation metadata), every tool call/result's distinct `id` and `call_id`, and namespaced tool metadata such as OpenAI's `caller`.
-- Text documents retain text. All supported binary documents/media retain original bytes and concrete file classes, including Word, PowerPoint, and Video. Saving does not extract Office/PDF text. Restoring audio does not transcode bytes a second time, even if its original name has a non-MP3 extension. Tool-result construction and persistence do not mutate the source result dictionaries.
+- Text documents retain text. Binary documents/media retain original bytes and concrete file classes, including arbitrary `BinaryFile` artifacts. `FailedFile` retains its download reference and error across JSON round trips. Saving does not extract Office/PDF text. New audio objects preserve their original bytes and MIME type; legacy persisted audio without MIME metadata is treated as the MP3 payload produced by the old constructor, even when its filename has another extension. Tool-result construction and persistence do not mutate source result dictionaries.
 - `Conversation.checkpoint(provider, model, response_id, **state)` records the length and SHA-256 fingerprint of the local prefix represented by remote state, including the system prompt and attachments. `continuation(provider, model)` returns state only when that prefix still matches. OpenAI and Google send every message after the checkpoint, including unsent user messages, intervening exchanges from other providers, and tool results. Model/provider changes cannot reuse foreign IDs. `last_assistant_id` remains a legacy display helper only.
 - Editing, deleting, inserting, reordering, or changing files within a saved prefix invalidates its checkpoint. `clear()` clears messages and checkpoints. `reset_continuation(provider, model)` explicitly discards the chosen remote reference; for Antigravity this also starts a new environment on the next call.
 - Adapters append assistant tool-call messages and checkpoint them before appending newly executed results. Google records results in separate `function` messages, so an unsent result never becomes part of the remote checkpoint. All provider converters support these standalone tool-result records.
@@ -154,8 +154,10 @@ File: `services/files.py`
     - `PowerPointDocumentFile`
 - `MediaFile`
   - `ImageFile`
-  - `AudioFile` (auto-converts non-mp3 input to mp3)
+  - `AudioFile` (preserves original bytes; explicit `as_mp3()` conversion for request payloads)
   - `VideoFile`
+  - `BinaryFile` (arbitrary returned artifacts)
+- `FailedFile` (filename, remote reference, and download error; no local payload)
 
 The byte-backed subclasses differ only in their `text` extraction property; the common storage (`self.data`) and constructors (`from_bytes(data, file_name="")`, `from_file(name)`) live in `ByteDocumentFile`. `MediaFile` and its subclasses store raw bytes in `self.data` as well; the local-filesystem reader is `MediaFile.from_path` and the network fetch `MediaFile.from_web_url` uses a 30s timeout. Across all byte-backed files the attribute is named `data` (not the shadowing builtin `bytes`); `base64`/`size`/`extension`/`text` remain the public read surface used by adapters and serialization.
 
@@ -164,6 +166,31 @@ The byte-backed subclasses differ only in their `text` extraction property; the 
 - Excel: sheet text extraction via `pandas`
 - Word (`.docx`): OOXML XML extraction from zip
 - PowerPoint (`.pptx`): OOXML slide text extraction from zip
+
+Malformed PDF/Word/PowerPoint extraction raises `DocumentExtractionError` instead of returning empty text. Invalid PDF page counts also raise rather than returning zero. PDF text extraction rejects any page without extractable text, including mixed scanned/text PDFs, and directs the caller to native PDF input or OCR. Small native PDF input remains available without text extraction. Empty valid Office documents can still return empty text. This layer does not implement OCR.
+
+Successful binary-document text extraction emits `DocumentExtractionWarning`, making the loss of layout and visuals observable through Python's warnings mechanism. Native PDF submission and plain text attachments do not emit this warning. Callers can filter or promote the warning to an error using standard `warnings` controls.
+
+### 5.4 Artifact preservation and media formats
+`file_from_bytes(data, filename)` is the shared factory for downloaded artifacts and base64 tool attachments. Unknown extensions (including Python source, ZIP and SVG) become `BinaryFile`; non-UTF-8 text artifacts also fall back to binary storage instead of replacing undecodable bytes. The factory never extracts document text or transcodes audio. Binary artifacts can be saved and restored but are not automatically accepted as model input; adapters reject unsupported input explicitly.
+
+`BaseFile.mime_type` supplies MIME metadata. Images inspect their encoded format when readable, so adapters do not advertise a conflicting filename extension. `ImageFile.from_pil_image` encodes the requested PNG/JPEG/WebP/GIF/BMP/TIFF format and rejects unsupported output extensions. OpenAI generated images use the response's `output_format`, defaulting to PNG when absent.
+
+`MediaFile.from_web_url` downloads the original payload with a 30-second timeout. Its filename comes from the URL path without query/fragment; it does not pass audio/video through Pillow or implicitly convert images. `AudioFile` construction no longer converts bytes. `as_mp3()` returns a separate MP3 object when needed; OpenAI, Chat Completions audio paths, and Mistral convert at the request boundary, while Gemini uses the original audio with its MIME type. Applications that previously depended on `AudioFile.data` always containing MP3 must call `as_mp3()` explicitly. `TextDocumentFile` exposes UTF-8 bytes and reads local text as UTF-8.
+
+### 5.5 Tool-result attachments
+`FunctionResponse` accepts a `files` list of `BaseFile` objects or dictionaries with a base64 `source`. Dictionaries use `name`/`filename` or the legacy `type` plus `source.format` filename. Parsing completes before removing the detached `files` field. Invalid base64, malformed entries, and unsupported source encodings raise `ValueError`; no attachment is silently discarded. All parsed file classes survive conversation persistence.
+
+OpenAI Responses tool outputs use content arrays for image and PDF attachments; other documents use extracted text. Gemini Interactions tool results include images and text (documents are extracted with the warning/error behavior above). Anthropic tool results support images and reject other attachment classes explicitly. Chat Completions (including Kimi), Grok, and WiroAI history conversion reject unsupported tool attachments explicitly. Unsupported binary/media tool outputs remain in local conversation state rather than being serialized as an incomplete text-only result.
+
+The OpenAI and Gemini multimodal tool-result contracts were read through the documentation MCP servers in `.mcp.json`: [OpenAI result formatting](https://developers.openai.com/api/docs/guides/function-calling#formatting-results) and [Gemini multimodal function responses](https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses). Gemini's installed SDK restricts function-result subcontent to text and images.
+
+### 5.6 Download failures and retry
+OpenAI container citations are deduplicated by `(container_id, file_id)` within each response. Each failed retrieval or file-construction attempt produces a `FailedFile` in `Message.files` with the filename, citation reference, and error. Successful artifacts remain alongside failures. Sync and async final-response paths append the completed answer before downloading artifacts; attachment failure does not turn a completed generation into a failed request. Tool rounds use the same failure-isolating retrieval helpers.
+
+Call `OpenAIAdapter.retry_failed_files(message)` or await `retry_failed_files_async(message)` to replace failed entries in place. Successful entries are not downloaded again; repeated failures remain retryable and survive JSON persistence. Retry preserves native replay for an otherwise unchanged assistant message; previously edited messages remain invalidated. Changing attachments may invalidate a continuation checkpoint, triggering the existing full-history replay rules.
+
+`tests/test_file_handling.py` covers arbitrary artifacts, lossless persistence, tool attachments and explicit rejection, actual PIL image formats, non-mutating audio conversion, media URL loading, deduplication, sync/async failure and retry paths, and corrupt/scanned document behavior. Tests use local fixtures and mocked downloads, not paid provider calls.
 
 ## 6. Model registry and metadata
 File: `helpers/model_config.py`, config in `models_config.yaml`
@@ -213,7 +240,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Multi-agent (beta, GPT-5.6 family) is exposed as the `agent_count` additional parameter (enum `0/2/3/5/8`, default `0` = single agent, `send_default: false`; the same friendly key `types.py` already defines for Grok's multi-agent models). When > 0, `_create_parameters_for_calling_llm` supplies `multi_agent: {enabled: true, max_concurrent_subagents: N}` and `betas: [responses_multi_agent=v1]`; `_create_response` / `_create_response_async` route these requests through the typed `client.beta.responses` surface (requiring `openai>=2.45.0`) so beta-only `agent` and `phase` attribution survives deserialization. Orchestration (spawning, messaging, waiting) is hosted by the Responses API, so function calls emitted by any agent in the tree are executed by the existing tool loop and continued via the standard `previous_response_id` path. Two guards remain: `reasoning.summary` is not requested when multi-agent is on (unsupported combination), and combining with `structured_output` raises `ValueError`. `_parse_response` skips subagent-attributed items and root messages outside the `final_answer` phase, ignores hosted orchestration items (`multi_agent_call`, `multi_agent_call_output`, `agent_message`), and suppresses repeated agent-message text so duplicate root final-answer items are returned once while distinct fragments are preserved (covered by `tests/test_openai_multi_agent.py`).
   - Background-mode models (`background_mode: true`) are polled to completion on both the sync and async paths (`_poll_background_response` / `_poll_background_response_async`)
   - Image-generation output is parsed as a single base64 string per `image_generation_call` (the Responses API `result` field)
-  - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch
+  - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch. Failed downloads become retryable `FailedFile` entries (�5.6)
 - `AnthropicAdapter`
   - Hosted search uses `web_search_20260318`; code execution uses `code_execution_20260521` across sync/async, streaming, local-tool, and pause-continuation paths. Search defaults to provider dynamic filtering and full result inclusion. Optional `web_search_options` supports `max_uses`, `allowed_domains` or `blocked_domains`, `user_location`, `allowed_callers`, and `response_inclusion: full|excluded`. It requires `web_search=True`; tool identity cannot be overridden. `allowed_callers: [direct]` requests direct search without dynamic filtering. Custom functions remain client-executed. Full native response replay preserves the provider's returned blocks and container; excluded nested results are not reconstructed. Native usage is retained as `provider_usage`, including streamed usage updates.
   - Sync + native async request methods (`request_llm_async` backed by a lazily constructed `anthropic.AsyncAnthropic` client; the async side mirrors the sync dispatch in two helpers — `_request_llm_simple_async` / `_request_llm_with_tools_async` — each taking a `stream` flag instead of separate streaming methods)

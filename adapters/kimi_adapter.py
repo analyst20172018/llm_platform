@@ -143,11 +143,7 @@ class KimiAdapter(OpenAICompatibleAdapter):
 
             history.append(message.replay_data("kimi", model).get("message", history_message))
             history.extend(
-                {
-                    "role": "tool",
-                    "tool_call_id": response.call_id,
-                    "content": json.dumps(response.response),
-                }
+                function_response_to_openai_chat(response)
                 for response in message.function_responses
             )
 

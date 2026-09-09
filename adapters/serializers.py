@@ -16,7 +16,7 @@ import json
 from typing import Dict
 
 from llm_platform.services.conversation import FunctionCall
-from llm_platform.services.files import ImageFile
+from llm_platform.services.files import ImageFile, PDFDocumentFile, DocumentFile
 
 
 def provider_dump(value):
@@ -97,13 +97,24 @@ def function_call_to_openai(function_call) -> Dict:
 
 
 def function_response_to_openai(function_response) -> Dict:
+    output = json.dumps(function_response.response)
     if function_response.files:
-        print("WARNING: Files are not supported in function responses for OpenAI")
+        output = [{"type": "input_text", "text": output}]
+        for file in function_response.files:
+            if isinstance(file, ImageFile):
+                output.append({"type": "input_image", "image_url": f"data:{file.mime_type};base64,{file.base64}"})
+            elif isinstance(file, PDFDocumentFile):
+                output.append({"type": "input_file", "filename": file.name or "document.pdf",
+                               "file_data": f"data:application/pdf;base64,{file.base64}"})
+            elif isinstance(file, DocumentFile):
+                output.append({"type": "input_text", "text": f"{file.name}\n{file.text}"})
+            else:
+                raise ValueError(f"Unsupported OpenAI tool attachment: {type(file).__name__}")
     return {
         **function_response.provider_data.get("openai", {}),
         "type": "function_call_output",
         "call_id": function_response.call_id,
-        "output": json.dumps(function_response.response),
+        "output": output,
     }
 
 
@@ -150,6 +161,7 @@ def function_call_to_openai_chat(function_call) -> Dict:
 
 
 def function_response_to_openai_chat(function_response) -> Dict:
+    function_response.require_no_files("Chat Completions")
     return {
         "role": "tool",
         "tool_call_id": function_response.call_id,
@@ -183,17 +195,18 @@ def function_response_to_anthropic(function_response) -> Dict:
     }
 
     for file in function_response.files:
-        if isinstance(file, ImageFile):
-            output["content"].append(
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": f"image/{file.extension}",
-                        "data": file.base64,
-                    },
-                }
-            )
+        if not isinstance(file, ImageFile):
+            raise ValueError(f"Unsupported Anthropic tool attachment: {type(file).__name__}")
+        output["content"].append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": file.mime_type,
+                    "data": file.base64,
+                },
+            }
+        )
 
     return output
 
