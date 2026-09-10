@@ -20,7 +20,7 @@ from llm_platform.services.files import ImageFile, PDFDocumentFile, DocumentFile
 
 
 def provider_dump(value):
-    """Detach provider objects into lossless JSON data without importing SDKs."""
+    """Detach provider objects into JSON data without eager SDK imports."""
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, dict):
@@ -28,12 +28,30 @@ def provider_dump(value):
     if isinstance(value, (list, tuple)):
         return [provider_dump(item) for item in value]
     if hasattr(value, "model_dump"):
-        return value.model_dump(
-            mode="json",
-            exclude_unset=True,
-            by_alias=True,
-            serialize_as_any=True,
-        )
+        # Only parsed OpenAI wrappers need their generic payloads serialized
+        # separately. Other SDK models keep their ordinary Pydantic behavior.
+        field = None
+        if type(value).__module__ == "openai.types.responses.parsed_response":
+            from openai.types.responses import (
+                ParsedResponse,
+                ParsedResponseOutputMessage,
+                ParsedResponseOutputText,
+            )
+
+            if isinstance(value, ParsedResponse):
+                field = "output"
+            elif isinstance(value, ParsedResponseOutputMessage):
+                field = "content"
+            elif isinstance(value, ParsedResponseOutputText):
+                field = "parsed"
+
+        if field is None:
+            return value.model_dump(mode="json", exclude_unset=True, by_alias=True)
+
+        data = value.model_dump(mode="json", exclude_unset=True, by_alias=True, exclude={field})
+        if field in value.model_fields_set:
+            data[field] = provider_dump(getattr(value, field))
+        return data
     if hasattr(value, "DESCRIPTOR"):
         from google.protobuf.json_format import MessageToDict
         return MessageToDict(value, preserving_proto_field_name=True)
