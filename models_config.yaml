@@ -570,59 +570,15 @@ models:
     visible: true
 
 
-  - name: deepseek-v4-flash
-    display_name: DeepSeek-V4-Flash
+  - name: deepseek-flash
+    display_name: DeepSeek-V4.1-Flash
     adapter: DeepSeekAdapter
     pricing:
-      input: 0.44 # USD/1M tokens
-      output: 1.32 # USD/1M tokens
+      input: 0.3 # USD/1M tokens
+      output: 1.2 # USD/1M tokens
     context_window: 1_000_000
     inputs:
       - text
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_tokens
-        default: 384_000
-      thinking_mode: *param_thinking_mode
-      reasoning_effort: *param_reasoning_effort_deepseek
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      tool_choice: *param_tool_choice
-    visible: true
-
-  - name: deepseek-v4-pro
-    display_name: DeepSeek-V4-Pro
-    adapter: DeepSeekAdapter
-    pricing:
-      input: 1.32 # USD/1M tokens
-      output: 3.96 # USD/1M tokens
-    context_window: 1_000_000
-    inputs:
-      - text
-    outputs:
-      - text
-    additional_parameters:
-      max_tokens:
-        <<: *param_max_tokens
-        default: 384_000
-      thinking_mode: *param_thinking_mode
-      reasoning_effort: *param_reasoning_effort_deepseek
-      function_calling: *param_function_calling
-      structured_output: *param_structured_output
-      tool_choice: *param_tool_choice
-
-  - name: deepseek-v4-flash-vision-exp
-    display_name: DeepSeek-V4-Flash-Vision
-    adapter: DeepSeekAdapter
-    pricing:
-      input: 0.44 # USD/1M tokens
-      output: 1.32 # USD/1M tokens
-    context_window: 1_000_000
-    inputs:
-      - text
-      - image
     outputs:
       - text
     additional_parameters:
