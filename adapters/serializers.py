@@ -28,7 +28,12 @@ def provider_dump(value):
     if isinstance(value, (list, tuple)):
         return [provider_dump(item) for item in value]
     if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json", exclude_unset=True, by_alias=True)
+        return value.model_dump(
+            mode="json",
+            exclude_unset=True,
+            by_alias=True,
+            serialize_as_any=True,
+        )
     if hasattr(value, "DESCRIPTOR"):
         from google.protobuf.json_format import MessageToDict
         return MessageToDict(value, preserving_proto_field_name=True)

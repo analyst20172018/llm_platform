@@ -94,6 +94,7 @@ models:
       function_calling: *param_function_calling
       tool_choice: *param_tool_choice
       structured_output: *param_structured_output
+      
   - name: claude-sonnet-5
     display_name: Claude Sonnet 5 
     adapter: AnthropicAdapter

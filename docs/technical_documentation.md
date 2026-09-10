@@ -107,6 +107,9 @@ The domain model is provider-agnostic: it carries no vendor knowledge. Provider 
 - OpenAI and Google retry an explicitly missing/deleted/expired continuation once with full compatible history. The retry is limited to state-related 400/404/410 responses, identified by the continuation field or referenced ID; model, authentication, rate-limit, and unrelated failures are not retried by this layer. Antigravity retries keep the selected environment, whose availability still depends on the provider. Failed retries preserve local state. OpenAI `store=False` requests replay full history and do not create a new remote checkpoint.
 
 ### Native response replay
+
+`adapters.serializers.provider_dump()` serializes Pydantic provider objects using runtime types (`serialize_as_any=True`), preserving parsed structured-output models despite mismatched SDK generic annotations. JSON mode, aliases, and exclusion of unset fields remain enabled; serialization warnings are not suppressed. Offline regression coverage is in `tests/test_provider_serialization.py`.
+
 `Message.provider_data` holds detached provider JSON alongside the normalized display content. `Message.replay_data(provider, model)` returns a copy only for a compatible origin and unchanged normalized content. Editing an assistant message falls back to its edited normalized representation rather than replaying stale native content. Tool results are independent of the assistant's native output and are serialized after it.
 
 Provider wire conversion stays in the adapters; the domain model only stores provider names, opaque JSON, and fingerprints:
