@@ -21,3 +21,4 @@ rich
 tiktoken
 loguru
 paramiko
+typesafe-sdk

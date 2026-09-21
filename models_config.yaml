@@ -540,8 +540,8 @@ models:
     background_mode: true
 
 
-  - name: grok-4.6
-    display_name: Grok 4.6
+  - name: grok-4.7
+    display_name: Grok 4.7
     adapter: GrokAdapter
     structured_output_with_tools: true
     pricing:
