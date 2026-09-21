@@ -593,6 +593,28 @@ models:
       tool_choice: *param_tool_choice
     visible: true
 
+  - name: deepseek-v4-pro
+    display_name: DeepSeek-V4-Pro
+    adapter: DeepSeekAdapter
+    pricing:
+      input: 1.32 # USD/1M tokens
+      output: 3.96 # USD/1M tokens
+    context_window: 1_000_000
+    inputs:
+      - text
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 384_000
+      thinking_mode: *param_thinking_mode
+      reasoning_effort: *param_reasoning_effort_deepseek
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      tool_choice: *param_tool_choice
+    visible: true
+
 
   - name: glm-5.3
     display_name: GLM 5.3
