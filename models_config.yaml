@@ -127,13 +127,13 @@ models:
         request_key: reasoning.effort
     visible: true
 
-  - name: claude-opus-5
-    display_name: Claude Opus 5 💰
+  - name: claude-opus-5-5
+    display_name: Claude Opus 5.5 💰
     adapter: AnthropicAdapter
     adaptive_thinking: true
     pricing:
-      input: 5 # USD/1M tokens
-      output: 25 # USD/1M tokens
+      input: 4 # USD/1M tokens
+      output: 20 # USD/1M tokens
     context_window: 1_000_000
     inputs:
       - image
