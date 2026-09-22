@@ -233,12 +233,12 @@ models:
       agent_count: *param_agent_count
     visible: true
 
-  - name: gpt-5.6-sol
-    display_name: GPT-5.6 Sol 💰👍
+  - name: gpt-6-sol
+    display_name: GPT-6 Sol 💰👍
     adapter: OpenAIAdapter
     pricing:
-      input: 4 # USD/1M tokens
-      output: 20 # USD/1M tokens
+      input: 2 # USD/1M tokens
+      output: 10 # USD/1M tokens
     context_window: 1_050_000
     inputs:
       - text
@@ -251,7 +251,7 @@ models:
       prompt_cache_breakpoints: {type: array, ui: hidden, send_default: false}
       max_tokens:
         <<: *param_max_output_tokens
-        default: 128000
+        default: 128_000
       web_search: *param_web_search
       code_execution: *param_code_execution
       function_calling: *param_function_calling
@@ -315,12 +315,12 @@ models:
       agent_count: *param_agent_count
     visible: false
 
-  - name: gpt-5.6-luna
-    display_name: GPT-5.6 Luna
+  - name: gpt-6-luna
+    display_name: GPT-6 Luna
     adapter: OpenAIAdapter
     pricing:
-      input: 0.2 # USD/1M tokens
-      output: 1.2 # USD/1M tokens
+      input: 0.1 # USD/1M tokens
+      output: 0.5 # USD/1M tokens
     context_window: 1_050_000
     inputs:
       - text
