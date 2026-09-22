@@ -95,13 +95,13 @@ models:
       tool_choice: *param_tool_choice
       structured_output: *param_structured_output
       
-  - name: claude-sonnet-5
-    display_name: Claude Sonnet 5 
+  - name: claude-fable-5-1
+    display_name: Claude Fable 5.1 💰💰💰
     adapter: AnthropicAdapter
     adaptive_thinking: true
     pricing:
-      input: 2 # USD/1M tokens
-      output: 10 # USD/1M tokens
+      input: 10 # USD/1M tokens
+      output: 50 # USD/1M tokens
     context_window: 1_000_000
     inputs:
       - image
@@ -111,7 +111,7 @@ models:
     additional_parameters:
       max_tokens:
         <<: *param_max_tokens
-        default: 64000
+        default: 128_000
       web_search: *param_web_search
       web_search_options: {type: object, ui: hidden, send_default: false}
       code_execution: *param_code_execution
@@ -120,11 +120,12 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [low, medium, high, max]
-        default: high
+        options: [low, medium, high, xhigh, max]
+        default: medium
         ui: select
         label: Reasoning
         request_key: reasoning.effort
+    visible: true
 
   - name: claude-opus-5
     display_name: Claude Opus 5 💰
@@ -156,14 +157,15 @@ models:
         ui: select
         label: Reasoning
         request_key: reasoning.effort
+    visible: true
 
-  - name: claude-fable-5-1
-    display_name: Claude Fable 5.1 💰💰💰
+  - name: claude-sonnet-5
+    display_name: Claude Sonnet 5 
     adapter: AnthropicAdapter
     adaptive_thinking: true
     pricing:
-      input: 10 # USD/1M tokens
-      output: 50 # USD/1M tokens
+      input: 2 # USD/1M tokens
+      output: 10 # USD/1M tokens
     context_window: 1_000_000
     inputs:
       - image
@@ -173,7 +175,7 @@ models:
     additional_parameters:
       max_tokens:
         <<: *param_max_tokens
-        default: 128_000
+        default: 64000
       web_search: *param_web_search
       web_search_options: {type: object, ui: hidden, send_default: false}
       code_execution: *param_code_execution
@@ -182,11 +184,12 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [low, medium, high, xhigh, max]
-        default: medium
+        options: [low, medium, high, max]
+        default: high
         ui: select
         label: Reasoning
         request_key: reasoning.effort
+    visible: true
 
 
   - name: gpt-6-astra
@@ -310,7 +313,7 @@ models:
         request_key: text.verbosity
       reasoning_mode: *param_reasoning_mode
       agent_count: *param_agent_count
-    visible: true
+    visible: false
 
   - name: gpt-5.6-luna
     display_name: GPT-5.6 Luna
@@ -351,7 +354,7 @@ models:
         request_key: text.verbosity
       reasoning_mode: *param_reasoning_mode
       agent_count: *param_agent_count
-    visible: true
+    visible: false
 
 
   - name: gemini-3.1-pro-preview
@@ -613,7 +616,7 @@ models:
       function_calling: *param_function_calling
       structured_output: *param_structured_output
       tool_choice: *param_tool_choice
-    visible: true
+    visible: false
 
 
   - name: glm-5.3
@@ -823,3 +826,4 @@ models:
       max_tokens:
         <<: *param_max_tokens
         default: 131000
+    visible: false
