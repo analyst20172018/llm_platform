@@ -159,7 +159,7 @@ models:
         request_key: reasoning.effort
     visible: true
 
-  - name: claude-sonnet-5
+  - name: claude-sonnet-5-5
     display_name: Claude Sonnet 5 
     adapter: AnthropicAdapter
     adaptive_thinking: true
@@ -175,7 +175,7 @@ models:
     additional_parameters:
       max_tokens:
         <<: *param_max_tokens
-        default: 64000
+        default: 128_000
       web_search: *param_web_search
       web_search_options: {type: object, ui: hidden, send_default: false}
       code_execution: *param_code_execution
