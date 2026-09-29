@@ -160,7 +160,7 @@ models:
     visible: true
 
   - name: claude-sonnet-5-5
-    display_name: Claude Sonnet 5 
+    display_name: Claude Sonnet 5.5 
     adapter: AnthropicAdapter
     adaptive_thinking: true
     pricing:
@@ -233,8 +233,8 @@ models:
       agent_count: *param_agent_count
     visible: true
 
-  - name: gpt-6-sol
-    display_name: GPT-6 Sol 💰👍
+  - name: gpt-6.1-sol
+    display_name: GPT-6.1 Sol 💰👍
     adapter: OpenAIAdapter
     pricing:
       input: 2 # USD/1M tokens
@@ -258,8 +258,8 @@ models:
       structured_output: *param_structured_output
       reasoning_effort:
         type: enum
-        options: [none, low, medium, high, xhigh, max]
-        default: none
+        options: [low, medium, high, xhigh]
+        default: high
         ui: select
         label: Reasoning
         request_key: reasoning.effort
