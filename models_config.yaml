@@ -191,6 +191,38 @@ models:
         request_key: reasoning.effort
     visible: true
 
+  - name: claude-haiku-5-5
+    display_name: Claude Haiku 5.5 
+    adapter: AnthropicAdapter
+    adaptive_thinking: true
+    pricing:
+      input: 0.1 # USD/1M tokens
+      output: 0.5 # USD/1M tokens
+    context_window: 1_000_000
+    inputs:
+      - image
+      - text
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 128_000
+      web_search: *param_web_search
+      web_search_options: {type: object, ui: hidden, send_default: false}
+      code_execution: *param_code_execution
+      citations_enabled: *param_citations_enabled
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [low, medium, high, max]
+        default: high
+        ui: select
+        label: Reasoning
+        request_key: reasoning.effort
+    visible: false
+
 
   - name: gpt-6-astra
     display_name: GPT-6 Astra 💰💰💰👍
@@ -810,8 +842,8 @@ models:
     visible: true
 
 
-  - name: mistral-large-latest
-    display_name: Mistral Large
+  - name: mistral-large-4
+    display_name: Mistral Large 4
     adapter: MistralAdapter
     pricing:
       input: 0.5 # USD/1M tokens
