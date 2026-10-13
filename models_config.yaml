@@ -389,8 +389,8 @@ models:
     visible: false
 
 
-  - name: gemini-3.1-pro-preview
-    display_name: Gemini 3.1 Pro
+  - name: gemini-4-argon
+    display_name: Gemini 4 Argon
     adapter: GoogleAdapter
     uses_thinking_level: true
     pricing:
