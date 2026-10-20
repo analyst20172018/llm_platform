@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-09-09
+Version: 2026-10-20
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -28,7 +28,7 @@ Primary modules:
 - `core/parameter_normalizer.py`: `ParameterNormalizer` — normalizes `additional_parameters` against a model's YAML schema (extracted from the facade)
 - `adapters/adapter_base.py`: `AdapterBase` contract plus provider-agnostic helpers shared by the adapters (parameter merge, usage extraction, callable→JSON-schema, tool-name resolution `_tool_name`, content-block formatting, PDF/tool-round constants). `load_dotenv()` runs once at module import (not per adapter construction)
 - `adapters/response_metadata.py`: provider status/finish normalization and citation/hosted-result extraction; provider-specific interpretation remains outside the domain model
-- `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter, OrcaRouter, Z.AI, Kimi); includes opt-in sync/async local-tool loops and JSON output marshalling
+- `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter, OrcaRouter, Z.AI, Kimi, Venice); includes opt-in sync/async local-tool loops and JSON output marshalling. Its `_api_model_name` hook resolves provider aliases for wire requests while retaining the caller's model name in local history, usage, and replay.
 - `adapters/json_output.py`: shared JSON-mode/schema envelopes and system instructions for Mistral, DeepSeek, and OpenRouter
 - `adapters/wiro_ai_adapter.py`: `WiroAIAdapter` for WiroAI's asynchronous Run/Task HTTP API
 - `adapters/wiro_gateway_adapter.py`: opt-in Direct LLM Chat route with authenticated capability discovery and native sync/async OpenAI SDK clients
@@ -71,6 +71,7 @@ Registered adapter classes include:
 - `MistralAdapter`
 - `ZaiAdapter`
 - `KimiAdapter`
+- `VeniceAdapter`
 
 ### 3.4 Additional parameter normalization pipeline
 Implemented in `core/parameter_normalizer.ParameterNormalizer.normalize` (the facade owns a `ParameterNormalizer` and delegates via `_prepare_additional_parameters`):
@@ -243,7 +244,7 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Multi-agent (beta, GPT-5.6 family) is exposed as the `agent_count` additional parameter (enum `0/2/3/5/8`, default `0` = single agent, `send_default: false`; the same friendly key `types.py` already defines for Grok's multi-agent models). When > 0, `_create_parameters_for_calling_llm` supplies `multi_agent: {enabled: true, max_concurrent_subagents: N}` and `betas: [responses_multi_agent=v1]`; `_create_response` / `_create_response_async` route these requests through the typed `client.beta.responses` surface (requiring `openai>=2.45.0`) so beta-only `agent` and `phase` attribution survives deserialization. Orchestration (spawning, messaging, waiting) is hosted by the Responses API, so function calls emitted by any agent in the tree are executed by the existing tool loop and continued via the standard `previous_response_id` path. Two guards remain: `reasoning.summary` is not requested when multi-agent is on (unsupported combination), and combining with `structured_output` raises `ValueError`. `_parse_response` skips subagent-attributed items and root messages outside the `final_answer` phase, ignores hosted orchestration items (`multi_agent_call`, `multi_agent_call_output`, `agent_message`), and suppresses repeated agent-message text so duplicate root final-answer items are returned once while distinct fragments are preserved (covered by `tests/test_openai_multi_agent.py`).
   - Background-mode models (`background_mode: true`) are polled to completion on both the sync and async paths (`_poll_background_response` / `_poll_background_response_async`)
   - Image-generation output is parsed as a single base64 string per `image_generation_call` (the Responses API `result` field)
-  - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch. Failed downloads become retryable `FailedFile` entries (�5.6)
+  - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch. Failed downloads become retryable `FailedFile` entries (§5.6)
 - `AnthropicAdapter`
   - Hosted search uses `web_search_20260318`; code execution uses `code_execution_20260521` across sync/async, streaming, local-tool, and pause-continuation paths. Search defaults to provider dynamic filtering and full result inclusion. Optional `web_search_options` supports `max_uses`, `allowed_domains` or `blocked_domains`, `user_location`, `allowed_callers`, and `response_inclusion: full|excluded`. It requires `web_search=True`; tool identity cannot be overridden. `allowed_callers: [direct]` requests direct search without dynamic filtering. Custom functions remain client-executed. Full native response replay preserves the provider's returned blocks and container; excluded nested results are not reconstructed. Native usage is retained as `provider_usage`, including streamed usage updates.
   - Sync + native async request methods (`request_llm_async` backed by a lazily constructed `anthropic.AsyncAnthropic` client; the async side mirrors the sync dispatch in two helpers — `_request_llm_simple_async` / `_request_llm_with_tools_async` — each taking a `stream` flag instead of separate streaming methods)
@@ -300,6 +301,15 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
     - **Structured output**: `structured_output` enables Z.AI JSON mode through `response_format: {type: "json_object"}` on both plain and tool-enabled requests. When the caller supplies a Pydantic model class or JSON Schema dict, the adapter adds that schema to the system instruction, following Z.AI's documented JSON-mode pattern (the API accepts `json_object`, not an embedded strict schema).
     - **Web search**: Z.AI's built-in server-side `web_search` tool, enabled by the `web_search` additional parameter. `_build_request_params` is overridden to attach the built-in tool (`{"type": "web_search", "web_search": {"enable": True, "search_engine": "search-prime", "search_result": True}}`) so both the plain-chat and function-calling paths pick it up. No static `search_query` is sent — GLM derives queries from the conversation. Built-in and function tools are merged on the same request
 
+- `VeniceAdapter`
+  - Uses lazy `OpenAI` / `AsyncOpenAI` clients at `https://api.venice.ai/api/v1` with `VENICE_API_KEY`; no additional SDK dependency. Reuses the shared bounded tool loop, JSON/schema output, reasoning extraction, usage/status normalization, and native assistant replay.
+  - Registers `abliteration-abliterated-model-large-v2` and `qwen-3-8-27b` as visible models. The requested shorter `abliterated-model-large-v2` is a hidden catalog alias with `api_model: abliteration-abliterated-model-large-v2`. Alias resolution changes only the outbound API model ID; local messages retain the requested name.
+  - Both models accept text and extracted documents. Qwen additionally accepts images and base64 `video_url` blocks; unsupported media fail before the SDK call. Provider limits still apply, including image/video counts and request size.
+  - Catalog context windows are 1,000,000 and 262,144 tokens; output defaults are 32,768 and 65,536 respectively. Qwen exposes the advertised optional `reasoning_effort` choices (`none`, `low`, `medium`, `xhigh`). Abliterated's discovery flag currently reports effort control unsupported, despite its prose description suggesting levels, so the registry does not advertise that setting.
+  - `additional_parameters.venice_parameters` is copied into SDK `extra_body`. `include_venice_system_prompt` defaults to `false` so the conversation system prompt governs the request; callers can explicitly override it. Structured output disables parallel tool calls as required by Venice. Schemas must meet Venice's strict-schema requirements. Provider-specific options pass through; hosted search results do not receive additional Venice-specific normalization.
+  - Metadata was checked on 2026-10-20 against the public [model discovery endpoint](https://api.venice.ai/api/v1/models?type=text), [model catalog](https://docs.venice.ai/models/overview), [quickstart](https://docs.venice.ai/getting-started/quick-start), [Chat Completions schema](https://docs.venice.ai/api-reference/endpoint/chat/completions), and [structured output guide](https://docs.venice.ai/guides/features/structured-responses). The OpenAI documentation MCP configured in `.mcp.json` was also consulted for SDK endpoint configuration.
+  - `tests/test_venice_adapter.py` checks lazy clients, alias routing, actual SDK HTTP serialization on sync/async tool loops, schema and parameter forwarding, reasoning persistence/replay, token defaults, documents/media, and unsupported-input rejection. HTTP is intercepted; these are offline tests, not live generation acceptance checks.
+
 - `WiroGatewayAdapter`
   - Separate OpenAI-compatible Chat route at `https://llm.wiro.ai/v1`, using `Authorization: Bearer WIRO_API_KEY` or `Bearer WIRO_API_KEY:WIRO_API_SECRET`. It never uses Run HMAC headers or `WIRO_API_BASE_URL`.
   - The hidden registry entry `qwen/qwen3-8-27b-uncensored` is an explicit opt-in. Before each top-level request, `models.retrieve` fetches the authenticated contract and requires matching identity, Chat/text eligibility, and support for requested function tools or JSON output. Advertised completion limits are checked. Failure stops generation; no fallback to Run occurs. No unverified pricing or context size is assigned to this route.
@@ -336,7 +346,7 @@ The contracts were checked against [GLM-5.3](https://docs.z.ai/guides/llm/glm-5.
 ### 7.2 Async support
 `AdapterBase` provides a default `request_llm_async` that runs the adapter's synchronous `request_llm` off the event loop via `asyncio.to_thread`. As a result `APIHandler.request_async` / `request_llm_async` work for every adapter rather than only OpenAI.
 
-`OpenAIAdapter` overrides the default with a native async implementation (`request_llm_async`, `request_llm_with_functions_async`) backed by the async OpenAI client. `AnthropicAdapter` likewise overrides it with a native implementation backed by `anthropic.AsyncAnthropic` (covering the simple, streaming, and tool-use paths, including async token counting). `GoogleAdapter` overrides it with a native implementation on the google-genai async surface `client.aio` (covering the standard Interactions chat/tool loop, Deep Research, and Antigravity paths, with async polling). `OpenAICompatibleAdapter` overrides it with a native `AsyncOpenAI`-backed chat path, giving `DeepSeekAdapter`, `OpenRouterAdapter`, and `OrcarouterAdapter` native async for free. The remaining adapters (Grok, Mistral, WiroAI, and Z.AI — which deliberately pins itself back to the default, see §7.1) use the thread-offloaded fallback.
+`OpenAIAdapter` overrides the default with a native async implementation (`request_llm_async`, `request_llm_with_functions_async`) backed by the async OpenAI client. `AnthropicAdapter` likewise overrides it with a native implementation backed by `anthropic.AsyncAnthropic` (covering the simple, streaming, and tool-use paths, including async token counting). `GoogleAdapter` overrides it with a native implementation on the google-genai async surface `client.aio` (covering the standard Interactions chat/tool loop, Deep Research, and Antigravity paths, with async polling). `OpenAICompatibleAdapter` overrides it with a native `AsyncOpenAI`-backed chat path, giving `DeepSeekAdapter`, `OpenRouterAdapter`, `OrcarouterAdapter`, and `VeniceAdapter` native async for free. The remaining adapters (Grok, Mistral, WiroAI, and Z.AI — which deliberately pins itself back to the default, see §7.1) use the thread-offloaded fallback.
 
 `KimiAdapter` also uses a native `AsyncOpenAI` client and adds an async tool loop that awaits coroutine tools directly. `WiroAIAdapter` uses the thread-offloaded fallback because its implementation is backed by synchronous `requests` polling.
 
@@ -347,6 +357,7 @@ The contracts were checked against [GLM-5.3](https://docs.z.ai/guides/llm/glm-5.
 - Grok: text/image/document in chat
 - Mistral: text/image/document chat
 - DeepSeek/OpenRouter/OrcaRouter: text + image/document conversion (OpenAI-compatible payload)
+- Venice: Abliterated Large V2 accepts text and extracted documents; Qwen 3.8 27B additionally accepts images/video. Both support structured output, reasoning preservation, and sync/async local function calling.
 - Z.AI: GLM-5.3 is text-only; GLM-5.3-Flash adds image/video/native PDF input via `zai-sdk` `ZaiClient`. Both support preserved thinking, function calling, structured JSON output, and the built-in `web_search` tool
 - Kimi (Kimi K3): text/image/video input (base64 data URLs for local visual media), extracted document text, structured output, reasoning preservation, and custom function calling
 - WiroAI (Qwen3.8-27B-Uncensored): text input plus extracted document text; structured answer/thinking output; no media or tool calling
@@ -395,6 +406,7 @@ Current code expects:
 - `DEEPSEEK_API_KEY`
 - `OPENROUTER_API_KEY`
 - `ORCAROUTER_API_KEY`
+- `VENICE_API_KEY`
 - `WIRO_API_KEY`
 - `WIRO_API_SECRET` (optional; Run HMAC or gateway Bearer key/secret pair, depending on adapter)
 - `WIRO_API_BASE_URL` (optional Run endpoint override; does not affect the gateway)
@@ -421,7 +433,7 @@ Provider requirements have tested lower bounds. `constraints-tested.txt` pins th
 - Some adapter methods remain `NotImplemented` and will raise directly.
 
 ## 13. Known implementation gaps and inconsistencies
-1. Tool-calling support is partial across adapters (implemented in OpenAI/Anthropic/Google/Grok/Mistral/Z.AI/Kimi/DeepSeek/OpenRouter/WiroGateway, not in OrcaRouter/WiroAI Run).
+1. Tool-calling support is partial across adapters (implemented in OpenAI/Anthropic/Google/Grok/Mistral/Z.AI/Kimi/DeepSeek/OpenRouter/Venice/WiroGateway, not in OrcaRouter/WiroAI Run).
 2. Older, unversioned conversation files cannot recover IDs or native response data that were never saved. They load with safe defaults and rebuild history without guessing provider ownership from IDs.
 3. The `README.md` environment-variable list now matches the adapter code (`GOOGLE_GEMINI_API_KEY`, `XAI_API_KEY`).
 
@@ -494,7 +506,8 @@ An implementation of the Archon inference-time architecture ("Archon: An Archite
 - `adapters/serializers.py`: provider wire (de)serialization for the domain objects (functions like `function_call_to_openai` for the OpenAI Responses API and `function_call_to_openai_chat` for the OpenAI-compatible Chat Completions API), kept out of the domain model so `services/` stays provider-agnostic
 - `services/files.py`: file classes and text/media extraction
 - `adapters/adapter_base.py`: `AdapterBase` contract + shared adapter helpers
-- `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base (DeepSeek, OpenRouter, OrcaRouter, Z.AI, Kimi)
+- `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base (DeepSeek, OpenRouter, OrcaRouter, Z.AI, Kimi, Venice)
+- `adapters/venice_adapter.py`: `VeniceAdapter` — Venice chat completions, catalog alias resolution, provider options, and model-specific media handling
 - `adapters/orcarouter_adapter.py`: `OrcarouterAdapter` — OrcaRouter models through the OpenAI-compatible endpoint using `ORCAROUTER_API_KEY`
 - `adapters/wiro_ai_adapter.py`: `WiroAIAdapter` — WiroAI Run/Task submission, polling, authentication, and structured LLM output parsing
 - `adapters/zai_adapter.py`: `ZaiAdapter` — Z.AI GLM models via the official `zai-sdk` `ZaiClient` (OpenAI-compatible); adds preserved/interleaved thinking, function calling (recursive tool loop), structured JSON output, and the built-in `web_search` tool

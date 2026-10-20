@@ -161,6 +161,10 @@ class OpenAICompatibleAdapter(AdapterBase):
     def _video_content(self, file, model):
         raise ValueError(f"Model {model} does not support video input.")
 
+    def _api_model_name(self, model: str) -> str:
+        """Resolve a provider model ID without changing local message identity."""
+        return model
+
     def _document_content(self, file, model):
         return {"type": "text", "text": self._document_xml(file)}
 
@@ -278,7 +282,7 @@ class OpenAICompatibleAdapter(AdapterBase):
                 the_conversation, model, additional_parameters.get("structured_output")
             )
             response = self.client.chat.completions.create(
-                model=model, messages=history, **{**request_params, **history_kwargs}
+                model=self._api_model_name(model), messages=history, **{**request_params, **history_kwargs}
             )
             message = self._message_from_response(model, response)
             the_conversation.messages.append(message)
@@ -322,7 +326,7 @@ class OpenAICompatibleAdapter(AdapterBase):
                 the_conversation, model, additional_parameters.get("structured_output")
             )
             response = await self.async_client.chat.completions.create(
-                model=model, messages=history, **{**request_params, **history_kwargs}
+                model=self._api_model_name(model), messages=history, **{**request_params, **history_kwargs}
             )
             message = self._message_from_response(model, response)
             the_conversation.messages.append(message)

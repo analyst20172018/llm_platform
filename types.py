@@ -21,6 +21,7 @@ class AdditionalParameters(TypedDict, total=False):
     response_modalities: List[str]  # e.g. ["text", "image", "audio"]
     web_search: bool  # allow integrated web search when supported
     web_search_options: dict[str, Any]  # Claude search limits, domains, callers, response inclusion
+    venice_parameters: dict[str, Any]  # Venice-specific options, sent through SDK extra_body
     prompt_cache_key: str  # OpenAI: stable routing key for reusable prefixes
     prompt_cache_options: dict[str, str]  # OpenAI GPT-5.6+: mode implicit/explicit, ttl 30m
     prompt_cache_breakpoints: List[str]  # OpenAI: user message IDs and/or "system"

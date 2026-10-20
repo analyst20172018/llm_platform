@@ -77,24 +77,7 @@ parameter_templates:
     label: Parallel Agents
     send_default: false # send only when the user explicitly enables multi-agent
 
-models:
-  # Opt-in gateway route. Authenticated model discovery is required before generation.
-  - name: qwen/qwen3-8-27b-uncensored
-    display_name: Qwen 3.8 27B (Wiro Gateway)
-    adapter: WiroGatewayAdapter
-    inputs: [text]
-    outputs: [text]
-    visible: false
-    additional_parameters:
-      max_tokens:
-        type: integer
-        default: 1024
-        request_key: max_completion_tokens
-        ui: hidden
-      function_calling: *param_function_calling
-      tool_choice: *param_tool_choice
-      structured_output: *param_structured_output
-      
+models:    
   - name: claude-fable-5-1
     display_name: Claude Fable 5.1 💰💰💰
     adapter: AnthropicAdapter
@@ -808,7 +791,7 @@ models:
       max_tokens:
         <<: *param_max_tokens
         default: 0
-    visible: true
+    visible: false
 
 
 
@@ -859,3 +842,90 @@ models:
         <<: *param_max_tokens
         default: 131000
     visible: false
+
+  
+  # Venice catalog metadata checked against /api/v1/models on 2026-10-20.
+  - &venice_abliterated_large_v2
+    name: abliteration-abliterated-model-large-v2
+    display_name: Abliterated Large V2 (Venice)
+    adapter: VeniceAdapter
+    pricing:
+      input: 3 # USD/1M tokens
+      cached_input: 0.3
+      output: 5
+    context_window: 1_000_000
+    inputs: [text]
+    outputs: [text]
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 32_768
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      tool_choice: *param_tool_choice
+      temperature: &venice_temperature
+        type: float
+        ui: input
+        send_default: false
+      top_p: &venice_top_p
+        type: float
+        ui: input
+        send_default: false
+      venice_parameters: &param_venice_parameters
+        type: object
+        ui: hidden
+        send_default: false
+    visible: true
+
+  # Accept the shorter user-facing name without sending an invalid API model ID.
+  - <<: *venice_abliterated_large_v2
+    name: abliterated-model-large-v2
+    api_model: abliteration-abliterated-model-large-v2
+    visible: false
+
+  - name: qwen-3-8-27b
+    display_name: Qwen 3.8 27B (Venice)
+    adapter: VeniceAdapter
+    pricing:
+      input: 0.45 # USD/1M tokens
+      output: 3.2
+    context_window: 262_144
+    inputs: [text, image, video]
+    outputs: [text]
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 65_536
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      tool_choice: *param_tool_choice
+      temperature: *venice_temperature
+      top_p: *venice_top_p
+      venice_parameters: *param_venice_parameters
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, xhigh]
+        default: xhigh
+        ui: select
+        label: Reasoning
+        send_default: false
+    visible: true
+
+  # Opt-in gateway route. Authenticated model discovery is required before generation.
+  - name: qwen/qwen3-8-27b-uncensored
+    display_name: Qwen 3.8 27B (Wiro Gateway)
+    adapter: WiroGatewayAdapter
+    inputs: [text]
+    outputs: [text]
+    visible: false
+    additional_parameters:
+      max_tokens:
+        type: integer
+        default: 1024
+        request_key: max_completion_tokens
+        ui: hidden
+      function_calling: *param_function_calling
+      tool_choice: *param_tool_choice
+      structured_output: *param_structured_output
+ 
+ 
