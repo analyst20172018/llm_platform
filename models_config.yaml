@@ -708,8 +708,8 @@ models:
     visible: true
 
 
-  - name: kimi-k3
-    display_name: Kimi K3
+  - name: k3.1-pro
+    display_name: Kimi K3.1 Pro
     adapter: KimiAdapter
     pricing:
       cached_input: 0.3 # USD/1M tokens
@@ -725,7 +725,7 @@ models:
     additional_parameters:
       max_tokens:
         type: integer
-        default: 131072
+        default: 131_072
         ui: hidden
         request_key: max_completion_tokens
       function_calling: *param_function_calling
@@ -733,7 +733,7 @@ models:
       reasoning_effort:
         type: enum
         options: [low, high, max]
-        default: max
+        default: high
         ui: select
         label: Reasoning
         send_default: false
@@ -746,7 +746,46 @@ models:
         send_default: false
     visible: true
 
+  - name: k3.1-pro-highspeed
+    display_name: K3.1 Pro Highspeed
+    adapter: KimiAdapter
+    pricing:
+      cached_input: 0.3 # USD/1M tokens
+      input: 6 # USD/1M tokens (cache miss)
+      output: 30 # USD/1M tokens
+    context_window: 1_048_576
+    inputs:
+      - text
+      - image
+      - video
+    outputs:
+      - text
+    additional_parameters:
+      max_tokens:
+        type: integer
+        default: 131_072
+        ui: hidden
+        request_key: max_completion_tokens
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      reasoning_effort:
+        type: enum
+        options: [low, high, max]
+        default: high
+        ui: select
+        label: Reasoning
+        send_default: false
+      tool_choice:
+        type: enum
+        options: [auto, none, required]
+        default: auto
+        ui: select
+        label: Tool Choice
+        send_default: false
+    visible: false
 
+
+  # Wiro AI
   - name: Qwen3.8-27B-Uncensored
     display_name: Qwen3.8 27B Uncensored
     adapter: WiroAIAdapter
@@ -844,7 +883,7 @@ models:
     visible: false
 
   
-  # Venice catalog metadata checked against /api/v1/models on 2026-10-20.
+  # Venice.ai catalog metadata checked against /api/v1/models on 2026-10-20.
   - &venice_abliterated_large_v2
     name: abliteration-abliterated-model-large-v2
     display_name: Abliterated Large V2 (Venice)
