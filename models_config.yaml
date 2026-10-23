@@ -708,13 +708,13 @@ models:
     visible: true
 
 
-  - name: k3.1-pro
+  - name: kimi-k3.1-pro
     display_name: Kimi K3.1 Pro
     adapter: KimiAdapter
     pricing:
       cached_input: 0.3 # USD/1M tokens
-      input: 3 # USD/1M tokens (cache miss)
-      output: 15 # USD/1M tokens
+      input: 2 # USD/1M tokens (cache miss)
+      output: 10 # USD/1M tokens
     context_window: 1_048_576
     inputs:
       - text
@@ -746,13 +746,13 @@ models:
         send_default: false
     visible: true
 
-  - name: k3.1-pro-highspeed
+  - name: kimi-k3.1-pro-highspeed
     display_name: K3.1 Pro Highspeed
     adapter: KimiAdapter
     pricing:
       cached_input: 0.3 # USD/1M tokens
-      input: 6 # USD/1M tokens (cache miss)
-      output: 30 # USD/1M tokens
+      input: 4 # USD/1M tokens (cache miss)
+      output: 20 # USD/1M tokens
     context_window: 1_048_576
     inputs:
       - text
