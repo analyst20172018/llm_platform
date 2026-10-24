@@ -950,7 +950,36 @@ models:
         send_default: false
     visible: true
 
-  # Opt-in gateway route. Authenticated model discovery is required before generation.
+  - name: deepseek-v4-1-flash-uncensored
+    display_name: DeepSeek V4.1 Flash Uncensored
+    adapter: VeniceAdapter
+    pricing:
+      input: 0.3 # USD/1M tokens
+      output: 1.32
+    context_window: 1_000_000
+    inputs: [text, image, video]
+    outputs: [text]
+    additional_parameters:
+      max_tokens:
+        <<: *param_max_tokens
+        default: 131_000
+      function_calling: *param_function_calling
+      structured_output: *param_structured_output
+      tool_choice: *param_tool_choice
+      temperature: *venice_temperature
+      top_p: *venice_top_p
+      venice_parameters: *param_venice_parameters
+      reasoning_effort:
+        type: enum
+        options: [none, low, medium, high, xhigh]
+        default: xhigh
+        ui: select
+        label: Reasoning
+        send_default: false
+    visible: true
+
+
+  # Wiro AI
   - name: qwen/qwen3-8-27b-uncensored
     display_name: Qwen 3.8 27B (Wiro Gateway)
     adapter: WiroGatewayAdapter
@@ -966,5 +995,6 @@ models:
       function_calling: *param_function_calling
       tool_choice: *param_tool_choice
       structured_output: *param_structured_output
+    visible: false
  
  
