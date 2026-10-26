@@ -289,12 +289,12 @@ models:
       agent_count: *param_agent_count
     visible: true
 
-  - name: gpt-5.6-terra
-    display_name: GPT-5.6 Terra
+  - name: gpt-6.1-terra
+    display_name: GPT-6.1 Terra
     adapter: OpenAIAdapter
     pricing:
-      input: 2 # USD/1M tokens
-      output: 12 # USD/1M tokens
+      input: 1 # USD/1M tokens
+      output: 5 # USD/1M tokens
     context_window: 1_050_000
     inputs:
       - text
