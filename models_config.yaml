@@ -950,8 +950,8 @@ models:
         send_default: false
     visible: true
 
-  - name: deepseek-v4-1-flash-uncensored
-    display_name: DeepSeek V4.1 Flash Uncensored
+  - name: deepseek-v4-1-flash-1017-uncensored
+    display_name: DeepSeek V4.1 Flash 1017 Uncensored
     adapter: VeniceAdapter
     pricing:
       input: 0.3 # USD/1M tokens
