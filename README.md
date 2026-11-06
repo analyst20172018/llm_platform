@@ -204,6 +204,55 @@ Adapters translate tool schemas and invocations for each provider (OpenAI tool c
 
 Override or extend the catalog by editing the YAML file or supplying environment-specific overlays. `ModelConfig` exposes helper methods to query models, resolve adapters, and fetch defaults.
 
+### OpenAI Pro mode and parallel agents
+
+OpenAI requests cannot combine `reasoning_mode="pro"` with `agent_count > 0`.
+Use Standard mode with parallel agents, or Pro mode with zero or omitted agents:
+
+| Reasoning mode | Agent count | Valid configuration |
+| --- | --- | --- |
+| `pro` | `0` or omitted | Pro, single agent |
+| `standard` or omitted | `2` or `3` | Standard, parallel agents |
+
+The check uses normalized settings: `{"reasoning": {"mode": "pro"}}` is
+equivalent to `{"reasoning_mode": "pro"}`, and string counts such as `"3"`
+are supported. Omitting the mode retains the existing Standard default. Both
+settings remain in the catalog; maximum reasoning effort, high verbosity, and
+web search remain available with either valid configuration. Other providers'
+`agent_count` settings are unaffected.
+
+An incompatible request raises `llm_platform.exceptions.RequestValidationError`,
+a `ValueError` subclass, with `code="incompatible_parameters"` and
+`parameters=("reasoning.mode", "agent_count")`. Its message is:
+
+> Pro reasoning mode cannot be combined with parallel agents. Select Standard mode to use parallel agents, or set agent_count to 0 to keep Pro mode.
+
+Validation runs before any provider request or conversation change in `request`,
+`request_async`, `request_llm`, and `request_llm_async`, including function-calling
+paths. Rejection preserves messages, usage, and continuation checkpoints. The
+library does not change settings, retry with alternatives, or substitute a model.
+The exception contains only the safe message, code, and parameter names, without
+credentials, prompts, attachment contents, or conversation history.
+
+```python
+from llm_platform.exceptions import RequestValidationError
+
+try:
+    result = handler.request(
+        model="gpt-6-astra",
+        prompt="Compare the alternatives.",
+        additional_parameters={"reasoning_mode": "pro", "agent_count": "3"},
+    )
+except RequestValidationError as error:
+    print(error.code, error.parameters)
+    print(str(error))  # Display this explanation in the calling application's UI.
+```
+
+Applications should catch `RequestValidationError` before their generic exception
+handler to distinguish configuration errors from provider or transport failures.
+LuminaAI needs a separate integration change to display this message; its current
+generic exception handling would otherwise continue hiding the explanation.
+
 ## Extending the Platform
 ### Adding a New Provider
 1. Create `adapters/<provider>_adapter.py` by subclassing `AdapterBase`.

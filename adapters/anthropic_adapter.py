@@ -55,6 +55,26 @@ RESPONSE_TOKEN_BUFFER = 1000
 MAX_TOKENS_STREAMING_THRESHOLD = 21_000
 
 
+class ContextWindowExceededError(ValueError):
+    """The request leaves insufficient context for a valid model response."""
+
+    def __init__(self, model: str, input_tokens: int, context_window: int, max_tokens: int):
+        self.model = model
+        self.input_tokens = input_tokens
+        self.context_window = context_window
+        self.max_tokens = max_tokens
+        super().__init__(
+            f"Request for {model} uses {input_tokens} input tokens in a "
+            f"{context_window}-token context window, leaving insufficient room "
+            f"for a response (requested max_tokens={max_tokens}). "
+            "Reduce or split the input before retrying."
+        )
+
+
+class TokenCountError(RuntimeError):
+    """Input token usage could not be established; generation was not attempted."""
+
+
 class ClaudeStreamProcessor:
     """
     Processes a stream of events from the Anthropic Messages API.
@@ -280,13 +300,16 @@ class AnthropicAdapter(AdapterBase):
         """Run local tools and resume hosted pauses within one bounded turn."""
         parameters = self._merge_additional_parameters(additional_parameters, kwargs)
         tools = self._build_tools(functions, parameters)
-        stream = (parameters.get("max_tokens") or 0) >= MAX_TOKENS_STREAMING_THRESHOLD
         deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
         for _ in range(MAX_TOOL_ROUNDS):
             self._check_deadline(deadline)
             request = self._round_kwargs(model, the_conversation, parameters, tools, **kwargs)
             if "max_tokens" in request:
-                request["max_tokens"] = self.correct_max_tokens(model, request["messages"], request["max_tokens"], tools)
+                request["max_tokens"] = self.correct_max_tokens(
+                    model, request["messages"], request["max_tokens"], tools,
+                    **self._token_count_options(request),
+                )
+            stream = (request.get("max_tokens") or 0) >= MAX_TOKENS_STREAMING_THRESHOLD
             if stream:
                 events = self.client.beta.messages.create(**request, stream=True)
                 processor = ClaudeStreamProcessor(model)
@@ -319,13 +342,16 @@ class AnthropicAdapter(AdapterBase):
         """Native async equivalent, including streamed pauses and coroutine tools."""
         parameters = self._merge_additional_parameters(additional_parameters, kwargs)
         tools = self._build_tools(functions, parameters)
-        stream = (parameters.get("max_tokens") or 0) >= MAX_TOKENS_STREAMING_THRESHOLD
         deadline = time.monotonic() + self.RESPONSE_TIMEOUT_SECONDS
         for _ in range(MAX_TOOL_ROUNDS):
             self._check_deadline(deadline)
             request = self._round_kwargs(model, the_conversation, parameters, tools, **kwargs)
             if "max_tokens" in request:
-                request["max_tokens"] = await self.correct_max_tokens_async(model, request["messages"], request["max_tokens"], tools)
+                request["max_tokens"] = await self.correct_max_tokens_async(
+                    model, request["messages"], request["max_tokens"], tools,
+                    **self._token_count_options(request),
+                )
+            stream = (request.get("max_tokens") or 0) >= MAX_TOKENS_STREAMING_THRESHOLD
             if stream:
                 events = await self.async_client.beta.messages.create(**request, stream=True)
                 processor = ClaudeStreamProcessor(model)
@@ -485,7 +511,8 @@ class AnthropicAdapter(AdapterBase):
             logger.warning("Passing request parameters via **kwargs is deprecated; use additional_parameters.")
             request_kwargs.update(kwargs)
 
-        if max_tokens := additional_parameters.get("max_tokens", None):
+        max_tokens = additional_parameters.get("max_tokens")
+        if max_tokens is not None:
             request_kwargs["max_tokens"] = max_tokens
 
         temperature = additional_parameters.get("temperature", None)
@@ -648,52 +675,105 @@ class AnthropicAdapter(AdapterBase):
 
     # --- Token Counting ---
 
-    def count_tokens(self, model: str, messages: List[Dict], tools: List[Dict] | None = None) -> int:
-        """Counts the number of input tokens for a given model, message list, and tools."""
-        try:
-            response = self.client.messages.count_tokens(model=model, messages=messages, tools=tools or [])
-            return response.input_tokens
-        except Exception as e:
-            logger.warning(f"Could not count tokens for model {model}: {e}")
-            return 0
+    @staticmethod
+    def _token_count_options(request: Dict) -> Dict:
+        """Include request fields that affect the provider's input token count."""
+        names = ("system", "thinking", "output_config", "tool_choice", "betas", "cache_control")
+        return {name: request[name] for name in names if name in request}
 
-    async def count_tokens_async(self, model: str, messages: List[Dict], tools: List[Dict] | None = None) -> int:
+    def count_tokens(
+        self, model: str, messages: List[Dict], tools: List[Dict] | None = None,
+        **request_options,
+    ) -> int:
+        """Count input including system/tools; failures never masquerade as zero.
+
+        Optional request fields are system, thinking, output_config, tool_choice,
+        betas, and cache_control, matching the generation request.
+        """
+        try:
+            response = self.client.beta.messages.count_tokens(
+                model=model, messages=messages, tools=tools or [], **request_options,
+            )
+            return self._validated_token_count(response.input_tokens)
+        except Exception as exc:
+            raise TokenCountError(f"Could not count input tokens for {model}; request not sent.") from exc
+
+    async def count_tokens_async(
+        self, model: str, messages: List[Dict], tools: List[Dict] | None = None,
+        **request_options,
+    ) -> int:
         """Async counterpart of `count_tokens`."""
         try:
-            response = await self.async_client.messages.count_tokens(model=model, messages=messages, tools=tools or [])
-            return response.input_tokens
-        except Exception as e:
-            logger.warning(f"Could not count tokens for model {model}: {e}")
-            return 0
+            response = await self.async_client.beta.messages.count_tokens(
+                model=model, messages=messages, tools=tools or [], **request_options,
+            )
+            return self._validated_token_count(response.input_tokens)
+        except Exception as exc:
+            raise TokenCountError(f"Could not count input tokens for {model}; request not sent.") from exc
 
-    def correct_max_tokens(self, model: str, messages: List[Dict], max_tokens: int, tools: List[Dict] | None = None) -> int:
+    @staticmethod
+    def _validated_token_count(value: Any) -> int:
+        if type(value) is not int or value < 0:
+            raise ValueError("Provider returned an invalid input token count")
+        return value
+
+    def correct_max_tokens(
+        self, model: str, messages: List[Dict], max_tokens: int,
+        tools: List[Dict] | None = None, **request_options,
+    ) -> int:
         """Adjusts max_tokens to prevent exceeding the model's context window."""
-        request_tokens = self.count_tokens(model, messages, tools)
-        return self._clamp_max_tokens(model, request_tokens, max_tokens)
+        request_tokens = self.count_tokens(model, messages, tools, **request_options)
+        return self._clamp_max_tokens(
+            model, request_tokens, max_tokens,
+            self._minimum_output_tokens(request_options.get("thinking")),
+        )
 
-    async def correct_max_tokens_async(self, model: str, messages: List[Dict], max_tokens: int, tools: List[Dict] | None = None) -> int:
+    async def correct_max_tokens_async(
+        self, model: str, messages: List[Dict], max_tokens: int,
+        tools: List[Dict] | None = None, **request_options,
+    ) -> int:
         """Async counterpart of `correct_max_tokens`."""
-        request_tokens = await self.count_tokens_async(model, messages, tools)
-        return self._clamp_max_tokens(model, request_tokens, max_tokens)
+        request_tokens = await self.count_tokens_async(model, messages, tools, **request_options)
+        return self._clamp_max_tokens(
+            model, request_tokens, max_tokens,
+            self._minimum_output_tokens(request_options.get("thinking")),
+        )
 
-    def _clamp_max_tokens(self, model: str, request_tokens: int, max_tokens: int) -> int:
+    @staticmethod
+    def _minimum_output_tokens(thinking: Dict | None) -> int:
+        if thinking and thinking.get("type") == "enabled":
+            return thinking["budget_tokens"] + 1
+        return 1
+
+    def _clamp_max_tokens(
+        self, model: str, request_tokens: int, max_tokens: int,
+        minimum_output_tokens: int = 1,
+    ) -> int:
         """Clamps max_tokens against the model's own limit and remaining context window."""
         specific_model_object = self.model_config[model]
         context_window = specific_model_object.context_window
 
         if max_tokens is None:
             max_tokens = specific_model_object.max_tokens
-        elif max_tokens > specific_model_object.max_tokens:
+        if type(max_tokens) is not int or max_tokens < minimum_output_tokens:
+            raise ValueError(f"max_tokens must be an integer >= {minimum_output_tokens}")
+        if max_tokens > specific_model_object.max_tokens:
             logger.warning(
                 f"Requested max_tokens ({max_tokens}) exceeds model's max_tokens ({specific_model_object.max_tokens}). "
                 f"Correcting to {specific_model_object.max_tokens}."
             )
             max_tokens = specific_model_object.max_tokens
 
-        if request_tokens + max_tokens >= context_window:
-            new_max_tokens = context_window - request_tokens - RESPONSE_TOKEN_BUFFER
-            if new_max_tokens < 0:
-                new_max_tokens = 0 # Cannot have negative tokens
+        if max_tokens < minimum_output_tokens:
+            raise ValueError(
+                f"Model output limit ({max_tokens}) cannot fit the configured "
+                f"thinking budget (requires at least {minimum_output_tokens} tokens)"
+            )
+        available_tokens = context_window - request_tokens - RESPONSE_TOKEN_BUFFER
+        if available_tokens < minimum_output_tokens:
+            raise ContextWindowExceededError(model, request_tokens, context_window, max_tokens)
+        if max_tokens > available_tokens:
+            new_max_tokens = available_tokens
             logger.warning(
                 f"Request tokens ({request_tokens}) + max_tokens ({max_tokens}) exceeds context window "
                 f"({context_window}). Correcting max_tokens to {new_max_tokens}."

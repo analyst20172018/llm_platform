@@ -1,6 +1,6 @@
 # LLM Platform Technical Documentation
 
-Version: 2026-10-20
+Version: 2026-11-06
 Source of truth: current implementation in this repository (`core/`, `adapters/`, `services/`, `helpers/`, `tools/`, `models_config.yaml`)
 
 ## 1. Purpose and scope
@@ -16,9 +16,9 @@ This document describes the implementation as it exists now.
 ## 2. High-level architecture
 Main runtime flow:
 1. Client code calls `core.llm_handler.APIHandler`.
-2. `APIHandler` appends user input to `Conversation` (`services.conversation`).
-3. `APIHandler` normalizes `additional_parameters` using `models_config.yaml` via `helpers.model_config.ModelConfig`.
-4. `APIHandler` resolves adapter by model (`adapter` field in YAML) and lazily initializes adapter.
+2. `APIHandler` resolves the adapter by model (`adapter` field in YAML) and lazily initializes it.
+3. `APIHandler._prepare_request` normalizes `additional_parameters` using `models_config.yaml` and invokes the adapter's parameter validation hook.
+4. After validation succeeds, `request` / `request_async` append user input to `Conversation` (`services.conversation`); direct dispatch methods use the existing conversation.
 5. Adapter converts `Conversation` into provider-native payload and calls provider SDK/API.
 6. Adapter converts provider output back into `Message`, including usage, reasoning/thinking, files, and function call metadata.
 7. Message is appended to conversation state.
@@ -26,6 +26,7 @@ Main runtime flow:
 Primary modules:
 - `core/llm_handler.py`: orchestration facade and entrypoint
 - `core/parameter_normalizer.py`: `ParameterNormalizer` — normalizes `additional_parameters` against a model's YAML schema (extracted from the facade)
+- `exceptions.py`: public `RequestValidationError(ValueError)` for configuration failures, with a machine-readable code and parameter names
 - `adapters/adapter_base.py`: `AdapterBase` contract plus provider-agnostic helpers shared by the adapters (parameter merge, usage extraction, callable→JSON-schema, tool-name resolution `_tool_name`, content-block formatting, PDF/tool-round constants). `load_dotenv()` runs once at module import (not per adapter construction)
 - `adapters/response_metadata.py`: provider status/finish normalization and citation/hosted-result extraction; provider-specific interpretation remains outside the domain model
 - `adapters/openai_compatible_adapter.py`: `OpenAICompatibleAdapter` base for OpenAI-compatible providers (DeepSeek, OpenRouter, OrcaRouter, Z.AI, Kimi, Venice); includes opt-in sync/async local-tool loops and JSON output marshalling. Its `_api_model_name` hook resolves provider aliases for wire requests while retaining the caller's model name in local history, usage, and replay.
@@ -46,6 +47,7 @@ File: `core/llm_handler.py`
 - Adapter registry and lazy adapter initialization
 - Conversation state ownership (`self.the_conversation`)
 - Parameter normalization (`_prepare_additional_parameters`)
+- Shared request preparation and adapter validation before conversation mutation (`_prepare_request`)
 - Sync and async request routing
 
 ### 3.2 Public API
@@ -82,7 +84,15 @@ Implemented in `core/parameter_normalizer.ParameterNormalizer.normalize` (the fa
 5. Drop fields where `include_in_request: false`.
 6. Filter unsupported keys for the selected model and log warnings.
 
-Normalization runs exactly once per call. `request` / `request_async` append the user message and forward the raw `additional_parameters` (and any deprecated `**kwargs`) to `request_llm` / `request_llm_async`, which are the single normalization point; direct callers of `request_llm` are therefore normalized identically.
+Normalization runs exactly once per call through `_prepare_request`, shared by `request`, `request_async`, `request_llm`, and `request_llm_async`. It selects the adapter, normalizes parameters, and calls `adapter.validate_parameters` before any user-message append or adapter dispatch. Each entry point passes the prepared parameters directly to the adapter. Nested dictionaries are copied along mapped paths before writes, so friendly-key mappings do not modify caller-owned nested values.
+
+### 3.5 OpenAI parameter compatibility validation
+
+`AdapterBase.validate_parameters` is a no-op by default. `OpenAIAdapter` overrides it to reject effective `reasoning.mode == "pro"` with `int(agent_count or 0) > 0`. This keeps the restriction out of the provider-agnostic normalizer and leaves other providers' `agent_count` behavior unchanged. The OpenAI payload builder invokes the same check before history conversion, covering direct adapter calls and sync/async function-calling paths as well as the facade.
+
+Friendly `reasoning_mode` and supported nested `reasoning: {mode: ...}` forms receive the same validation after defaults, key mapping, and filtering. Existing mapping precedence is preserved: an explicit friendly value overrides its nested destination. Numeric string counts such as `"3"` work. Zero or omitted agents allow Pro; Standard or omitted mode allows positive agent counts. Omitted reasoning mode remains unsent, preserving the provider's Standard default. The catalog retains both independent settings (`standard`/`pro` and agent choices `0`/`2`/`3`). Maximum reasoning effort, high verbosity, and web search remain available with valid combinations.
+
+Rejection raises `RequestValidationError` (§12) before provider I/O or conversation mutation: no user or assistant message, usage update, or continuation checkpoint change. No fallback changes the mode, agents, or model. Offline regression coverage is in `tests/test_openai_parameter_validation.py`; provider clients are mocked rather than called live.
 
 ## 4. Conversation domain model
 File: `services/conversation.py`
@@ -240,8 +250,8 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Sync + async request methods
   - Tool calling with recursive loop
   - The `web_search` toggle enables the current Responses API hosted tool (`{"type": "web_search"}`) on all request paths.
-  - Supports `web_search`, `code_execution`, structured output parsing, reasoning/text parameter pass-through. GPT-5.6 pro mode is exposed as the `reasoning_mode` additional parameter (enum `standard`/`pro`, `request_key: reasoning.mode`, sent only when explicitly selected) — pure YAML/normalizer configuration, no adapter code. Structured output sets `text_format`, which only `responses.parse()` accepts, so all four request paths (sync/async, with/without tools) branch on `"text_format" in parameters` to choose `parse` vs `create` (covered by `tests/test_openai_structured_output.py`)
-  - Multi-agent (beta, GPT-5.6 family) is exposed as the `agent_count` additional parameter (enum `0/2/3/5/8`, default `0` = single agent, `send_default: false`; the same friendly key `types.py` already defines for Grok's multi-agent models). When > 0, `_create_parameters_for_calling_llm` supplies `multi_agent: {enabled: true, max_concurrent_subagents: N}` and `betas: [responses_multi_agent=v1]`; `_create_response` / `_create_response_async` route these requests through the typed `client.beta.responses` surface (requiring `openai>=2.45.0`) so beta-only `agent` and `phase` attribution survives deserialization. Orchestration (spawning, messaging, waiting) is hosted by the Responses API, so function calls emitted by any agent in the tree are executed by the existing tool loop and continued via the standard `previous_response_id` path. Two guards remain: `reasoning.summary` is not requested when multi-agent is on (unsupported combination), and combining with `structured_output` raises `ValueError`. `_parse_response` skips subagent-attributed items and root messages outside the `final_answer` phase, ignores hosted orchestration items (`multi_agent_call`, `multi_agent_call_output`, `agent_message`), and suppresses repeated agent-message text so duplicate root final-answer items are returned once while distinct fragments are preserved (covered by `tests/test_openai_multi_agent.py`).
+  - Supports `web_search`, `code_execution`, structured output parsing, reasoning/text parameter pass-through. Registered GPT-6 models expose Pro mode as the `reasoning_mode` additional parameter (enum `standard`/`pro`, `request_key: reasoning.mode`, sent only when explicitly selected). YAML and the normalizer map the setting; the adapter validates its compatibility with hosted multi-agent execution (§3.5). Structured output sets `text_format`, which only `responses.parse()` accepts, so all four request paths (sync/async, with/without tools) branch on `"text_format" in parameters` to choose `parse` vs `create` (covered by `tests/test_openai_structured_output.py`)
+  - Multi-agent (beta) is exposed as the `agent_count` additional parameter (catalog enum `0/2/3`, default `0` = single agent, `send_default: false`; the same friendly key `types.py` already defines for Grok's multi-agent models). When > 0, `_create_parameters_for_calling_llm` supplies `multi_agent: {enabled: true, max_concurrent_subagents: N}` and `betas: [responses_multi_agent=v1]`; `_create_response` / `_create_response_async` route these requests through the typed `client.beta.responses` surface (requiring `openai>=2.45.0`) so beta-only `agent` and `phase` attribution survives deserialization. Orchestration (spawning, messaging, waiting) is hosted by the Responses API, so function calls emitted by any agent in the tree are executed by the existing tool loop and continued via the standard `previous_response_id` path. Pro mode with positive agent counts raises `RequestValidationError` before dispatch (§3.5). The existing guards remain: `reasoning.summary` is not requested when multi-agent is on (unsupported combination), and combining with `structured_output` raises `ValueError`. `_parse_response` skips subagent-attributed items and root messages outside the `final_answer` phase, ignores hosted orchestration items (`multi_agent_call`, `multi_agent_call_output`, `agent_message`), and suppresses repeated agent-message text so duplicate root final-answer items are returned once while distinct fragments are preserved (covered by `tests/test_openai_multi_agent.py`).
   - Background-mode models (`background_mode: true`) are polled to completion on both the sync and async paths (`_poll_background_response` / `_poll_background_response_async`)
   - Image-generation output is parsed as a single base64 string per `image_generation_call` (the Responses API `result` field)
   - Supports file citations retrieval from container files. `_parse_response` is pure (no network IO): it returns container-file citations as metadata, which `request_llm`/`request_llm_with_functions` then fetch via `_retrieve_container_files` (sync) and the async paths via `_retrieve_container_files_async` (async client), so parsing is testable and the async path never blocks on a synchronous fetch. Failed downloads become retryable `FailedFile` entries (§5.6)
@@ -249,14 +259,14 @@ All tool-calling loops (OpenAI sync/async, Anthropic sync/async, Google sync/asy
   - Hosted search uses `web_search_20260318`; code execution uses `code_execution_20260521` across sync/async, streaming, local-tool, and pause-continuation paths. Search defaults to provider dynamic filtering and full result inclusion. Optional `web_search_options` supports `max_uses`, `allowed_domains` or `blocked_domains`, `user_location`, `allowed_callers`, and `response_inclusion: full|excluded`. It requires `web_search=True`; tool identity cannot be overridden. `allowed_callers: [direct]` requests direct search without dynamic filtering. Custom functions remain client-executed. Full native response replay preserves the provider's returned blocks and container; excluded nested results are not reconstructed. Native usage is retained as `provider_usage`, including streamed usage updates.
   - Sync + native async request methods (`request_llm_async` backed by a lazily constructed `anthropic.AsyncAnthropic` client; the async side mirrors the sync dispatch in two helpers — `_request_llm_simple_async` / `_request_llm_with_tools_async` — each taking a `stream` flag instead of separate streaming methods)
   - Non-streaming and streaming execution paths
-  - Streaming auto-enabled for large `max_tokens` (>= 21000)
+  - Streaming auto-enabled for large `max_tokens` (>= 21000), after context-budget correction on each round
   - Local `tool_use` executes through `_handle_tool_calls` / `_handle_tool_calls_async`; the async helper awaits coroutine tools. Hosted `pause_turn` appends the complete assistant response and resumes without executing hosted calls locally. Both consume the same 40-round and elapsed-time budget. Search and code execution remain enabled alongside local functions on every round.
-  - Token counting/max-token correction have async counterparts (`count_tokens_async` / `correct_max_tokens_async` on the async client) sharing the clamp logic (`_clamp_max_tokens`), so the async path never blocks the event loop
+  - Token counting/max-token correction have async counterparts (`count_tokens_async` / `correct_max_tokens_async` on the async client) sharing the clamp logic (`_clamp_max_tokens`), so the async path never blocks the event loop. Counts use the beta token-counting endpoint and include the generated request's messages, system prompt, tools, thinking configuration, output configuration, beta flags, cache control, and tool choice where present. `count_tokens(model, messages, tools=None, **request_options)` also supports explicit preflight counting without generation; use the same system/options as the eventual request. `APIHandler.calculate_tokens()` remains a generic local estimate, not the Anthropic model tokenizer.
   - Supports web search, code execution, reasoning controls, structured output (on both the streaming and non-streaming paths)
   - Tool lookup supports both `BaseTool` instances and plain callables (via `AdapterBase._tool_name`); a tool call whose name is not found is answered with an error `tool_result` instead of being dropped (dropping it made the model retry forever)
   - Thinking mode is chosen per model from the `adaptive_thinking` flag in `models_config.yaml`: flagged models (Opus 4.7/4.8, Sonnet 4.6) use `thinking: {type: "adaptive"}` + `output_config.effort`; others use legacy `thinking: {type: "enabled", budget_tokens}`. (Models such as Opus 4.8 reject `enabled`/`budget_tokens` with a 400.)
   - Automatic prompt caching is always on: `_prepare_request_kwargs` sets a single top-level `cache_control: {type: "ephemeral"}` (applied to every request path), so the stable system + tools + history prefix is served from cache across turns and tool-use loops. Prompts below the model's minimum cacheable length are silently left uncached. Usage reports the cache breakdown in `cache_read_tokens` / `cache_creation_tokens`, and `prompt_tokens` is the full input (uncached + cache read + cache write) since the API's `input_tokens` counts only the uncached remainder when caching is active.
-  - Performs max-token correction against context window
+  - Performs max-token correction against the configured model context window, retaining a 1,000-token safety buffer. `ContextWindowExceededError` exposes `model`, `input_tokens`, `context_window`, and `max_tokens` when no valid response fits; generation is not attempted. For legacy fixed thinking, enough space for the configured thinking budget plus at least one answer token is required. Token-counting failures or malformed counts raise `TokenCountError` with the original cause instead of returning zero and sending an unchecked request. Applications may catch the overflow error and split/reduce their input. Offline regressions are in `tests/test_anthropic_context_budget.py`.
 - `GoogleAdapter`
   - Built entirely on the Gemini **Interactions API** (`client.interactions.create`); the legacy `client.models.generate_content` surface is no longer used
   - Sync + native async request methods: `request_llm_async` runs on the SDK's native async surface (`client.aio`, exposed via the adapter's `async_client` property) and mirrors the sync dispatch — standard chat/tool loop (`_execute_function_calls_async`, which additionally awaits coroutine tools), Deep Research (`_request_deep_research_async` + `_poll_deep_research_interaction_async`), and Antigravity (`_request_antigravity_async` + `_poll_agent_interaction_async` with `asyncio.sleep` polling). Request building and response parsing are shared with the sync path (pure helpers, no I/O)
@@ -427,6 +437,9 @@ Provider requirements have tested lower bounds. `constraints-tested.txt` pins th
 `tests/test_provider_modernization.py` checks actual SDK serialization through intercepted HTTP transports, cache persistence/accounting, gateway auth/discovery/tool continuation, and live-runner failure behavior. Existing lifecycle tests exercise the new Claude tool builder across streaming and pause paths. These tests do not establish live acceptance. `scripts/provider_smoke.py` requires one explicit `--run-live` scenario and a report path; no provider calls run on import or pytest collection. It uses public synthetic inputs, capped output tokens, disabled SDK retries, and 60-second transport/orchestration timeouts. Reports contain model/SDK identity, constraint fingerprint, response IDs, usage, and pass/fail status; they retain completed responses on failure and omit provider exception bodies. See [provider feature rollout](provider_feature_rollout.md) for commands and the required pre-deployment checks.
 
 ## 12. Error handling and observability
+
+- `llm_platform.exceptions.RequestValidationError` subclasses `ValueError` and distinguishes library configuration rejection from provider/transport failures. The OpenAI Pro/parallel-agent conflict has `code == "incompatible_parameters"`, `parameters == ("reasoning.mode", "agent_count")`, and this message: "Pro reasoning mode cannot be combined with parallel agents. Select Standard mode to use parallel agents, or set agent_count to 0 to keep Pro mode." Its attributes and message contain no credentials, prompts, attachment contents, or conversation history. All four facade request methods propagate it before changing state, including when local functions are supplied.
+- Calling applications should catch `RequestValidationError` before a generic exception handler and display `str(error)`; use `error.code` and `error.parameters` for machine-readable handling. LuminaAI requires a separate integration change to expose the explanation currently hidden by its generic exception handling. See the README for a catching example.
 - Logging uses `loguru` in orchestration and adapters.
 - `APIHandler.request_llm` / `request_llm_async` let adapter exceptions propagate to the caller, consistently across the sync and async paths; they no longer swallow exceptions into a fabricated assistant message appended to the conversation.
 - `APIHandler.get_adapter` raises `ValueError` for a model not present in `models_config.yaml`.
@@ -441,14 +454,17 @@ Provider requirements have tested lower bounds. `constraints-tested.txt` pins th
 
 ### 14.1 Standard chat call
 1. Client calls `APIHandler.request(...)`.
-2. User `Message` appended to `Conversation`.
-3. Additional parameters normalized against model schema.
-4. Adapter selected by model.
+2. `_prepare_request` selects the adapter and normalizes additional parameters against the model schema once.
+3. The adapter validates effective parameters; incompatible OpenAI Pro/parallel-agent settings raise before state changes or provider calls.
+4. User `Message` appended to `Conversation`.
 5. Adapter converts history and calls provider.
 6. Provider output parsed into assistant `Message`.
 7. Assistant message appended and returned.
 
 ### 14.2 Tool-calling flow
+
+The facade performs the same preparation and validation before appending user input or entering the tool loop. OpenAI also validates at payload construction for direct adapter calls.
+
 1. Adapter sends tool definitions + conversation.
 2. Provider returns tool call(s).
 3. Adapter checks the response status before executing local tools. Failed, incomplete, refused, cancelled, pending, and unrecognized results return control with their partial output and metadata. Grok hosted calls are excluded from local execution.
@@ -501,6 +517,7 @@ An implementation of the Archon inference-time architecture ("Archon: An Archite
 ## 17. File and package map
 - `core/llm_handler.py`: orchestration facade (lazy adapter registry, conversation state, sync/async routing)
 - `core/parameter_normalizer.py`: `ParameterNormalizer` parameter pipeline
+- `exceptions.py`: public configuration validation exception with safe message, code, and parameter names
 - `helpers/model_config.py`: YAML model registry (cached + name-indexed) and parameter normalization
 - `services/conversation.py`: provider-agnostic conversation and tool metadata classes (no vendor knowledge); platform-internal persistence only (`save_to_json`/`read_from_json`)
 - `adapters/serializers.py`: provider wire (de)serialization for the domain objects (functions like `function_call_to_openai` for the OpenAI Responses API and `function_call_to_openai_chat` for the OpenAI-compatible Chat Completions API), kept out of the domain model so `services/` stays provider-agnostic

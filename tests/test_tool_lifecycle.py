@@ -130,8 +130,8 @@ def claude_events(reason, blocks, asynchronous):
 def make_claude(responses, asynchronous):
     adapter = AnthropicAdapter()
     adapter.model_config = {"test": {"adaptive_thinking": False}}
-    adapter.correct_max_tokens = MagicMock(side_effect=lambda model, history, maximum, tools: maximum)
-    adapter.correct_max_tokens_async = AsyncMock(side_effect=lambda model, history, maximum, tools: maximum)
+    adapter.correct_max_tokens = MagicMock(side_effect=lambda model, history, maximum, tools, **options: maximum)
+    adapter.correct_max_tokens_async = AsyncMock(side_effect=lambda model, history, maximum, tools, **options: maximum)
     adapter._client = MagicMock()
     adapter._async_client = MagicMock()
     create = AsyncMock(side_effect=responses) if asynchronous else MagicMock(side_effect=responses)

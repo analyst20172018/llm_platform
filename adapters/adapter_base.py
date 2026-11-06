@@ -139,6 +139,10 @@ class AdapterBase(ABC):
 
     # --- Shared helpers ---
 
+    @staticmethod
+    def validate_parameters(additional_parameters: Dict) -> None:
+        """Check normalized settings before conversation mutation or provider I/O."""
+
     def _merge_additional_parameters(
         self,
         additional_parameters: AdditionalParameters | None,

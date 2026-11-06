@@ -43,8 +43,10 @@ class ParameterNormalizer:
             return
         cursor = target
         for part in parts[:-1]:
-            if part not in cursor or not isinstance(cursor[part], dict):
-                cursor[part] = {}
+            # The merged top-level dict still shares nested values with the
+            # caller. Copy each branch before mapping a friendly parameter.
+            existing = cursor.get(part)
+            cursor[part] = dict(existing) if isinstance(existing, dict) else {}
             cursor = cursor[part]
         cursor[parts[-1]] = value
 

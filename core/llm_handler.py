@@ -109,6 +109,18 @@ class APIHandler:
         """Normalize request parameters against the selected model definition."""
         return self.normalizer.normalize(model, additional_parameters, **kwargs)
 
+    def _prepare_request(
+        self,
+        model: str,
+        additional_parameters: AdditionalParameters | None,
+        **kwargs,
+    ) -> tuple[Any, Dict]:
+        """Resolve, normalize, and validate before touching conversation state."""
+        adapter = self.get_adapter(model)
+        parameters = self._prepare_additional_parameters(model, additional_parameters, **kwargs)
+        adapter.validate_parameters(parameters)
+        return adapter, parameters
+
     def request(
         self,
         model: str,
@@ -124,7 +136,8 @@ class APIHandler:
 
             The method
 
-            1.  Appends the ``prompt`` (and optional ``files``) to the current
+            1.  Normalizes and validates request settings, then appends the
+                ``prompt`` (and optional ``files``) to the current
                 ``Conversation`` as a *user* message.
             2.  Forwards the full conversation to the appropriate *adapter* that
                 serves the requested ``model``.
@@ -174,6 +187,8 @@ class APIHandler:
             ------
             ValueError
                 If *prompt* is empty.
+            RequestValidationError
+                If normalized settings conflict; conversation state is unchanged.
 
             Examples
             --------
@@ -197,14 +212,15 @@ class APIHandler:
         if not prompt:
             raise ValueError("Prompt cannot be empty")
 
+        adapter, parameters = self._prepare_request(model, additional_parameters, **kwargs)
         self._append_user_message(prompt, files)
 
-        return self.request_llm(
-            model,
+        return adapter.request_llm(
+            model=model,
+            the_conversation=self.the_conversation,
             functions=functions,
             tool_output_callback=tool_output_callback,
-            additional_parameters=additional_parameters,
-            **kwargs,
+            additional_parameters=parameters,
         )
 
     async def request_async(
@@ -232,14 +248,15 @@ class APIHandler:
         if not prompt:
             raise ValueError("Prompt cannot be empty")
 
+        adapter, parameters = self._prepare_request(model, additional_parameters, **kwargs)
         self._append_user_message(prompt, files)
 
-        return await self.request_llm_async(
-            model,
+        return await adapter.request_llm_async(
+            model=model,
+            the_conversation=self.the_conversation,
             functions=functions,
             tool_output_callback=tool_output_callback,
-            additional_parameters=additional_parameters,
-            **kwargs,
+            additional_parameters=parameters,
         )
     
     def request_llm(self, 
@@ -253,8 +270,7 @@ class APIHandler:
             return the assistant’s next message.
 
             Unlike :py:meth:`APIHandler.request`, this method does **not** append a
-            new *user* message.  It is therefore intended to be called internally
-            (e.g. by :py:meth:`request`) or when the caller has already modified
+            new *user* message.  Use it when the caller has already modified
             ``self.the_conversation`` manually.
 
             Workflow
@@ -263,7 +279,8 @@ class APIHandler:
                 *models_config.yaml*.
             2.  Normalize ``additional_parameters`` against the model's YAML schema
                 (apply defaults, map ``request_key`` fields, filter unsupported keys).
-            3.  Forward the entire conversation as well as all arguments to
+            3.  Validate the normalized settings, then forward the entire
+                conversation as well as all arguments to
                 ``adapter.request_llm``.
             4.  Store the returned assistant message inside the conversation and
                 return it to the caller.
@@ -302,6 +319,8 @@ class APIHandler:
             ValueError
                 If *model* does not exist in *models_config.yaml* or the associated
                 adapter cannot be instantiated.
+            RequestValidationError
+                If normalized settings conflict; conversation state is unchanged.
 
             Notes
             -----
@@ -309,20 +328,14 @@ class APIHandler:
             ``handler.the_conversation.clear()`` to reset the context.
         """
         logger.info(f"Calling API with model {model}")
-        adapter = self.get_adapter(model)
-
-        normalized_parameters = self._prepare_additional_parameters(
-            model,
-            additional_parameters,
-            **kwargs,
-        )
+        adapter, parameters = self._prepare_request(model, additional_parameters, **kwargs)
 
         return adapter.request_llm(
             model=model,
             the_conversation=self.the_conversation,
             functions=functions,
             tool_output_callback=tool_output_callback,
-            additional_parameters=normalized_parameters,
+            additional_parameters=parameters,
         )
     
     async def request_llm_async(self,
@@ -332,22 +345,15 @@ class APIHandler:
                         additional_parameters: AdditionalParameters | None = None,
                         **kwargs) -> Message:
         logger.info(f"Calling API asynchronously with model {model}")
-        adapter = self.get_adapter(model)
+        adapter, parameters = self._prepare_request(model, additional_parameters, **kwargs)
 
-        normalized_parameters = self._prepare_additional_parameters(
-            model,
-            additional_parameters,
-            **kwargs,
-        )
-
-        response = await adapter.request_llm_async(
+        return await adapter.request_llm_async(
             model=model,
             the_conversation=self.the_conversation,
             functions=functions,
             tool_output_callback=tool_output_callback,
-            additional_parameters=normalized_parameters,
+            additional_parameters=parameters,
         )
-        return response
 
     @staticmethod
     def calculate_tokens(text: str) -> Dict[str, int]:

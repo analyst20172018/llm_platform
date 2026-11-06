@@ -868,8 +868,8 @@ models:
     display_name: Mistral Large 4
     adapter: MistralAdapter
     pricing:
-      input: 0.5 # USD/1M tokens
-      output: 1.5 # USD/1M tokens
+      input: 0.7 # USD/1M tokens
+      output: 2.1 # USD/1M tokens
     context_window: 256_000
     inputs:
       - image

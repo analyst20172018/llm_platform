@@ -32,6 +32,7 @@ from llm_platform.adapters.serializers import (
     openai_output_to_input,
 )
 from llm_platform.types import AdditionalParameters
+from llm_platform.exceptions import RequestValidationError
 
 from .response_metadata import openai_metadata
 from .adapter_base import AdapterBase, MAX_TOOL_ROUNDS, PDF_INLINE_MAX_BYTES, PDF_INLINE_MAX_PAGES
@@ -73,6 +74,20 @@ class OpenAIAdapter(AdapterBase):
             from openai import AsyncOpenAI
             self._async_client = AsyncOpenAI()
         return self._async_client
+
+    @staticmethod
+    def validate_parameters(additional_parameters: Dict) -> None:
+        """Reject incompatible OpenAI settings without inspecting conversation data."""
+        reasoning = additional_parameters.get("reasoning") or {}
+        agent_count = int(additional_parameters.get("agent_count") or 0)
+        if isinstance(reasoning, dict) and reasoning.get("mode") == "pro" and agent_count > 0:
+            raise RequestValidationError(
+                "Pro reasoning mode cannot be combined with parallel agents. "
+                "Select Standard mode to use parallel agents, or set agent_count "
+                "to 0 to keep Pro mode.",
+                code="incompatible_parameters",
+                parameters=("reasoning.mode", "agent_count"),
+            )
 
     def _convert_file_to_content(self, file: BaseFile) -> Dict:
         """
@@ -200,6 +215,7 @@ class OpenAIAdapter(AdapterBase):
         if additional_parameters is None:
             additional_parameters = {}
 
+        self.validate_parameters(additional_parameters)
         model_object = self.model_config[model]
 
         # Multi-agent (beta): agent_count > 0 enables hosted subagent
