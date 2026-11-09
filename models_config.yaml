@@ -78,13 +78,13 @@ parameter_templates:
     send_default: false # send only when the user explicitly enables multi-agent
 
 models:    
-  - name: claude-fable-5-1
-    display_name: Claude Fable 5.1 💰💰💰
+  - name: claude-fable-5-2
+    display_name: Claude Fable 5.2 💰
     adapter: AnthropicAdapter
     adaptive_thinking: true
     pricing:
-      input: 10 # USD/1M tokens
-      output: 50 # USD/1M tokens
+      input: 8 # USD/1M tokens
+      output: 40 # USD/1M tokens
     context_window: 1_000_000
     inputs:
       - image
