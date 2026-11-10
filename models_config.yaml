@@ -372,13 +372,13 @@ models:
     visible: false
 
 
-  - name: gemini-4-argon
-    display_name: Gemini 4 Argon 💰
+  - name: gemini-4-carbon
+    display_name: Gemini 4 Carbon 💰
     adapter: GoogleAdapter
     uses_thinking_level: true
     pricing:
-      input: 4 # USD/1M tokens
-      output: 18 # USD/1M tokens
+      input: 10 # USD/1M tokens
+      output: 20 # USD/1M tokens
     context_window: 1_048_576
     inputs:
       - text
